@@ -1,0 +1,409 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const gl = @import("gl.zig");
+const stbi = @cImport({
+    @cInclude("stb_image.h");
+});
+
+const App = @This();
+
+alloc: Allocator,
+objects: std.ArrayListUnmanaged(Object),
+program: gl.GLuint,
+transform_location: gl.GLint,
+vertex_buffer: gl.GLuint,
+vertex_array: gl.GLuint,
+window_width: usize,
+window_height: usize,
+selected_obj: ?usize = null,
+mouse_pos: Vec2 = .{ 0.0, 0.0 },
+
+pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
+    const program = try compileLinkProgram();
+    errdefer gl.glDeleteProgram(program);
+
+    const vpos_location = gl.glGetAttribLocation(program, "vPos");
+    const vuv_location = gl.glGetAttribLocation(program, "vUv");
+    const transform_location = gl.glGetUniformLocation(program, "transform");
+
+    var vertex_buffer: gl.GLuint = 0;
+    gl.glGenBuffers(1, &vertex_buffer);
+    errdefer gl.glDeleteBuffers(1, &vertex_buffer);
+
+    gl.glBindBuffer(gl.GL_ARRAY_BUFFER, vertex_buffer);
+    gl.glBufferData(gl.GL_ARRAY_BUFFER, vertices.len * 4, vertices.ptr, gl.GL_STATIC_DRAW);
+
+    var vertex_array: gl.GLuint = 0;
+    gl.glGenVertexArrays(1, &vertex_array);
+    errdefer gl.glDeleteVertexArrays(1, &vertex_array);
+
+    gl.glBindVertexArray(vertex_array);
+
+    gl.glEnableVertexAttribArray(@intCast(vpos_location));
+    gl.glVertexAttribPointer(@intCast(vpos_location), 2, gl.GL_FLOAT, gl.GL_FALSE, 4 * 4, null);
+
+    gl.glEnableVertexAttribArray(@intCast(vuv_location));
+    gl.glVertexAttribPointer(@intCast(vuv_location), 2, gl.GL_FLOAT, gl.GL_FALSE, 4 * 4, @ptrFromInt(8));
+
+    var objects = std.ArrayListUnmanaged(Object){};
+    errdefer objects.deinit(alloc);
+
+    return .{
+        .alloc = alloc,
+        .objects = objects,
+        .program = program,
+        .transform_location = transform_location,
+        .vertex_buffer = vertex_buffer,
+        .vertex_array = vertex_array,
+        .window_width = window_width,
+        .window_height = window_height,
+    };
+}
+
+pub fn deinit(self: *App) void {
+    deinitObjectList(self.alloc, &self.objects);
+    gl.glDeleteBuffers(1, &self.vertex_buffer);
+    gl.glDeleteVertexArrays(1, &self.vertex_array);
+    gl.glDeleteProgram(self.program);
+}
+
+pub fn save(self: *App, path: []const u8) !void {
+    const object_saves = try self.alloc.alloc(SavedObject, self.objects.items.len);
+    defer self.alloc.free(object_saves);
+
+    for (0..self.objects.items.len) |i| {
+        object_saves[i] = self.objects.items[i].save();
+    }
+
+    const out_f = try std.fs.cwd().createFile(path, .{});
+    defer out_f.close();
+
+    try std.json.stringify(
+        SaveData{
+            .objects = object_saves,
+        },
+        .{ .whitespace = .indent_2 },
+        out_f.writer(),
+    );
+}
+
+pub fn load(self: *App, path: []const u8) !void {
+    const in_f = try std.fs.cwd().openFile(path, .{});
+    defer in_f.close();
+
+    var json_reader = std.json.reader(self.alloc, in_f.reader());
+    defer json_reader.deinit();
+
+    const parsed = try std.json.parseFromTokenSource(SaveData, self.alloc, &json_reader, .{});
+    defer parsed.deinit();
+
+    var new_objects = try std.ArrayListUnmanaged(Object).initCapacity(self.alloc, parsed.value.objects.len);
+    // Note that objects gets swapped in and is freed by this defer
+    defer deinitObjectList(self.alloc, &new_objects);
+
+    for (parsed.value.objects) |saved_object| {
+        const object = try Object.load(self.alloc, saved_object);
+        errdefer object.deinit(self.alloc);
+
+        try new_objects.append(self.alloc, object);
+    }
+
+    // Swap objects so the old ones get deinited
+    std.mem.swap(std.ArrayListUnmanaged(Object), &new_objects, &self.objects);
+}
+
+pub fn setMouseDown(self: *App) void {
+    const lessThan = struct {
+        fn f(context: Vec2, lhs: Object, rhs: Object) bool {
+            const lhs_center = applyHomogenous(lhs.transform.mul(Vec3{ 0, 0, 1 }));
+            const rhs_center = applyHomogenous(rhs.transform.mul(Vec3{ 0, 0, 1 }));
+
+            const lhs_dist = length2(lhs_center - context);
+            const rhs_dist = length2(rhs_center - context);
+
+            return lhs_dist < rhs_dist;
+        }
+    }.f;
+
+    self.selected_obj = std.sort.argMin(Object, self.objects.items, self.mouse_pos, lessThan);
+}
+
+pub fn setMouseUp(self: *App) void {
+    self.selected_obj = null;
+}
+
+pub fn setMousePos(self: *App, xpos: f32, ypos: f32) void {
+    const new_pos = self.windowToClip(xpos, ypos);
+    defer self.mouse_pos = new_pos;
+
+    const movement = new_pos - self.mouse_pos;
+    if (self.selected_obj) |idx| {
+        const obj = &self.objects.items[idx];
+
+        // FIXME: implement mat mul
+        std.debug.assert(obj.transform.data[8] == 1);
+
+        // FIXME: Gross hack, create translation and mat mul it in
+        obj.transform.data[2] += movement[0];
+        obj.transform.data[5] += movement[1];
+    }
+}
+
+pub fn render(self: *App) void {
+    gl.glViewport(0, 0, @intCast(self.window_width), @intCast(self.window_height));
+    gl.glClear(gl.GL_COLOR_BUFFER_BIT);
+
+    gl.glUseProgram(self.program);
+
+    for (self.objects.items) |object| {
+        gl.glActiveTexture(gl.GL_TEXTURE0);
+        gl.glBindTexture(gl.GL_TEXTURE_2D, object.texture);
+
+        gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &object.transform.data);
+
+        gl.glBindVertexArray(self.vertex_array);
+        gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4);
+    }
+}
+
+fn deinitObjectList(alloc: Allocator, objects: *std.ArrayListUnmanaged(Object)) void {
+    for (objects.items) |*object| {
+        object.deinit(alloc);
+    }
+    objects.deinit(alloc);
+}
+
+fn windowToClip(self: App, xpos: f32, ypos: f32) Vec2 {
+    const window_width_f: f32 = @floatFromInt(self.window_width);
+    const window_height_f: f32 = @floatFromInt(self.window_height);
+    return .{
+        ((xpos / window_width_f) - 0.5) * 2,
+        (1.0 - (ypos / window_height_f) - 0.5) * 2,
+    };
+}
+
+const vertices: []const f32 = &.{
+    -1.0, -1.0, 0.0, 0.0,
+    1.0,  -1.0, 1.0, 0.0,
+    -1.0, 1.0,  0.0, 1.0,
+    1.0,  1.0,  1.0, 1.0,
+};
+
+const vertex_shader_text =
+    \\#version 330
+    \\in vec2 vUv;
+    \\in vec2 vPos;
+    \\out vec2 uv;
+    \\uniform mat3x3 transform;
+    \\void main()
+    \\{
+    \\    vec3 transformed = transform * vec3(vPos, 1.0);
+    \\    gl_Position = vec4(transformed.x, transformed.y, 0.0, transformed.z);
+    \\    uv = vUv;
+    \\}
+;
+
+const fragment_shader_text =
+    \\#version 330
+    \\in vec2 uv;
+    \\out vec4 fragment;
+    \\uniform sampler2D u_texture;  // The texture
+    \\void main()
+    \\{
+    \\    fragment = texture(u_texture, vec2(uv.x, 1.0 - uv.y));
+    \\}
+;
+
+fn checkShaderCompilation(shader: gl.GLuint) !void {
+    var status: c_int = 0;
+    gl.glGetShaderiv(shader, gl.GL_COMPILE_STATUS, &status);
+
+    if (status == gl.GL_TRUE) {
+        return;
+    }
+
+    var buf: [1024]u8 = undefined;
+    var len: gl.GLsizei = 0;
+    gl.glGetShaderInfoLog(shader, buf.len, &len, &buf);
+    std.log.err("Shader compilation failed: {s}", .{buf[0..@intCast(len)]});
+    return error.ShaderCompilationFailed;
+}
+
+fn compileLinkProgram() !gl.GLuint {
+    const vertex_shader = gl.glCreateShader(gl.GL_VERTEX_SHADER);
+    gl.glShaderSource(vertex_shader, 1, @ptrCast(&vertex_shader_text), null);
+    gl.glCompileShader(vertex_shader);
+    try checkShaderCompilation(vertex_shader);
+    defer gl.glDeleteShader(vertex_shader);
+
+    const fragment_shader = gl.glCreateShader(gl.GL_FRAGMENT_SHADER);
+    gl.glShaderSource(fragment_shader, 1, @ptrCast(&fragment_shader_text), null);
+    gl.glCompileShader(fragment_shader);
+    try checkShaderCompilation(fragment_shader);
+    defer gl.glDeleteShader(fragment_shader);
+
+    const program = gl.glCreateProgram();
+    gl.glAttachShader(program, vertex_shader);
+    gl.glAttachShader(program, fragment_shader);
+    gl.glLinkProgram(program);
+
+    return program;
+}
+
+pub fn loadImageToTexture(path: [:0]const u8) !gl.GLuint {
+    const image = try StbImage.init(path);
+    defer image.deinit();
+
+    return makeTextureFromRgba(image.data, image.width);
+}
+
+pub fn makeTextureFromRgba(data: []const u8, width: usize) gl.GLuint {
+    var texture: gl.GLuint = 0;
+
+    // Generate the texture object
+    gl.glGenTextures(1, &texture);
+    gl.glBindTexture(gl.GL_TEXTURE_2D, texture);
+
+    // Set texture parameters (you can adjust these for your needs)
+    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT); // Wrap horizontally
+    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT); // Wrap vertically
+    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR); // Minification filter
+    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR); // Magnification filter
+
+    const height = data.len / width / 4;
+    // Upload the RGBA data to the texture
+    gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, @intCast(width), @intCast(height), 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, data.ptr);
+
+    // Generate mipmaps (optional, you can omit if you don't want them)
+    gl.glGenerateMipmap(gl.GL_TEXTURE_2D);
+
+    return texture;
+}
+
+const StbImage = struct {
+    data: []u8,
+    width: usize,
+
+    fn init(path: [:0]const u8) !StbImage {
+        var width: c_int = 0;
+        var height: c_int = 0;
+        const data = stbi.stbi_load(path, &width, &height, null, 4);
+
+        if (data == null) {
+            return error.NoData;
+        }
+
+        errdefer stbi.stbi_image_free(data);
+
+        if (width < 0) {
+            return error.InvalidWidth;
+        }
+
+        return .{
+            .data = data[0..@intCast(width * height * 4)],
+            .width = @intCast(width),
+        };
+    }
+
+    fn deinit(self: StbImage) void {
+        stbi.stbi_image_free(@ptrCast(self.data.ptr));
+    }
+
+    fn calcHeight(self: StbImage) usize {
+        return self.data.len / self.width / 4;
+    }
+};
+
+const Vec3 = @Vector(3, f32);
+const Vec2 = @Vector(2, f32);
+
+fn applyHomogenous(in: Vec3) Vec2 {
+    return .{
+        in[0] / in[2],
+        in[1] / in[2],
+    };
+}
+
+fn length2(in: Vec2) f32 {
+    return @reduce(.Add, in * in);
+}
+
+pub const Transform = struct {
+    const identity: [9]f32 = .{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0,
+    };
+
+    data: [9]f32 = identity,
+
+    pub fn mul(self: Transform, vec: Vec3) Vec3 {
+        const x = self.data[0..3].* * vec;
+        const y = self.data[3..6].* * vec;
+        const z = self.data[6..9].* * vec;
+
+        return .{
+            @reduce(.Add, x),
+            @reduce(.Add, y),
+            @reduce(.Add, z),
+        };
+    }
+
+    pub fn scale(x: f32, y: f32) Transform {
+        return .{ .data = .{
+            x,   0.0, 0.0,
+            0.0, y,   0.0,
+            0.0, 0.0, 1.0,
+        } };
+    }
+};
+
+pub const Object = struct {
+    transform: Transform = .{},
+    source: [:0]const u8,
+
+    texture: gl.GLuint,
+
+    pub fn loadFromImagePath(alloc: Allocator, path: [:0]const u8) !Object {
+        const texture = try App.loadImageToTexture(path);
+        return .{
+            .texture = texture,
+            .source = try alloc.dupeZ(u8, path),
+            .transform = App.Transform.scale(0.5, 0.5),
+        };
+    }
+
+    pub fn deinit(self: Object, alloc: Allocator) void {
+        gl.glDeleteTextures(1, &self.texture);
+        alloc.free(self.source);
+    }
+
+    pub fn load(alloc: Allocator, saved_object: SavedObject) !Object {
+        const source = try alloc.dupeZ(u8, saved_object.image_source);
+        errdefer alloc.free(source);
+
+        const texture = try loadImageToTexture(source);
+
+        return .{
+            .transform = saved_object.transform,
+            .source = source,
+            .texture = texture,
+        };
+    }
+
+    pub fn save(self: Object) SavedObject {
+        return .{
+            .transform = self.transform,
+            .image_source = self.source,
+        };
+    }
+};
+
+const SavedObject = struct {
+    transform: Transform,
+    image_source: []const u8,
+};
+
+const SaveData = struct {
+    objects: []SavedObject,
+};
