@@ -15,8 +15,8 @@ vertex_buffer: gl.GLuint,
 vertex_array: gl.GLuint,
 window_width: usize,
 window_height: usize,
-selected_obj: ?usize = null,
 mouse_pos: Vec2 = .{ 0.0, 0.0 },
+selected_object: usize = 0,
 
 pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
     const program = try compileLinkProgram();
@@ -68,7 +68,7 @@ pub fn deinit(self: *App) void {
 }
 
 pub fn save(self: *App, path: []const u8) !void {
-    const object_saves = try self.alloc.alloc(SavedObject, self.objects.items.len);
+    const object_saves = try self.alloc.alloc(SaveObject, self.objects.items.len);
     defer self.alloc.free(object_saves);
 
     for (0..self.objects.items.len) |i| {
@@ -102,7 +102,7 @@ pub fn load(self: *App, path: []const u8) !void {
     defer deinitObjectList(self.alloc, &new_objects);
 
     for (parsed.value.objects) |saved_object| {
-        const object = try Object.load(self.alloc, saved_object);
+        var object = try Object.load(self.alloc, saved_object);
         errdefer object.deinit(self.alloc);
 
         try new_objects.append(self.alloc, object);
@@ -113,32 +113,41 @@ pub fn load(self: *App, path: []const u8) !void {
 }
 
 pub fn setMouseDown(self: *App) void {
-    const lessThan = struct {
-        fn f(context: Vec2, lhs: Object, rhs: Object) bool {
-            const lhs_center = applyHomogenous(lhs.transform.mul(Vec3{ 0, 0, 1 }));
-            const rhs_center = applyHomogenous(rhs.transform.mul(Vec3{ 0, 0, 1 }));
+    const composition_obj = self.getCompositionObj() orelse return;
 
-            const lhs_dist = length2(lhs_center - context);
-            const rhs_dist = length2(rhs_center - context);
+    if (composition_obj.objects.items.len < 1) {
+        return;
+    }
 
-            return lhs_dist < rhs_dist;
+    var closest_idx: usize = 0;
+    var current_dist = std.math.inf(f32);
+
+    for (0..composition_obj.objects.items.len) |idx| {
+        const transform = composition_obj.objects.items[idx].transform;
+        const center = applyHomogenous(transform.mul(Vec3{ 0, 0, 1 }));
+        const dist = length2(center - self.mouse_pos);
+        if (dist < current_dist) {
+            closest_idx = idx;
+            current_dist = dist;
         }
-    }.f;
+    }
 
-    self.selected_obj = std.sort.argMin(Object, self.objects.items, self.mouse_pos, lessThan);
+    composition_obj.selected_obj = closest_idx;
 }
 
 pub fn setMouseUp(self: *App) void {
-    self.selected_obj = null;
+    const composition_obj = self.getCompositionObj() orelse return;
+    composition_obj.selected_obj = null;
 }
 
 pub fn setMousePos(self: *App, xpos: f32, ypos: f32) void {
     const new_pos = self.windowToClip(xpos, ypos);
     defer self.mouse_pos = new_pos;
 
+    const composition_object = self.getCompositionObj() orelse return;
     const movement = new_pos - self.mouse_pos;
-    if (self.selected_obj) |idx| {
-        const obj = &self.objects.items[idx];
+    if (composition_object.selected_obj) |idx| {
+        const obj = &composition_object.objects.items[idx];
 
         // FIXME: implement mat mul
         std.debug.assert(obj.transform.data[8] == 1);
@@ -149,20 +158,33 @@ pub fn setMousePos(self: *App, xpos: f32, ypos: f32) void {
     }
 }
 
-pub fn render(self: *App) void {
+pub fn render(self: *App) !void {
     gl.glViewport(0, 0, @intCast(self.window_width), @intCast(self.window_height));
     gl.glClear(gl.GL_COLOR_BUFFER_BIT);
 
     gl.glUseProgram(self.program);
+    gl.glBindVertexArray(self.vertex_array);
 
-    for (self.objects.items) |object| {
-        gl.glActiveTexture(gl.GL_TEXTURE0);
-        gl.glBindTexture(gl.GL_TEXTURE_2D, object.texture);
+    const active_object = self.objects.items[self.selected_object].data;
+    switch (active_object) {
+        .composition => |c| {
+            for (c.objects.items) |composition_object| {
+                const object = switch (self.objects.items[composition_object.id].data) {
+                    .filesystem => |f| f,
+                    else => {
+                        std.log.err("Do not know how to render {any}\n", .{self.objects.items[composition_object.id]});
+                        return error.CannotRender;
+                    },
+                };
 
-        gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &object.transform.data);
-
-        gl.glBindVertexArray(self.vertex_array);
-        gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4);
+                gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &composition_object.transform.data);
+                renderFilesystemObject(object);
+            }
+        },
+        .filesystem => |f| {
+            gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &Transform.identity);
+            renderFilesystemObject(f);
+        },
     }
 }
 
@@ -171,6 +193,20 @@ fn deinitObjectList(alloc: Allocator, objects: *std.ArrayListUnmanaged(Object)) 
         object.deinit(alloc);
     }
     objects.deinit(alloc);
+}
+
+fn getCompositionObj(self: *App) ?*CompositionObject {
+    switch (self.objects.items[self.selected_object].data) {
+        .composition => |*c| return c,
+        else => return null,
+    }
+}
+
+fn renderFilesystemObject(object: FilesystemObject) void {
+    gl.glActiveTexture(gl.GL_TEXTURE0);
+    gl.glBindTexture(gl.GL_TEXTURE_2D, object.texture);
+
+    gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4);
 }
 
 fn windowToClip(self: App, xpos: f32, ypos: f32) Vec2 {
@@ -359,51 +395,105 @@ pub const Transform = struct {
 };
 
 pub const Object = struct {
-    transform: Transform = .{},
+    name: []u8,
+    data: Data,
+
+    pub const Data = union(enum) {
+        filesystem: FilesystemObject,
+        composition: CompositionObject,
+    };
+
+    fn deinit(self: *Object, alloc: Allocator) void {
+        alloc.free(self.name);
+        switch (self.data) {
+            .filesystem => |*f| f.deinit(alloc),
+            .composition => |*c| c.deinit(alloc),
+        }
+    }
+
+    fn save(self: Object) SaveObject {
+        const data: SaveObject.Data = switch (self.data) {
+            .filesystem => |s| .{ .filesystem = s.source },
+            .composition => |c| .{ .composition = c.objects.items },
+        };
+
+        return .{
+            .name = self.name,
+            .data = data,
+        };
+    }
+
+    fn load(alloc: Allocator, save_obj: SaveObject) !Object {
+        const data: Data = switch (save_obj.data) {
+            .filesystem => |s| blk: {
+                break :blk .{
+                    .filesystem = try FilesystemObject.load(alloc, s),
+                };
+            },
+            .composition => |c| blk: {
+                var objects = std.ArrayListUnmanaged(CompositionObject.ComposedObject){};
+                errdefer objects.deinit(alloc);
+
+                try objects.appendSlice(alloc, c);
+                break :blk .{
+                    .composition = .{
+                        .objects = objects,
+                    },
+                };
+            },
+        };
+
+        return .{
+            .name = try alloc.dupe(u8, save_obj.name),
+            .data = data,
+        };
+    }
+};
+
+pub const CompositionObject = struct {
+    const ComposedObject = struct {
+        id: usize,
+        transform: Transform,
+    };
+
+    objects: std.ArrayListUnmanaged(ComposedObject) = .{},
+    selected_obj: ?usize = null,
+
+    pub fn deinit(self: *CompositionObject, alloc: Allocator) void {
+        self.objects.deinit(alloc);
+    }
+};
+
+pub const FilesystemObject = struct {
     source: [:0]const u8,
+    // FIXME: Aspect
 
     texture: gl.GLuint,
 
-    pub fn loadFromImagePath(alloc: Allocator, path: [:0]const u8) !Object {
+    pub fn load(alloc: Allocator, path: [:0]const u8) !FilesystemObject {
         const texture = try App.loadImageToTexture(path);
         return .{
             .texture = texture,
             .source = try alloc.dupeZ(u8, path),
-            .transform = App.Transform.scale(0.5, 0.5),
         };
     }
 
-    pub fn deinit(self: Object, alloc: Allocator) void {
+    pub fn deinit(self: FilesystemObject, alloc: Allocator) void {
         gl.glDeleteTextures(1, &self.texture);
         alloc.free(self.source);
     }
-
-    pub fn load(alloc: Allocator, saved_object: SavedObject) !Object {
-        const source = try alloc.dupeZ(u8, saved_object.image_source);
-        errdefer alloc.free(source);
-
-        const texture = try loadImageToTexture(source);
-
-        return .{
-            .transform = saved_object.transform,
-            .source = source,
-            .texture = texture,
-        };
-    }
-
-    pub fn save(self: Object) SavedObject {
-        return .{
-            .transform = self.transform,
-            .image_source = self.source,
-        };
-    }
 };
 
-const SavedObject = struct {
-    transform: Transform,
-    image_source: []const u8,
+const SaveObject = struct {
+    name: []const u8,
+    data: Data,
+
+    const Data = union(enum) {
+        filesystem: [:0]const u8,
+        composition: []CompositionObject.ComposedObject,
+    };
 };
 
 const SaveData = struct {
-    objects: []SavedObject,
+    objects: []SaveObject,
 };

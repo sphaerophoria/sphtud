@@ -96,22 +96,49 @@ pub fn main() !void {
     const dummy_path = try std.fmt.bufPrintZ(&dummy_path_buf, "{s}/dummy.png", .{tmpdir_path});
     try writeDummyImage(alloc, dummy_path);
 
-    try app.objects.append(alloc, try App.Object.loadFromImagePath(alloc, dummy_path));
-    try app.objects.append(alloc, try App.Object.loadFromImagePath(alloc, dummy_path));
+    for (0..2) |_| {
+        try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, "composition"), .data = .{ .composition = App.CompositionObject{} } });
+        const composition_idx = app.objects.items.len - 1;
 
-    app.render();
+        const id = app.objects.items.len;
+        try app.objects.append(alloc, .{
+            .name = try alloc.dupe(u8, dummy_path),
+            .data = .{ .filesystem = try App.FilesystemObject.load(alloc, dummy_path) },
+        });
 
-    app.setMousePos(300, 300);
-    app.setMouseDown();
-    app.setMousePos(100, 100);
-    app.setMouseUp();
+        try app.objects.items[composition_idx].data.composition.objects.append(alloc, .{
+            .id = id,
+            .transform = App.Transform.scale(0.5, 0.5),
+        });
+    }
 
-    app.render();
+    for (0..app.objects.items.len) |i| {
+        app.selected_object = i;
+
+        app.setMousePos(300, 300);
+        app.setMouseDown();
+
+        app.setMousePos(100, 100);
+        app.setMouseUp();
+
+        try app.render();
+    }
+
     var save_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const save_path = try std.fmt.bufPrint(&save_path_buf, "{s}/save.json", .{tmpdir_path});
 
     try app.save(save_path);
     try app.load(save_path);
 
-    app.render();
+    for (0..app.objects.items.len) |i| {
+        app.selected_object = i;
+
+        app.setMousePos(300, 300);
+        app.setMouseDown();
+
+        app.setMousePos(100, 100);
+        app.setMouseUp();
+
+        try app.render();
+    }
 }

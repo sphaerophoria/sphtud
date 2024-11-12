@@ -7,6 +7,7 @@ fn addAppDependencies(b: *std.Build, exe: *std.Build.Step.Compile) void {
     exe.linkSystemLibrary("GL");
     exe.addIncludePath(b.path("src"));
     exe.linkLibC();
+    exe.linkLibCpp();
 }
 
 pub fn build(b: *std.Build) !void {
@@ -22,6 +23,23 @@ pub fn build(b: *std.Build) !void {
 
     addAppDependencies(b, exe);
     exe.linkSystemLibrary("glfw");
+    exe.addCSourceFiles(.{
+        .files = &.{
+            "cimgui/cimgui.cpp",
+            "cimgui/imgui/imgui.cpp",
+            "cimgui/imgui/imgui_draw.cpp",
+            "cimgui/imgui/imgui_demo.cpp",
+            "cimgui/imgui/imgui_tables.cpp",
+            "cimgui/imgui/imgui_widgets.cpp",
+            "cimgui/imgui/backends/imgui_impl_glfw.cpp",
+            "cimgui/imgui/backends/imgui_impl_opengl3.cpp",
+        },
+    });
+    exe.addIncludePath(b.path("cimgui"));
+    exe.addIncludePath(b.path("cimgui/generator/output"));
+    exe.addIncludePath(b.path("cimgui/imgui/backends"));
+    exe.addIncludePath(b.path("cimgui/imgui"));
+    exe.defineCMacro("IMGUI_IMPL_API", "extern \"C\"");
     b.installArtifact(exe);
 
     const lint_exe = b.addExecutable(.{

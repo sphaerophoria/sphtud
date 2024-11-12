@@ -1,10 +1,17 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const glfwb = @cImport({
-    @cInclude("GLFW/glfw3.h");
-});
 const gl = @import("gl.zig");
 const App = @import("App.zig");
+const c = @cImport({
+    @cInclude("GLFW/glfw3.h");
+    @cDefine("CIMGUI_DEFINE_ENUMS_AND_STRUCTS", "");
+    @cDefine("CIMGUI_USE_GLFW", "");
+    @cDefine("CIMGUI_USE_OPENGL3", "");
+
+    @cInclude("cimgui.h");
+    @cInclude("cimgui_impl.h");
+});
+const glfwb = c;
 
 fn logError(comptime msg: []const u8, e: anyerror, trace: ?*std.builtin.StackTrace) void {
     std.log.err(msg ++ ": {s}", .{@errorName(e)});
@@ -125,6 +132,103 @@ const Glfw = struct {
     }
 };
 
+const Imgui = struct {
+    const null_size = c.ImVec2{ .x = 0, .y = 0 };
+
+    const UpdatedObjectSelection = usize;
+
+    fn init(glfw: *Glfw) !void {
+        _ = c.igCreateContext(null);
+        errdefer c.igDestroyContext(null);
+
+        if (!c.ImGui_ImplGlfw_InitForOpenGL(glfw.window, true)) {
+            return error.InitImGuiGlfw;
+        }
+        errdefer c.ImGui_ImplGlfw_Shutdown();
+
+        if (!c.ImGui_ImplOpenGL3_Init("#version 130")) {
+            return error.InitImGuiOgl;
+        }
+        errdefer c.ImGui_ImplOpenGL3_Shutdown();
+    }
+
+    fn deinit() void {
+        c.ImGui_ImplOpenGL3_Shutdown();
+        c.ImGui_ImplGlfw_Shutdown();
+        c.igDestroyContext(null);
+    }
+
+    fn startFrame() void {
+        c.ImGui_ImplOpenGL3_NewFrame();
+        c.ImGui_ImplGlfw_NewFrame();
+        c.igNewFrame();
+    }
+
+    fn renderObjectList(objects: []App.Object, selected_idx: usize) !?UpdatedObjectSelection {
+        _ = c.igBegin("Object list", null, 0);
+
+        var ret: ?UpdatedObjectSelection = null;
+        for (objects, 0..) |object, i| {
+            var buf: [1024]u8 = undefined;
+            const id = try std.fmt.bufPrintZ(&buf, "object_list_{d}", .{i});
+            c.igPushID_Str(id);
+
+            const name = try std.fmt.bufPrintZ(&buf, "{s}", .{object.name});
+            if (c.igSelectable_Bool(name, selected_idx == i, 0, null_size)) {
+                ret = i;
+            }
+            c.igPopID();
+        }
+
+        c.igEnd();
+        return ret;
+    }
+
+    fn renderObjectProperties(selected_object: *App.Object) !void {
+        if (!c.igBegin("Object properties", null, 0)) {
+            return;
+        }
+
+        switch (selected_object.data) {
+            .filesystem => |f| blk: {
+                const table_ret = c.igBeginTable("table", 2, 0, null_size, 0);
+                if (!table_ret) break :blk;
+
+                c.igTableNextRow(0, 0);
+                if (c.igTableNextColumn()) c.igText("Key");
+
+                if (c.igTableNextColumn()) c.igText("Value");
+
+                c.igTableNextRow(0, 0);
+
+                if (c.igTableNextColumn()) c.igText("Source");
+
+                var buf: [1024]u8 = undefined;
+                const source = try std.fmt.bufPrintZ(&buf, "{s}", .{f.source});
+
+                _ = c.igTableNextColumn();
+                c.igText(source.ptr);
+
+                c.igEndTable();
+            },
+            .composition => {
+                c.igText("Composition");
+            },
+        }
+        c.igEnd();
+    }
+
+    fn consumedMouseInput() bool {
+        const io = c.igGetIO();
+        return io.*.WantCaptureMouse;
+    }
+
+    fn renderFrame() void {
+        c.igRender();
+        c.ImGui_ImplOpenGL3_RenderDrawData(c.igGetDrawData());
+    }
+};
+
 const Args = struct {
     action: Action,
     it: std.process.ArgIterator,
@@ -209,6 +313,9 @@ pub fn main() !void {
     try glfw.initPinned(window_width, window_height);
     defer glfw.deinit();
 
+    try Imgui.init(&glfw);
+    defer Imgui.deinit();
+
     var app = try App.init(alloc, window_width, window_height);
     defer app.deinit();
 
@@ -217,8 +324,15 @@ pub fn main() !void {
             try app.load(s);
         },
         .open_images => |images| {
+            try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, "composition"), .data = .{ .composition = App.CompositionObject{} } });
+            const composition_idx = app.objects.items.len - 1;
             for (images) |path| {
-                try app.objects.append(alloc, try App.Object.loadFromImagePath(alloc, path));
+                const id = app.objects.items.len;
+                try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, path), .data = .{ .filesystem = try App.FilesystemObject.load(alloc, path) } });
+                try app.objects.items[composition_idx].data.composition.objects.append(alloc, .{
+                    .id = id,
+                    .transform = App.Transform.scale(0.5, 0.5),
+                });
             }
         },
     }
@@ -228,6 +342,13 @@ pub fn main() !void {
         app.window_width = width;
         app.window_height = height;
 
+        Imgui.startFrame();
+        if (try Imgui.renderObjectList(app.objects.items, app.selected_object)) |idx| {
+            app.selected_object = idx;
+        }
+        try Imgui.renderObjectProperties(&app.objects.items[app.selected_object]);
+
+        const glfw_mouse = !Imgui.consumedMouseInput();
         while (glfw.queue.readItem()) |action| {
             switch (action) {
                 .key_down => |key| {
@@ -240,14 +361,17 @@ pub fn main() !void {
                         else => {},
                     }
                 },
-                .mouse_move => |p| {
+                .mouse_move => |p| if (glfw_mouse) {
                     app.setMousePos(p.x, p.y);
                 },
-                .mouse_up => app.setMouseUp(),
-                .mouse_down => app.setMouseDown(),
+                .mouse_up => if (glfw_mouse) app.setMouseUp(),
+                .mouse_down => if (glfw_mouse) app.setMouseDown(),
             }
         }
-        app.render();
+
+        try app.render();
+        Imgui.renderFrame();
+
         glfw.swapBuffers();
     }
 }
