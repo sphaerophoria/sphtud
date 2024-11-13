@@ -112,16 +112,17 @@ pub fn main() !void {
         try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, "composition"), .data = .{ .composition = App.CompositionObject{} } });
 
         const id = app.objects.nextId();
+        const fs_obj = try App.FilesystemObject.load(alloc, dummy_path);
         try app.objects.append(alloc, .{
             .name = try alloc.dupe(u8, dummy_path),
-            .data = .{ .filesystem = try App.FilesystemObject.load(alloc, dummy_path) },
+            .data = .{ .filesystem = fs_obj },
         });
 
         const swapped_name = try std.fmt.allocPrint(alloc, "{s}_swapped", .{dummy_path});
         errdefer alloc.free(swapped_name);
 
         const shader_id = app.objects.nextId();
-        try app.objects.append(alloc, .{ .name = swapped_name, .data = .{ .shader = try App.ShaderObject.init(alloc, id, swap_colors_frag) } });
+        try app.objects.append(alloc, .{ .name = swapped_name, .data = .{ .shader = try App.ShaderObject.init(alloc, &.{id}, swap_colors_frag, &.{"u_texture"}, fs_obj.width, fs_obj.height) } });
 
         try app.objects.get(composition_idx).data.composition.objects.append(alloc, .{
             .id = id,
@@ -132,16 +133,28 @@ pub fn main() !void {
             .id = shader_id,
             .transform = App.Transform.scale(0.5, 0.5),
         });
+
+        app.selected_object = id;
+        try app.createPath();
+
+        try app.setMousePos(200, 200);
+        try app.clickRightMouse();
+
+        app.selected_object = shader_id;
+        try app.createPath();
+
+        try app.setMousePos(400, 400);
+        try app.clickRightMouse();
     }
 
     var it = app.objects.idIter();
     while (it.next()) |i| {
         app.selected_object = i;
 
-        app.setMousePos(300, 300);
+        try app.setMousePos(300, 300);
         app.setMouseDown();
 
-        app.setMousePos(100, 100);
+        try app.setMousePos(100, 100);
         app.setMouseUp();
 
         try app.render();
@@ -157,10 +170,10 @@ pub fn main() !void {
     while (it.next()) |i| {
         app.selected_object = i;
 
-        app.setMousePos(300, 300);
+        try app.setMousePos(300, 300);
         app.setMouseDown();
 
-        app.setMousePos(100, 100);
+        try app.setMousePos(100, 100);
         app.setMouseUp();
 
         try app.render();

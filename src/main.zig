@@ -51,17 +51,23 @@ fn cursorPositionCallbackGlfw(window: ?*glfwb.GLFWwindow, xpos: f64, ypos: f64) 
 }
 
 fn mouseButtonCallbackGlfw(window: ?*glfwb.GLFWwindow, button: c_int, action: c_int, _: c_int) callconv(.C) void {
-    if (button != glfwb.GLFW_MOUSE_BUTTON_LEFT) {
-        return;
-    }
-
     const glfw: *Glfw = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(window)));
     const is_down = action == glfwb.GLFW_PRESS;
-    const write_obj: WindowAction = if (is_down) .mouse_down else .mouse_up;
+    var write_obj: ?WindowAction = null;
 
-    glfw.queue.writeItem(write_obj) catch |e| {
-        logError("Failed to write mouse press/release", e, @errorReturnTrace());
-    };
+    if (button == glfwb.GLFW_MOUSE_BUTTON_LEFT and is_down) {
+        write_obj = .mouse_down;
+    } else if (button == glfwb.GLFW_MOUSE_BUTTON_LEFT and !is_down) {
+        write_obj = .mouse_up;
+    } else if (button == glfwb.GLFW_MOUSE_BUTTON_RIGHT and is_down) {
+        write_obj = .right_click;
+    }
+
+    if (write_obj) |w| {
+        glfw.queue.writeItem(w) catch |e| {
+            logError("Failed to write mouse press/release", e, @errorReturnTrace());
+        };
+    }
 }
 
 const WindowAction = union(enum) {
@@ -69,6 +75,7 @@ const WindowAction = union(enum) {
     mouse_move: struct { x: f32, y: f32 },
     mouse_down,
     mouse_up,
+    right_click,
 };
 
 const Glfw = struct {
@@ -186,11 +193,20 @@ const Imgui = struct {
         return ret;
     }
 
-    fn renderObjectProperties(selected_object: *App.Object) !void {
+    fn createPathButton() ?PropertyAction {
+        return if (c.igButton("Create path", null_size)) .create_path else null;
+    }
+
+    const PropertyAction = enum {
+        create_path,
+    };
+
+    fn renderObjectProperties(selected_object: *App.Object) !?PropertyAction {
         if (!c.igBegin("Object properties", null, 0)) {
-            return;
+            return null;
         }
 
+        var ret: ?PropertyAction = null;
         switch (selected_object.data) {
             .filesystem => |f| blk: {
                 const table_ret = c.igBeginTable("table", 2, 0, null_size, 0);
@@ -211,7 +227,17 @@ const Imgui = struct {
                 _ = c.igTableNextColumn();
                 c.igText(source.ptr);
 
+                c.igTableNextRow(0, 0);
+                if (c.igTableNextColumn()) c.igText("Width");
+                if (c.igTableNextColumn()) c.igText("%lu", f.width);
+
+                c.igTableNextRow(0, 0);
+                if (c.igTableNextColumn()) c.igText("Height");
+                if (c.igTableNextColumn()) c.igText("%lu", f.height);
+
                 c.igEndTable();
+
+                if (createPathButton()) |a| ret = a;
             },
             .composition => {
                 c.igText("Composition");
@@ -219,9 +245,20 @@ const Imgui = struct {
             .shader => {
                 // FIXME: Log something interesting like uniforms etc.
                 c.igText("Shader");
+
+                if (createPathButton()) |a| ret = a;
+            },
+            .path => {
+                c.igText("Path");
+                // Parent object
+            },
+            .generated_mask => {
+                c.igText("Generated mask");
             },
         }
         c.igEnd();
+
+        return ret;
     }
 
     fn consumedMouseInput() bool {
@@ -241,7 +278,7 @@ const swap_colors_frag =
     \\uniform sampler2D u_texture;  // The texture
     \\void main()
     \\{
-    \\    vec4 tmp = texture(u_texture, vec2(uv.x, 1.0 - uv.y));
+    \\    vec4 tmp = texture(u_texture, vec2(uv.x, uv.y));
     \\    fragment = vec4(tmp.y, tmp.x, tmp.z, tmp.w);
     \\}
 ;
@@ -345,16 +382,22 @@ pub fn main() !void {
             try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, "composition"), .data = .{ .composition = App.CompositionObject{} } });
             for (images) |path| {
                 const fs_id = app.objects.nextId();
+                const fs_obj = try App.FilesystemObject.load(alloc, path);
                 try app.objects.append(alloc, .{
                     .name = try alloc.dupe(u8, path),
-                    .data = .{ .filesystem = try App.FilesystemObject.load(alloc, path) },
+                    .data = .{
+                        .filesystem = fs_obj,
+                    },
                 });
 
                 const swapped_name = try std.fmt.allocPrint(alloc, "{s}_swapped", .{path});
                 errdefer alloc.free(swapped_name);
 
                 const shader_id = app.objects.nextId();
-                try app.objects.append(alloc, .{ .name = swapped_name, .data = .{ .shader = try App.ShaderObject.init(alloc, fs_id, swap_colors_frag) } });
+                try app.objects.append(alloc, .{
+                    .name = swapped_name,
+                    .data = .{ .shader = try App.ShaderObject.init(alloc, &.{fs_id}, swap_colors_frag, &.{"u_texture"}, fs_obj.width, fs_obj.height) },
+                });
 
                 try app.objects.get(composition_idx).data.composition.objects.append(alloc, .{
                     .id = fs_id,
@@ -378,7 +421,14 @@ pub fn main() !void {
         if (try Imgui.renderObjectList(&app.objects, app.selected_object)) |idx| {
             app.selected_object = idx;
         }
-        try Imgui.renderObjectProperties(app.objects.get(app.selected_object));
+
+        if (try Imgui.renderObjectProperties(app.objects.get(app.selected_object))) |action| {
+            switch (action) {
+                .create_path => {
+                    try app.createPath();
+                },
+            }
+        }
 
         const glfw_mouse = !Imgui.consumedMouseInput();
         while (glfw.queue.readItem()) |action| {
@@ -394,10 +444,11 @@ pub fn main() !void {
                     }
                 },
                 .mouse_move => |p| if (glfw_mouse) {
-                    app.setMousePos(p.x, p.y);
+                    try app.setMousePos(p.x, p.y);
                 },
                 .mouse_up => if (glfw_mouse) app.setMouseUp(),
                 .mouse_down => if (glfw_mouse) app.setMouseDown(),
+                .right_click => if (glfw_mouse) try app.clickRightMouse(),
             }
         }
 

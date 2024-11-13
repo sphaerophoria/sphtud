@@ -16,6 +16,7 @@ pkgs.mkShell {
     libGL
     clang-tools
     wayland
+    linuxPackages_latest.perf
   ];
 
   LD_LIBRARY_PATH = "${pkgs.wayland}/lib";
