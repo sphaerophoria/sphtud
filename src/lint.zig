@@ -70,6 +70,17 @@ pub fn writeDummyImage(alloc: Allocator, path: [:0]const u8) !void {
     }
 }
 
+const swap_colors_frag =
+    \\#version 330
+    \\in vec2 uv;
+    \\out vec4 fragment;
+    \\uniform sampler2D u_texture;  // The texture
+    \\void main()
+    \\{
+    \\    vec4 tmp = texture(u_texture, vec2(uv.x, 1.0 - uv.y));
+    \\    fragment = vec4(tmp.y, tmp.x, tmp.z, tmp.w);
+    \\}
+;
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
@@ -97,22 +108,34 @@ pub fn main() !void {
     try writeDummyImage(alloc, dummy_path);
 
     for (0..2) |_| {
+        const composition_idx = app.objects.nextId();
         try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, "composition"), .data = .{ .composition = App.CompositionObject{} } });
-        const composition_idx = app.objects.items.len - 1;
 
-        const id = app.objects.items.len;
+        const id = app.objects.nextId();
         try app.objects.append(alloc, .{
             .name = try alloc.dupe(u8, dummy_path),
             .data = .{ .filesystem = try App.FilesystemObject.load(alloc, dummy_path) },
         });
 
-        try app.objects.items[composition_idx].data.composition.objects.append(alloc, .{
+        const swapped_name = try std.fmt.allocPrint(alloc, "{s}_swapped", .{dummy_path});
+        errdefer alloc.free(swapped_name);
+
+        const shader_id = app.objects.nextId();
+        try app.objects.append(alloc, .{ .name = swapped_name, .data = .{ .shader = try App.ShaderObject.init(alloc, id, swap_colors_frag) } });
+
+        try app.objects.get(composition_idx).data.composition.objects.append(alloc, .{
             .id = id,
+            .transform = App.Transform.scale(0.5, 0.5),
+        });
+
+        try app.objects.get(composition_idx).data.composition.objects.append(alloc, .{
+            .id = shader_id,
             .transform = App.Transform.scale(0.5, 0.5),
         });
     }
 
-    for (0..app.objects.items.len) |i| {
+    var it = app.objects.idIter();
+    while (it.next()) |i| {
         app.selected_object = i;
 
         app.setMousePos(300, 300);
@@ -130,7 +153,8 @@ pub fn main() !void {
     try app.save(save_path);
     try app.load(save_path);
 
-    for (0..app.objects.items.len) |i| {
+    it = app.objects.idIter();
+    while (it.next()) |i| {
         app.selected_object = i;
 
         app.setMousePos(300, 300);

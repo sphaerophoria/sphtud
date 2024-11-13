@@ -164,18 +164,20 @@ const Imgui = struct {
         c.igNewFrame();
     }
 
-    fn renderObjectList(objects: []App.Object, selected_idx: usize) !?UpdatedObjectSelection {
+    fn renderObjectList(objects: *App.Objects, selected_idx: App.ObjectId) !?App.ObjectId {
         _ = c.igBegin("Object list", null, 0);
 
-        var ret: ?UpdatedObjectSelection = null;
-        for (objects, 0..) |object, i| {
+        var ret: ?App.ObjectId = null;
+        var it = objects.idIter();
+        while (it.next()) |object_id| {
+            const object = objects.get(object_id);
             var buf: [1024]u8 = undefined;
-            const id = try std.fmt.bufPrintZ(&buf, "object_list_{d}", .{i});
+            const id = try std.fmt.bufPrintZ(&buf, "object_list_{d}", .{object_id.value});
             c.igPushID_Str(id);
 
             const name = try std.fmt.bufPrintZ(&buf, "{s}", .{object.name});
-            if (c.igSelectable_Bool(name, selected_idx == i, 0, null_size)) {
-                ret = i;
+            if (c.igSelectable_Bool(name, selected_idx.value == object_id.value, 0, null_size)) {
+                ret = object_id;
             }
             c.igPopID();
         }
@@ -214,6 +216,10 @@ const Imgui = struct {
             .composition => {
                 c.igText("Composition");
             },
+            .shader => {
+                // FIXME: Log something interesting like uniforms etc.
+                c.igText("Shader");
+            },
         }
         c.igEnd();
     }
@@ -228,6 +234,17 @@ const Imgui = struct {
         c.ImGui_ImplOpenGL3_RenderDrawData(c.igGetDrawData());
     }
 };
+const swap_colors_frag =
+    \\#version 330
+    \\in vec2 uv;
+    \\out vec4 fragment;
+    \\uniform sampler2D u_texture;  // The texture
+    \\void main()
+    \\{
+    \\    vec4 tmp = texture(u_texture, vec2(uv.x, 1.0 - uv.y));
+    \\    fragment = vec4(tmp.y, tmp.x, tmp.z, tmp.w);
+    \\}
+;
 
 const Args = struct {
     action: Action,
@@ -324,13 +341,28 @@ pub fn main() !void {
             try app.load(s);
         },
         .open_images => |images| {
+            const composition_idx = app.objects.nextId();
             try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, "composition"), .data = .{ .composition = App.CompositionObject{} } });
-            const composition_idx = app.objects.items.len - 1;
             for (images) |path| {
-                const id = app.objects.items.len;
-                try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, path), .data = .{ .filesystem = try App.FilesystemObject.load(alloc, path) } });
-                try app.objects.items[composition_idx].data.composition.objects.append(alloc, .{
-                    .id = id,
+                const fs_id = app.objects.nextId();
+                try app.objects.append(alloc, .{
+                    .name = try alloc.dupe(u8, path),
+                    .data = .{ .filesystem = try App.FilesystemObject.load(alloc, path) },
+                });
+
+                const swapped_name = try std.fmt.allocPrint(alloc, "{s}_swapped", .{path});
+                errdefer alloc.free(swapped_name);
+
+                const shader_id = app.objects.nextId();
+                try app.objects.append(alloc, .{ .name = swapped_name, .data = .{ .shader = try App.ShaderObject.init(alloc, fs_id, swap_colors_frag) } });
+
+                try app.objects.get(composition_idx).data.composition.objects.append(alloc, .{
+                    .id = fs_id,
+                    .transform = App.Transform.scale(0.5, 0.5),
+                });
+
+                try app.objects.get(composition_idx).data.composition.objects.append(alloc, .{
+                    .id = shader_id,
                     .transform = App.Transform.scale(0.5, 0.5),
                 });
             }
@@ -343,10 +375,10 @@ pub fn main() !void {
         app.window_height = height;
 
         Imgui.startFrame();
-        if (try Imgui.renderObjectList(app.objects.items, app.selected_object)) |idx| {
+        if (try Imgui.renderObjectList(&app.objects, app.selected_object)) |idx| {
             app.selected_object = idx;
         }
-        try Imgui.renderObjectProperties(&app.objects.items[app.selected_object]);
+        try Imgui.renderObjectProperties(app.objects.get(app.selected_object));
 
         const glfw_mouse = !Imgui.consumedMouseInput();
         while (glfw.queue.readItem()) |action| {
