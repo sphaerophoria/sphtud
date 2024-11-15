@@ -13,6 +13,7 @@ fn addAppDependencies(b: *std.Build, exe: *std.Build.Step.Compile) void {
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const opt = b.standardOptimizeOption(.{});
+    const test_step = b.step("test", "run tests");
 
     const exe = b.addExecutable(.{
         .name = "sphimp",
@@ -55,4 +56,15 @@ pub fn build(b: *std.Build) !void {
 
     addAppDependencies(b, lint_exe);
     b.installArtifact(lint_exe);
+
+    const uts = b.addTest(.{
+        .name = "test",
+        .root_source_file = b.path("src/App.zig"),
+        .target = target,
+        .optimize = opt,
+    });
+    addAppDependencies(b, uts);
+
+    const run_uts = b.addRunArtifact(uts);
+    test_step.dependOn(&run_uts.step);
 }

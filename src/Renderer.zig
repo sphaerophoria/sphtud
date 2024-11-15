@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const lin = @import("lin.zig");
 const obj_mod = @import("object.zig");
+const coords = @import("coords.zig");
 
 const Objects = obj_mod.Objects;
 const Object = obj_mod.Object;
@@ -35,7 +36,7 @@ pub fn deinit(self: *Renderer, alloc: Allocator) void {
     self.program.deinit(alloc);
 }
 
-pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, selected_object: ObjectId, window_width: usize, window_height: usize) !void {
+pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, selected_object: ObjectId, transform: Transform, window_width: usize, window_height: usize) !void {
     gl.glViewport(0, 0, @intCast(window_width), @intCast(window_height));
     gl.glClear(gl.GL_COLOR_BUFFER_BIT);
 
@@ -43,7 +44,7 @@ pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, selected_obj
     defer texture_cache.deinit();
 
     const active_object = objects.get(selected_object);
-    try self.renderObjectWithTransform(alloc, objects, active_object.*, Transform.identity, &texture_cache);
+    try self.renderObjectWithTransform(alloc, objects, active_object.*, transform, &texture_cache);
 }
 
 fn renderedTexture(self: *Renderer, alloc: Allocator, objects: *Objects, texture_cache: *TextureCache, id: ObjectId) !Texture {
@@ -65,7 +66,20 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
                     .composition => return error.NestedComposition,
                     else => {},
                 }
-                try self.renderObjectWithTransform(alloc, objects, next_object.*, composition_object.transform, texture_cache);
+                const next_object_dims = next_object.dims(objects);
+                const composition_dims = object.dims(objects);
+
+                const next_transform =
+                    coords.aspectRatioCorrectedFill(
+                    next_object_dims[0],
+                    next_object_dims[1],
+                    composition_dims[0],
+                    composition_dims[1],
+                )
+                    .then(composition_object.transform)
+                    .then(transform);
+
+                try self.renderObjectWithTransform(alloc, objects, next_object.*, next_transform, texture_cache);
             }
         },
         .filesystem => |f| {
@@ -86,7 +100,7 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
             const display_object = objects.get(p.display_object);
             try self.renderObjectWithTransform(alloc, objects, display_object.*, transform, texture_cache);
 
-            self.path_program.render(p.vertex_array, p.selected_point, p.points.items.len);
+            self.path_program.render(p.vertex_array, transform, p.selected_point, p.points.items.len);
         },
         .generated_mask => |m| {
             self.program.render(&.{m.texture}, transform);
@@ -210,7 +224,7 @@ pub const PlaneRenderProgram = struct {
     fn render(self: PlaneRenderProgram, textures: []const Texture, transform: lin.Transform) void {
         gl.glUseProgram(self.program);
         gl.glBindVertexArray(self.vertex_array);
-        gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &transform.data);
+        gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &transform.inner.data);
 
         for (0..textures.len) |i| {
             const texture_unit = gl.GL_TEXTURE0 + i;
@@ -291,16 +305,19 @@ const TextureCache = struct {
 const PathRenderProgram = struct {
     program: gl.GLuint,
     vpos_location: gl.GLint,
+    transform_location: gl.GLint,
 
     fn init() !PathRenderProgram {
         const program = try compileLinkProgram(path_vertex_shader, path_fragment_shader);
         errdefer gl.glDeleteProgram(program);
 
         const vpos_location = gl.glGetAttribLocation(program, "vPos");
+        const transform_location = gl.glGetUniformLocation(program, "transform");
 
         return .{
             .program = program,
             .vpos_location = vpos_location,
+            .transform_location = transform_location,
         };
     }
 
@@ -308,9 +325,11 @@ const PathRenderProgram = struct {
         gl.glDeleteProgram(self.program);
     }
 
-    fn render(self: PathRenderProgram, vertex_array: gl.GLuint, selected_point: ?usize, num_points: usize) void {
+    fn render(self: PathRenderProgram, vertex_array: gl.GLuint, transform: Transform, selected_point: ?usize, num_points: usize) void {
         gl.glUseProgram(self.program);
         gl.glBindVertexArray(vertex_array);
+        gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &transform.inner.data);
+
         gl.glLineWidth(8);
         gl.glPointSize(20.0);
 
@@ -461,10 +480,12 @@ pub const mul_fragment_shader =
 
 const path_vertex_shader =
     \\#version 330
+    \\uniform mat3x3 transform;
     \\in vec2 vPos;
     \\void main()
     \\{
-    \\    gl_Position = vec4(vPos, 0.0, 1.0);
+    \\    vec3 transformed = transform * vec3(vPos, 1.0);
+    \\    gl_Position = vec4(transformed.x, transformed.y, 0.0, transformed.z);
     \\}
 ;
 

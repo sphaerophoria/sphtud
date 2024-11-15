@@ -61,6 +61,10 @@ fn mouseButtonCallbackGlfw(window: ?*glfwb.GLFWwindow, button: c_int, action: c_
         write_obj = .mouse_down;
     } else if (button == glfwb.GLFW_MOUSE_BUTTON_LEFT and !is_down) {
         write_obj = .mouse_up;
+    } else if (button == glfwb.GLFW_MOUSE_BUTTON_MIDDLE and is_down) {
+        write_obj = .middle_down;
+    } else if (button == glfwb.GLFW_MOUSE_BUTTON_MIDDLE and !is_down) {
+        write_obj = .middle_up;
     } else if (button == glfwb.GLFW_MOUSE_BUTTON_RIGHT and is_down) {
         write_obj = .right_click;
     }
@@ -72,12 +76,24 @@ fn mouseButtonCallbackGlfw(window: ?*glfwb.GLFWwindow, button: c_int, action: c_
     }
 }
 
+fn scrollCallbackGlfw(window: ?*glfwb.GLFWwindow, _: f64, y: f64) callconv(.C) void {
+    const glfw: *Glfw = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(window)));
+    glfw.queue.writeItem(.{
+        .scroll = @floatCast(y),
+    }) catch |e| {
+        logError("Failed to write scroll", e, @errorReturnTrace());
+    };
+}
+
 const WindowAction = union(enum) {
     key_down: struct { key: c_int, ctrl: bool },
     mouse_move: struct { x: f32, y: f32 },
     mouse_down,
     mouse_up,
+    middle_down,
+    middle_up,
     right_click,
+    scroll: f32,
 };
 
 const Glfw = struct {
@@ -107,6 +123,7 @@ const Glfw = struct {
         _ = glfwb.glfwSetKeyCallback(window, keyCallbackGlfw);
         _ = glfwb.glfwSetCursorPosCallback(window, cursorPositionCallbackGlfw);
         _ = glfwb.glfwSetMouseButtonCallback(window, mouseButtonCallbackGlfw);
+        _ = glfwb.glfwSetScrollCallback(window, scrollCallbackGlfw);
 
         glfwb.glfwMakeContextCurrent(window);
         glfwb.glfwSwapInterval(1);
@@ -416,8 +433,8 @@ pub fn main() !void {
 
     while (!glfw.closed()) {
         const width, const height = glfw.getWindowSize();
-        app.window_width = width;
-        app.window_height = height;
+        app.view_state.window_width = width;
+        app.view_state.window_height = height;
 
         Imgui.startFrame();
         if (try Imgui.renderObjectList(&app.objects, app.selected_object)) |idx| {
@@ -450,7 +467,12 @@ pub fn main() !void {
                 },
                 .mouse_up => if (glfw_mouse) app.setMouseUp(),
                 .mouse_down => if (glfw_mouse) app.setMouseDown(),
+                .middle_up => if (glfw_mouse) app.setMiddleUp(),
+                .middle_down => if (glfw_mouse) app.setMiddleDown(),
                 .right_click => if (glfw_mouse) try app.clickRightMouse(),
+                .scroll => |amount| {
+                    app.scroll(amount);
+                },
             }
         }
 

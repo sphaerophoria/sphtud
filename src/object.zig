@@ -8,6 +8,7 @@ const StbImage = @import("StbImage.zig");
 const Transform = lin.Transform;
 const Vec3 = lin.Vec3;
 const Vec2 = lin.Vec2;
+pub const PixelDims = @Vector(2, usize);
 
 pub const Object = struct {
     name: []u8,
@@ -96,7 +97,7 @@ pub const Object = struct {
         };
     }
 
-    pub fn dims(self: Object, object_list: *Objects) struct { usize, usize } {
+    pub fn dims(self: Object, object_list: *Objects) PixelDims {
         switch (self.data) {
             .filesystem => |*f| {
                 return .{ f.width, f.height };
@@ -112,8 +113,9 @@ pub const Object = struct {
             .shader => |s| {
                 return .{ s.width, s.height };
             },
-            inline else => |_, t| {
-                @panic("Do not know how to get width for " ++ @tagName(t));
+            .composition => {
+                // FIXME: Customize composition size
+                return .{ 1920, 1080 };
             },
         }
     }
@@ -122,6 +124,10 @@ pub const Object = struct {
 pub const CompositionObject = struct {
     const ComposedObject = struct {
         id: ObjectId,
+        // Identity represents a aspect ratio corrected object that fills the
+        // parent. E.g. if the parent is wide, and the child is tall, the
+        // identity matrix will position the child such that it fills the
+        // parent vertically in the center
         transform: Transform,
     };
 
@@ -134,7 +140,7 @@ pub const CompositionObject = struct {
 
         for (0..self.objects.items.len) |idx| {
             const transform = self.objects.items[idx].transform;
-            const center = lin.applyHomogenous(transform.mul(Vec3{ 0, 0, 1 }));
+            const center = lin.applyHomogenous(transform.apply(Vec3{ 0, 0, 1 }));
             const dist = lin.length2(center - test_pos);
             if (dist < current_dist) {
                 closest_idx = idx;
@@ -149,12 +155,7 @@ pub const CompositionObject = struct {
         if (self.selected_obj) |idx| {
             const obj = &self.objects.items[idx];
 
-            // FIXME: implement mat mul
-            std.debug.assert(obj.transform.data[8] == 1);
-
-            // FIXME: Gross hack, create translation and mat mul it in
-            obj.transform.data[2] += movement[0];
-            obj.transform.data[5] += movement[1];
+            obj.transform = obj.transform.then(Transform.translate(movement[0], movement[1]));
         }
     }
 
@@ -249,7 +250,6 @@ pub const FilesystemObject = struct {
     source: [:0]const u8,
     width: usize,
     height: usize,
-    // FIXME: Aspect
 
     texture: Renderer.Texture,
 

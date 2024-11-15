@@ -5,6 +5,7 @@ const gl = @import("gl.zig");
 const Renderer = @import("Renderer.zig");
 const obj_mod = @import("object.zig");
 const StbImage = @import("StbImage.zig");
+const coords = @import("coords.zig");
 
 const Object = obj_mod.Object;
 const ObjectId = obj_mod.ObjectId;
@@ -13,15 +14,16 @@ const Objects = obj_mod.Objects;
 const Vec2 = lin.Vec2;
 const Vec3 = lin.Vec3;
 const Transform = lin.Transform;
+const PixelDims = obj_mod.PixelDims;
 
 const App = @This();
 
 alloc: Allocator,
 objects: Objects = .{},
 renderer: Renderer,
-window_width: usize,
-window_height: usize,
+view_state: ViewState,
 mouse_pos: lin.Vec2 = .{ 0.0, 0.0 },
+panning: bool = false,
 selected_object: ObjectId = .{ .value = 0 },
 
 pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
@@ -34,8 +36,10 @@ pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
         .alloc = alloc,
         .objects = objects,
         .renderer = renderer,
-        .window_width = window_width,
-        .window_height = window_height,
+        .view_state = .{
+            .window_width = window_width,
+            .window_height = window_height,
+        },
     };
 }
 
@@ -89,13 +93,13 @@ pub fn load(self: *App, path: []const u8) !void {
 }
 
 pub fn render(self: *App) !void {
-    try self.renderer.render(self.alloc, &self.objects, self.selected_object, self.window_width, self.window_height);
+    try self.renderer.render(self.alloc, &self.objects, self.selected_object, self.view_state.objectToWindowTransform(self.selectedDims()), self.view_state.window_width, self.view_state.window_height);
 }
 
 pub fn setMouseDown(self: *App) void {
     switch (self.objects.get(self.selected_object).data) {
-        .composition => |*c| c.selectClosestPoint(self.mouse_pos),
-        .path => |*p| p.selectClosestPoint(self.mouse_pos),
+        .composition => |*c| c.selectClosestPoint(self.view_state.clipToObject(self.mouse_pos, self.selectedDims())),
+        .path => |*p| p.selectClosestPoint(self.view_state.clipToObject(self.mouse_pos, self.selectedDims())),
         else => {},
     }
 }
@@ -108,33 +112,52 @@ pub fn setMouseUp(self: *App) void {
     }
 }
 
+pub fn setMiddleDown(self: *App) void {
+    self.panning = true;
+}
+
+pub fn setMiddleUp(self: *App) void {
+    self.panning = false;
+}
+
 pub fn clickRightMouse(self: *App) !void {
     switch (self.objects.get(self.selected_object).data) {
         .path => |*p| {
-            try p.addPoint(self.alloc, self.mouse_pos);
+            try p.addPoint(self.alloc, self.view_state.clipToObject(self.mouse_pos, self.selectedDims()));
             try self.regeneratePathMasks(self.selected_object);
         },
         else => {},
     }
 }
 
+pub fn scroll(self: *App, amount: f32) void {
+    self.view_state.zoom(amount);
+}
+
 pub fn setMousePos(self: *App, xpos: f32, ypos: f32) !void {
-    const new_x = windowToClipX(xpos, self.window_width);
-    const new_y = windowToClipY(ypos, self.window_height);
+    const new_x = self.view_state.windowToClipX(xpos);
+    const new_y = self.view_state.windowToClipY(ypos);
     const new_pos = Vec2{ new_x, new_y };
     defer self.mouse_pos = new_pos;
 
+    const selected_dims = self.selectedDims();
+    const offs_obj_coords = self.view_state.clipToObject(new_pos, selected_dims) - self.view_state.clipToObject(self.mouse_pos, selected_dims);
+
     switch (self.objects.get(self.selected_object).data) {
         .composition => |*composition_object| {
-            composition_object.moveObject(new_pos - self.mouse_pos);
+            composition_object.moveObject(offs_obj_coords);
         },
         .path => |*p| {
-            p.movePoint(new_pos - self.mouse_pos);
+            p.movePoint(offs_obj_coords);
             if (p.selected_point) |_| {
                 try self.regeneratePathMasks(self.selected_object);
             }
         },
         else => {},
+    }
+
+    if (self.panning) {
+        self.view_state.pan(self.mouse_pos - new_pos);
     }
 }
 
@@ -182,6 +205,155 @@ pub fn createPath(self: *App) !void {
         .transform = Transform.scale(0.5, 0.5),
     });
 }
+
+fn selectedDims(self: *App) PixelDims {
+    return self.objects.get(self.selected_object).dims(&self.objects);
+}
+
+const ViewState = struct {
+    window_width: usize,
+    window_height: usize,
+    viewport_center: Vec2 = .{ 0.0, 0.0 },
+    zoom_level: f32 = 1.0,
+
+    fn pan(self: *ViewState, movement_clip: Vec2) void {
+        self.viewport_center += movement_clip / Vec2{ self.zoom_level, self.zoom_level };
+    }
+
+    fn zoom(self: *ViewState, amount: f32) void {
+        // Note that amount is in range [-N,N]
+        // If we want the zoom adjustment to feel consistent, we need the
+        // change from 4-8x to feel the same as the change from 1-2x
+        // This means that a multiplicative level feels better than an additive one
+        // So we need a function that goes from [-N,N] -> [lower than 1, greater than 1]
+        // If we take this to the extreme, we want -inf -> 0, inf -> inf, 1 ->
+        // 0. x^y provides this.
+        // x^y also has the nice property that x^y*x^z == x^(y+z), which
+        // results in merged scroll events acting the same as multiple split
+        // events
+        // Constant tuned until whatever scroll value we were getting felt ok
+        //
+        //
+        // 1.1^(x+y) == 1.1^x * 1.1^y
+        self.zoom_level *= std.math.pow(f32, 1.1, amount);
+    }
+
+    fn windowToClipX(self: ViewState, xpos: f32) f32 {
+        const window_width_f: f32 = @floatFromInt(self.window_width);
+        return ((xpos / window_width_f) - 0.5) * 2;
+    }
+
+    fn windowToClipY(self: ViewState, ypos: f32) f32 {
+        const window_height_f: f32 = @floatFromInt(self.window_height);
+        return (1.0 - (ypos / window_height_f) - 0.5) * 2;
+    }
+
+    fn clipToObject(self: *ViewState, val: Vec2, object_dims: PixelDims) Vec2 {
+        const obj_aspect = coords.calcAspect(object_dims[0], object_dims[1]);
+        const window_aspect = coords.calcAspect(self.window_width, self.window_height);
+
+        var aspect_aspect_v: Vec2 = undefined;
+
+        if (window_aspect > obj_aspect) {
+            aspect_aspect_v = Vec2{ obj_aspect / window_aspect, 1.0 };
+        } else {
+            aspect_aspect_v = Vec2{ 1.0, window_aspect / obj_aspect };
+        }
+
+        return (self.viewport_center + val / Vec2{ self.zoom_level, self.zoom_level }) / aspect_aspect_v;
+    }
+
+    fn objectToWindowTransform(self: ViewState, object_dims: PixelDims) Transform {
+        const aspect_transform = coords.aspectRatioCorrectedFill(
+            object_dims[0],
+            object_dims[1],
+            self.window_width,
+            self.window_height,
+        );
+
+        return aspect_transform
+            .then(Transform.translate(-self.viewport_center[0], -self.viewport_center[1]))
+            .then(Transform.scale(self.zoom_level, self.zoom_level));
+    }
+
+    test "test aspect no zoom/pan" {
+        const view_state = ViewState{
+            .window_width = 100,
+            .window_height = 50,
+            .viewport_center = .{ 0.0, 0.0 },
+            .zoom_level = 1.0,
+        };
+
+        const transform = view_state.objectToWindowTransform(.{ 50, 100 });
+        // Given an object that's 50x100, in a window 100x50
+        //
+        //  ______________________
+        // |       |      |       |
+        // |       | o  o |       |
+        // |       | ____ |       |
+        // |       |      |       |
+        // |       |      |       |
+        // |_______|______|_______|
+        //
+        // The object has coordinates of [-1, 1] in both dimensions, as does
+        // the window
+        //
+        // This means that in window space, the object coordinates have be
+        // squished, such that the aspect ratio of the object is preserved, and
+        // the height stays the same
+
+        const tl_obj = Vec3{ -1.0, 1.0, 1.0 };
+        const br_obj = Vec3{ 1.0, -1.0, 1.0 };
+
+        const tl_obj_win = lin.applyHomogenous(transform.apply(tl_obj));
+        const br_obj_win = lin.applyHomogenous(transform.apply(br_obj));
+
+        // Height is essentially preserved
+        try std.testing.expectApproxEqAbs(1.0, tl_obj_win[1], 0.01);
+        try std.testing.expectApproxEqAbs(-1.0, br_obj_win[1], 0.01);
+
+        // Width needs to be scaled in such a way that the aspect ratio 50/100
+        // is preserved in _pixel_ space. The window is stretched so that the
+        // aspect is 2:1. In a non stretched window, we would expect that
+        // 50/100 maps to N/2, so the width of 1/2 needs to be halfed _again_
+        // to stay correct in the stretched window
+        //
+        // New width is then 0.5
+        try std.testing.expectApproxEqAbs(-0.25, tl_obj_win[0], 0.01);
+        try std.testing.expectApproxEqAbs(0.25, br_obj_win[0], 0.01);
+    }
+
+    test "test aspect with zoom/pan" {
+        // Similar to the above test case, but with the viewport moved
+        const view_state = ViewState{
+            .window_width = 100,
+            .window_height = 50,
+            .viewport_center = .{ 0.5, 0.5 },
+            .zoom_level = 2.0,
+        };
+
+        const transform = view_state.objectToWindowTransform(.{ 50, 100 });
+
+        const tl_obj = Vec3{ -1.0, 1.0, 1.0 };
+        const br_obj = Vec3{ 1.0, -1.0, 1.0 };
+
+        const tl_obj_win = lin.applyHomogenous(transform.apply(tl_obj));
+        const br_obj_win = lin.applyHomogenous(transform.apply(br_obj));
+
+        // Height should essentially be doubled in window space, because the
+        // zoom is doubled. We are centered 0.5,0.5 up to the right, so a 2.0
+        // height object should be 1.0 above us, and 3.0 below us
+        try std.testing.expectApproxEqAbs(1.0, tl_obj_win[1], 0.01);
+        try std.testing.expectApproxEqAbs(-3.0, br_obj_win[1], 0.01);
+
+        // In unzoomed space, the answer was [-0.25, 0.25]. We are centered at
+        // 0.5, with a 2x zoom. This means that the right side is 0.25 to our
+        // left (un zoomed), and the left side is 0.5 farther than that. Double
+        // the distances for 2x zoom, and we get -0.5, -1.5
+        try std.testing.expectApproxEqAbs(-1.5, tl_obj_win[0], 0.01);
+        try std.testing.expectApproxEqAbs(-0.5, br_obj_win[0], 0.01);
+    }
+};
 
 const MaskIterator = struct {
     it: Objects.IdIter,
@@ -236,19 +408,6 @@ fn getCompositionObj(self: *App) ?*obj_mod.CompositionObject {
     }
 }
 
-fn windowToClipX(xpos: f32, width: usize) f32 {
-    const window_width_f: f32 = @floatFromInt(width);
-    return ((xpos / window_width_f) - 0.5) * 2;
-}
-
-fn windowToClipY(ypos: f32, height: usize) f32 {
-    const window_height_f: f32 = @floatFromInt(height);
-    return (1.0 - (ypos / window_height_f) - 0.5) * 2;
-}
-
-pub fn loadImageToTexture(path: [:0]const u8) !gl.GLuint {
-    const image = try StbImage.init(path);
-    defer image.deinit();
-
-    return Renderer.makeTextureFromRgba(image.data, image.width);
+test {
+    std.testing.refAllDeclsRecursive(@This());
 }
