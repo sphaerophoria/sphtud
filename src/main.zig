@@ -2,6 +2,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const gl = @import("gl.zig");
 const App = @import("App.zig");
+const obj_mod = @import("object.zig");
+const lin = @import("lin.zig");
 const c = @cImport({
     @cInclude("GLFW/glfw3.h");
     @cDefine("CIMGUI_DEFINE_ENUMS_AND_STRUCTS", "");
@@ -171,10 +173,10 @@ const Imgui = struct {
         c.igNewFrame();
     }
 
-    fn renderObjectList(objects: *App.Objects, selected_idx: App.ObjectId) !?App.ObjectId {
+    fn renderObjectList(objects: *obj_mod.Objects, selected_idx: obj_mod.ObjectId) !?obj_mod.ObjectId {
         _ = c.igBegin("Object list", null, 0);
 
-        var ret: ?App.ObjectId = null;
+        var ret: ?obj_mod.ObjectId = null;
         var it = objects.idIter();
         while (it.next()) |object_id| {
             const object = objects.get(object_id);
@@ -201,7 +203,7 @@ const Imgui = struct {
         create_path,
     };
 
-    fn renderObjectProperties(selected_object: *App.Object) !?PropertyAction {
+    fn renderObjectProperties(selected_object: *obj_mod.Object) !?PropertyAction {
         if (!c.igBegin("Object properties", null, 0)) {
             return null;
         }
@@ -379,10 +381,10 @@ pub fn main() !void {
         },
         .open_images => |images| {
             const composition_idx = app.objects.nextId();
-            try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, "composition"), .data = .{ .composition = App.CompositionObject{} } });
+            try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, "composition"), .data = .{ .composition = obj_mod.CompositionObject{} } });
             for (images) |path| {
                 const fs_id = app.objects.nextId();
-                const fs_obj = try App.FilesystemObject.load(alloc, path);
+                const fs_obj = try obj_mod.FilesystemObject.load(alloc, path);
                 try app.objects.append(alloc, .{
                     .name = try alloc.dupe(u8, path),
                     .data = .{
@@ -396,17 +398,17 @@ pub fn main() !void {
                 const shader_id = app.objects.nextId();
                 try app.objects.append(alloc, .{
                     .name = swapped_name,
-                    .data = .{ .shader = try App.ShaderObject.init(alloc, &.{fs_id}, swap_colors_frag, &.{"u_texture"}, fs_obj.width, fs_obj.height) },
+                    .data = .{ .shader = try obj_mod.ShaderObject.init(alloc, &.{fs_id}, swap_colors_frag, &.{"u_texture"}, fs_obj.width, fs_obj.height) },
                 });
 
                 try app.objects.get(composition_idx).data.composition.objects.append(alloc, .{
                     .id = fs_id,
-                    .transform = App.Transform.scale(0.5, 0.5),
+                    .transform = lin.Transform.scale(0.5, 0.5),
                 });
 
                 try app.objects.get(composition_idx).data.composition.objects.append(alloc, .{
                     .id = shader_id,
-                    .transform = App.Transform.scale(0.5, 0.5),
+                    .transform = lin.Transform.scale(0.5, 0.5),
                 });
             }
         },

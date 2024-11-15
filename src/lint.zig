@@ -5,6 +5,8 @@ const egl = @cImport({
     @cInclude("EGL/eglext.h");
 });
 const App = @import("App.zig");
+const lin = @import("lin.zig");
+const obj_mod = @import("object.zig");
 const stbiw = @cImport({
     @cInclude("stb_image_write.h");
 });
@@ -109,10 +111,10 @@ pub fn main() !void {
 
     for (0..2) |_| {
         const composition_idx = app.objects.nextId();
-        try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, "composition"), .data = .{ .composition = App.CompositionObject{} } });
+        try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, "composition"), .data = .{ .composition = obj_mod.CompositionObject{} } });
 
         const id = app.objects.nextId();
-        const fs_obj = try App.FilesystemObject.load(alloc, dummy_path);
+        const fs_obj = try obj_mod.FilesystemObject.load(alloc, dummy_path);
         try app.objects.append(alloc, .{
             .name = try alloc.dupe(u8, dummy_path),
             .data = .{ .filesystem = fs_obj },
@@ -122,16 +124,16 @@ pub fn main() !void {
         errdefer alloc.free(swapped_name);
 
         const shader_id = app.objects.nextId();
-        try app.objects.append(alloc, .{ .name = swapped_name, .data = .{ .shader = try App.ShaderObject.init(alloc, &.{id}, swap_colors_frag, &.{"u_texture"}, fs_obj.width, fs_obj.height) } });
+        try app.objects.append(alloc, .{ .name = swapped_name, .data = .{ .shader = try obj_mod.ShaderObject.init(alloc, &.{id}, swap_colors_frag, &.{"u_texture"}, fs_obj.width, fs_obj.height) } });
 
         try app.objects.get(composition_idx).data.composition.objects.append(alloc, .{
             .id = id,
-            .transform = App.Transform.scale(0.5, 0.5),
+            .transform = lin.Transform.scale(0.5, 0.5),
         });
 
         try app.objects.get(composition_idx).data.composition.objects.append(alloc, .{
             .id = shader_id,
-            .transform = App.Transform.scale(0.5, 0.5),
+            .transform = lin.Transform.scale(0.5, 0.5),
         });
 
         app.selected_object = id;
