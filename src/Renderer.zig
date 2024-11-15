@@ -12,6 +12,7 @@ const Transform = lin.Transform;
 const gl = @import("gl.zig");
 
 program: PlaneRenderProgram,
+background_program: PlaneRenderProgram,
 path_program: PathRenderProgram,
 
 const Renderer = @This();
@@ -23,11 +24,15 @@ pub fn init(alloc: Allocator) !Renderer {
     const plane_program = try PlaneRenderProgram.init(alloc, plane_vertex_shader, plane_fragment_shader, &.{"u_texture"});
     errdefer plane_program.deinit(alloc);
 
+    const background_program = try PlaneRenderProgram.init(alloc, plane_vertex_shader, checkerboard_fragment_shader, &.{});
+    errdefer background_program.deinit(alloc);
+
     const path_program = try PathRenderProgram.init();
     errdefer path_program.deinit(alloc);
 
     return .{
         .program = plane_program,
+        .background_program = background_program,
         .path_program = path_program,
     };
 }
@@ -44,6 +49,11 @@ pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, selected_obj
     defer texture_cache.deinit();
 
     const active_object = objects.get(selected_object);
+    const object_dims = active_object.dims(objects);
+
+    const toplevel_aspect = coords.calcAspect(object_dims[0], object_dims[1]);
+    self.background_program.render(&.{}, transform, toplevel_aspect);
+
     try self.renderObjectWithTransform(alloc, objects, active_object.*, transform, &texture_cache);
 }
 
@@ -83,7 +93,7 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
             }
         },
         .filesystem => |f| {
-            self.program.render(&.{f.texture}, transform);
+            self.program.render(&.{f.texture}, transform, coords.calcAspect(f.width, f.height));
         },
         .shader => |s| {
             var sources = std.ArrayList(Texture).init(alloc);
@@ -94,7 +104,8 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
                 try sources.append(texture);
             }
 
-            s.program.render(sources.items, transform);
+            const object_dims = object.dims(objects);
+            s.program.render(sources.items, transform, coords.calcAspect(object_dims[0], object_dims[1]));
         },
         .path => |p| {
             const display_object = objects.get(p.display_object);
@@ -103,7 +114,8 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
             self.path_program.render(p.vertex_array, transform, p.selected_point, p.points.items.len);
         },
         .generated_mask => |m| {
-            self.program.render(&.{m.texture}, transform);
+            const object_dims = object.dims(objects);
+            self.program.render(&.{m.texture}, transform, coords.calcAspect(object_dims[0], object_dims[1]));
         },
     }
 }
@@ -166,6 +178,7 @@ pub const Texture = struct {
 pub const PlaneRenderProgram = struct {
     program: gl.GLuint,
     transform_location: gl.GLint,
+    aspect_location: gl.GLint,
     texture_locations: []gl.GLint,
     vertex_buffer: gl.GLuint,
     vertex_array: gl.GLuint,
@@ -177,6 +190,7 @@ pub const PlaneRenderProgram = struct {
         const vpos_location = gl.glGetAttribLocation(program, "vPos");
         const vuv_location = gl.glGetAttribLocation(program, "vUv");
         const transform_location = gl.glGetUniformLocation(program, "transform");
+        const aspect_location = gl.glGetUniformLocation(program, "aspect");
 
         var texture_locations = std.ArrayList(gl.GLint).init(alloc);
         defer texture_locations.deinit();
@@ -208,6 +222,7 @@ pub const PlaneRenderProgram = struct {
         return .{
             .program = program,
             .texture_locations = try texture_locations.toOwnedSlice(),
+            .aspect_location = aspect_location,
             .vertex_buffer = vertex_buffer,
             .vertex_array = vertex_array,
             .transform_location = transform_location,
@@ -221,10 +236,11 @@ pub const PlaneRenderProgram = struct {
         gl.glDeleteProgram(self.program);
     }
 
-    fn render(self: PlaneRenderProgram, textures: []const Texture, transform: lin.Transform) void {
+    fn render(self: PlaneRenderProgram, textures: []const Texture, transform: lin.Transform, aspect: f32) void {
         gl.glUseProgram(self.program);
         gl.glBindVertexArray(self.vertex_array);
         gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &transform.inner.data);
+        gl.glUniform1f(self.aspect_location, aspect);
 
         for (0..textures.len) |i| {
             const texture_unit = gl.GL_TEXTURE0 + i;
@@ -457,10 +473,24 @@ pub const plane_fragment_shader =
     \\#version 330
     \\in vec2 uv;
     \\out vec4 fragment;
+    \\uniform float aspect;
     \\uniform sampler2D u_texture;  // The texture
     \\void main()
     \\{
     \\    fragment = texture(u_texture, vec2(uv.x, uv.y));
+    \\}
+;
+
+pub const checkerboard_fragment_shader =
+    \\#version 330
+    \\in vec2 uv;
+    \\out vec4 fragment;
+    \\uniform float aspect;
+    \\void main()
+    \\{
+    \\    ivec2 biguv = ivec2(uv.x * 100, uv.y * 100 / aspect);
+    \\    bool is_dark = (biguv.x + biguv.y) % 2 == 0;
+    \\    fragment = (is_dark) ? vec4(0.4, 0.4, 0.4, 1.0) : vec4(0.6, 0.6, 0.6, 1.0);
     \\}
 ;
 
