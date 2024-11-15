@@ -251,14 +251,14 @@ pub const FilesystemObject = struct {
     height: usize,
     // FIXME: Aspect
 
-    texture: gl.GLuint,
+    texture: Renderer.Texture,
 
     pub fn load(alloc: Allocator, path: [:0]const u8) !FilesystemObject {
         const image = try StbImage.init(path);
         defer image.deinit();
 
         const texture = Renderer.makeTextureFromRgba(image.data, image.width);
-        errdefer gl.glDeleteTextures(1, &texture);
+        errdefer texture.deinit();
 
         const source = try alloc.dupeZ(u8, path);
         errdefer alloc.free(source);
@@ -272,7 +272,7 @@ pub const FilesystemObject = struct {
     }
 
     pub fn deinit(self: FilesystemObject, alloc: Allocator) void {
-        gl.glDeleteTextures(1, &self.texture);
+        self.texture.deinit();
         alloc.free(self.source);
     }
 };
@@ -355,12 +355,12 @@ pub const PathObject = struct {
 pub const GeneratedMaskObject = struct {
     source: ObjectId,
 
-    texture: gl.GLuint,
+    texture: Renderer.Texture,
 
     pub fn initNullTexture(source: ObjectId) GeneratedMaskObject {
         return .{
             .source = source,
-            .texture = std.math.maxInt(gl.GLuint),
+            .texture = Renderer.Texture.invalid,
         };
     }
 
@@ -472,7 +472,7 @@ pub const GeneratedMaskObject = struct {
     }
 
     pub fn deinit(self: GeneratedMaskObject) void {
-        gl.glDeleteTextures(1, &self.texture);
+        self.texture.deinit();
     }
 };
 

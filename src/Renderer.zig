@@ -46,7 +46,7 @@ pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, selected_obj
     try self.renderObjectWithTransform(alloc, objects, active_object.*, Transform.identity, &texture_cache);
 }
 
-fn renderedTexture(self: *Renderer, alloc: Allocator, objects: *Objects, texture_cache: *TextureCache, id: ObjectId) !gl.GLuint {
+fn renderedTexture(self: *Renderer, alloc: Allocator, objects: *Objects, texture_cache: *TextureCache, id: ObjectId) !Texture {
     if (texture_cache.get(id)) |t| {
         return t;
     }
@@ -72,7 +72,7 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
             self.program.render(&.{f.texture}, transform);
         },
         .shader => |s| {
-            var sources = std.ArrayList(gl.GLuint).init(alloc);
+            var sources = std.ArrayList(Texture).init(alloc);
             defer sources.deinit();
 
             for (s.input_images) |input_image| {
@@ -119,11 +119,11 @@ const TemporaryViewport = struct {
     }
 };
 
-fn renderObjectToTexture(self: *Renderer, alloc: Allocator, objects: *Objects, input: Object, texture_cache: *TextureCache) anyerror!gl.GLuint {
+fn renderObjectToTexture(self: *Renderer, alloc: Allocator, objects: *Objects, input: Object, texture_cache: *TextureCache) anyerror!Texture {
     const dep_width, const dep_height = input.dims(objects);
 
     const texture = makeTextureOfSize(@intCast(dep_width), @intCast(dep_height));
-    errdefer gl.glDeleteTextures(1, &texture);
+    errdefer texture.deinit();
 
     const render_context = FramebufferRenderContext.init(texture);
     defer render_context.reset();
@@ -138,6 +138,16 @@ fn renderObjectToTexture(self: *Renderer, alloc: Allocator, objects: *Objects, i
     try self.renderObjectWithTransform(alloc, objects, input, Transform.identity, texture_cache);
     return texture;
 }
+
+pub const Texture = struct {
+    pub const invalid = Texture{ .inner = std.math.maxInt(gl.GLuint) };
+
+    inner: gl.GLuint,
+
+    pub fn deinit(self: Texture) void {
+        gl.glDeleteTextures(1, &self.inner);
+    }
+};
 
 pub const PlaneRenderProgram = struct {
     program: gl.GLuint,
@@ -197,7 +207,7 @@ pub const PlaneRenderProgram = struct {
         gl.glDeleteProgram(self.program);
     }
 
-    fn render(self: PlaneRenderProgram, textures: []const gl.GLuint, transform: lin.Transform) void {
+    fn render(self: PlaneRenderProgram, textures: []const Texture, transform: lin.Transform) void {
         gl.glUseProgram(self.program);
         gl.glBindVertexArray(self.vertex_array);
         gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &transform.data);
@@ -205,7 +215,7 @@ pub const PlaneRenderProgram = struct {
         for (0..textures.len) |i| {
             const texture_unit = gl.GL_TEXTURE0 + i;
             gl.glActiveTexture(@intCast(texture_unit));
-            gl.glBindTexture(gl.GL_TEXTURE_2D, textures[i]);
+            gl.glBindTexture(gl.GL_TEXTURE_2D, textures[i].inner);
             gl.glUniform1i(self.texture_locations[i], @intCast(i));
         }
 
@@ -216,7 +226,7 @@ pub const PlaneRenderProgram = struct {
 pub const FramebufferRenderContext = struct {
     fbo: gl.GLuint,
 
-    pub fn init(render_texture: gl.GLuint) FramebufferRenderContext {
+    pub fn init(render_texture: Texture) FramebufferRenderContext {
         var fbo: gl.GLuint = undefined;
         gl.glGenFramebuffers(1, &fbo);
 
@@ -225,7 +235,7 @@ pub const FramebufferRenderContext = struct {
             gl.GL_FRAMEBUFFER,
             gl.GL_COLOR_ATTACHMENT0,
             gl.GL_TEXTURE_2D,
-            render_texture,
+            render_texture.inner,
             0,
         );
 
@@ -243,7 +253,7 @@ pub const FramebufferRenderContext = struct {
 const TextureCache = struct {
     inner: Inner,
     objects: *Objects,
-    const Inner = std.AutoHashMap(ObjectId, gl.GLuint);
+    const Inner = std.AutoHashMap(ObjectId, Texture);
 
     fn init(alloc: Allocator, objects: *Objects) TextureCache {
         return .{
@@ -255,13 +265,13 @@ const TextureCache = struct {
     fn deinit(self: *TextureCache) void {
         var texture_it = self.inner.valueIterator();
         while (texture_it.next()) |t| {
-            gl.glDeleteTextures(1, t);
+            t.deinit();
         }
 
         self.inner.deinit();
     }
 
-    fn get(self: *TextureCache, id: ObjectId) ?gl.GLuint {
+    fn get(self: *TextureCache, id: ObjectId) ?Texture {
         const object = self.objects.get(id);
 
         switch (object.data) {
@@ -273,7 +283,7 @@ const TextureCache = struct {
         return self.inner.get(id);
     }
 
-    fn put(self: *TextureCache, id: ObjectId, texture: gl.GLuint) !void {
+    fn put(self: *TextureCache, id: ObjectId, texture: Texture) !void {
         try self.inner.put(id, texture);
     }
 };
@@ -350,7 +360,7 @@ fn compileLinkProgram(vs: [:0]const u8, fs: [:0]const u8) !gl.GLuint {
     return program;
 }
 
-pub fn makeTextureFromR(data: []const u8, width: usize) gl.GLuint {
+pub fn makeTextureFromR(data: []const u8, width: usize) Texture {
     const texture = makeTextureCommon();
     const height = data.len / width;
     gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RED, @intCast(width), @intCast(height), 0, gl.GL_RED, gl.GL_UNSIGNED_BYTE, data.ptr);
@@ -360,7 +370,7 @@ pub fn makeTextureFromR(data: []const u8, width: usize) gl.GLuint {
     return texture;
 }
 
-pub fn makeTextureFromRgba(data: []const u8, width: usize) gl.GLuint {
+pub fn makeTextureFromRgba(data: []const u8, width: usize) Texture {
     const texture = makeTextureCommon();
 
     const height = data.len / width / 4;
@@ -371,7 +381,7 @@ pub fn makeTextureFromRgba(data: []const u8, width: usize) gl.GLuint {
     return texture;
 }
 
-pub fn makeTextureOfSize(width: u31, height: u31) gl.GLuint {
+pub fn makeTextureOfSize(width: u31, height: u31) Texture {
     const texture = makeTextureCommon();
     gl.glTexImage2D(
         gl.GL_TEXTURE_2D,
@@ -387,7 +397,7 @@ pub fn makeTextureOfSize(width: u31, height: u31) gl.GLuint {
     return texture;
 }
 
-pub fn makeTextureCommon() gl.GLuint {
+fn makeTextureCommon() Texture {
     var texture: gl.GLuint = 0;
 
     // Generate the texture object
@@ -400,8 +410,9 @@ pub fn makeTextureCommon() gl.GLuint {
     gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR); // Minification filter
     gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR); // Magnification filter
 
-    return texture;
+    return .{ .inner = texture };
 }
+
 const plane_vertices: []const f32 = &.{
     -1.0, -1.0, 0.0, 0.0,
     1.0,  -1.0, 1.0, 0.0,
