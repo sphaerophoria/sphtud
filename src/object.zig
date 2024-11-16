@@ -129,6 +129,20 @@ pub const Object = struct {
             .composition => false,
         };
     }
+
+    pub fn asPath(self: *Object) ?*PathObject {
+        switch (self.data) {
+            .path => |*p| return p,
+            else => return null,
+        }
+    }
+
+    pub fn asComposition(self: *Object) ?*CompositionObject {
+        switch (self.data) {
+            .composition => |*c| return c,
+            else => return null,
+        }
+    }
 };
 
 pub const CompositionIdx = struct {
@@ -146,33 +160,11 @@ pub const CompositionObject = struct {
     };
 
     objects: std.ArrayListUnmanaged(ComposedObject) = .{},
-    selected_obj: ?usize = null,
 
-    pub fn selectClosestPoint(self: *CompositionObject, test_pos: Vec2) void {
-        var closest_idx: usize = 0;
-        var current_dist = std.math.inf(f32);
+    pub fn moveObject(self: *CompositionObject, idx: CompositionIdx, movement: Vec2) void {
+        const obj = &self.objects.items[idx.value];
 
-        for (0..self.objects.items.len) |idx| {
-            const transform = self.objects.items[idx].transform;
-            const center = lin.applyHomogenous(transform.apply(Vec3{ 0, 0, 1 }));
-            const dist = lin.length2(center - test_pos);
-            if (dist < current_dist) {
-                closest_idx = idx;
-                current_dist = dist;
-            }
-        }
-
-        if (current_dist != std.math.inf(f32)) {
-            self.selected_obj = closest_idx;
-        }
-    }
-
-    pub fn moveObject(self: *CompositionObject, movement: Vec2) void {
-        if (self.selected_obj) |idx| {
-            const obj = &self.objects.items[idx];
-
-            obj.transform = obj.transform.then(Transform.translate(movement[0], movement[1]));
-        }
+        obj.transform = obj.transform.then(Transform.translate(movement[0], movement[1]));
     }
 
     pub fn addObj(self: *CompositionObject, alloc: Allocator, id: ObjectId) !void {
@@ -184,11 +176,6 @@ pub const CompositionObject = struct {
 
     pub fn removeObj(self: *CompositionObject, id: CompositionIdx) void {
         _ = self.objects.swapRemove(id.value);
-
-        // FIXME: selected_obj should be strong type too
-        if (self.selected_obj == id.value) {
-            self.selected_obj = null;
-        }
     }
 
     pub fn deinit(self: *CompositionObject, alloc: Allocator) void {
@@ -309,6 +296,8 @@ pub const FilesystemObject = struct {
     }
 };
 
+pub const PathIdx = struct { value: usize };
+
 pub const PathObject = struct {
     points: std.ArrayListUnmanaged(Vec2) = .{},
     display_object: ObjectId,
@@ -345,21 +334,6 @@ pub const PathObject = struct {
         };
     }
 
-    pub fn selectClosestPoint(self: *PathObject, test_pos: Vec2) void {
-        var closest_point: usize = 0;
-        var min_dist = std.math.inf(f32);
-
-        for (self.points.items, 0..) |point, idx| {
-            const dist = lin.length2(test_pos - point);
-            if (dist < min_dist) {
-                closest_point = idx;
-                min_dist = dist;
-            }
-        }
-
-        self.selected_point = closest_point;
-    }
-
     fn setBufferData(vertex_buffer: gl.GLuint, points: []const Vec2) void {
         gl.glBindBuffer(gl.GL_ARRAY_BUFFER, vertex_buffer);
         gl.glBufferData(gl.GL_ARRAY_BUFFER, @intCast(points.len * 8), points.ptr, gl.GL_DYNAMIC_DRAW);
@@ -370,11 +344,9 @@ pub const PathObject = struct {
         setBufferData(self.vertex_buffer, self.points.items);
     }
 
-    pub fn movePoint(self: *PathObject, movement: Vec2) void {
-        const idx = if (self.selected_point) |idx| idx else return;
-
-        self.points.items[idx] += movement;
-        gl.glNamedBufferSubData(self.vertex_buffer, @intCast(idx * 8), 8, &self.points.items[idx]);
+    pub fn movePoint(self: *PathObject, idx: PathIdx, movement: Vec2) void {
+        self.points.items[idx.value] += movement;
+        gl.glNamedBufferSubData(self.vertex_buffer, @intCast(idx.value * 8), 8, &self.points.items[idx.value]);
     }
 
     pub fn deinit(self: *PathObject, alloc: Allocator) void {

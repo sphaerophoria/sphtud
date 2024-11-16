@@ -153,20 +153,20 @@ pub fn main() !void {
             image_dims[1],
         );
 
-        app.selected_object = composition_idx;
+        app.setSelectedObject(composition_idx);
         try app.addToComposition(id);
         try app.addToComposition(shader_id);
 
-        app.selected_object = id;
+        app.setSelectedObject(id);
         try app.createPath();
 
-        app.selected_object = shader_id;
+        app.setSelectedObject(shader_id);
         try app.createPath();
     }
 
     var it = app.objects.idIter();
     while (it.next()) |i| {
-        app.selected_object = i;
+        app.setSelectedObject(i);
         try inputOnCanvas(&app);
     }
 
@@ -178,7 +178,7 @@ pub fn main() !void {
 
     it = app.objects.idIter();
     while (it.next()) |i| {
-        app.selected_object = i;
+        app.setSelectedObject(i);
         try inputOnCanvas(&app);
     }
 }

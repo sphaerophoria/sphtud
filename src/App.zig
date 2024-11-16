@@ -22,9 +22,7 @@ alloc: Allocator,
 objects: Objects = .{},
 renderer: Renderer,
 view_state: ViewState,
-mouse_pos: lin.Vec2 = .{ 0.0, 0.0 },
-panning: bool = false,
-selected_object: ObjectId = .{ .value = 0 },
+input_state: InputState = .{},
 
 pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
     var objects = Objects{};
@@ -90,44 +88,46 @@ pub fn load(self: *App, path: []const u8) !void {
 
     // Loaded masks do not generate textures
     try self.regenerateAllMasks();
+
+    var id_it = self.objects.idIter();
+    if (id_it.next()) |id| {
+        self.input_state.selectObject(id, &self.objects);
+    }
 }
 
 pub fn render(self: *App) !void {
-    try self.renderer.render(self.alloc, &self.objects, self.selected_object, self.view_state.objectToWindowTransform(self.selectedDims()), self.view_state.window_width, self.view_state.window_height);
+    try self.renderer.render(self.alloc, &self.objects, self.input_state.selected_object, self.view_state.objectToWindowTransform(self.selectedDims()), self.view_state.window_width, self.view_state.window_height);
+}
+
+pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {
+    const action = self.input_state.setKeyDown(key, ctrl);
+    try self.handleInputAction(action);
 }
 
 pub fn setMouseDown(self: *App) void {
-    switch (self.objects.get(self.selected_object).data) {
-        .composition => |*c| c.selectClosestPoint(self.view_state.clipToObject(self.mouse_pos, self.selectedDims())),
-        .path => |*p| p.selectClosestPoint(self.view_state.clipToObject(self.mouse_pos, self.selectedDims())),
-        else => {},
-    }
+    self.input_state.setMouseDown(&self.objects);
 }
 
 pub fn setMouseUp(self: *App) void {
-    switch (self.objects.get(self.selected_object).data) {
-        .composition => |*c| c.selected_obj = null,
-        .path => |*p| p.selected_point = null,
-        else => {},
-    }
+    self.input_state.setMouseUp();
 }
 
 pub fn setMiddleDown(self: *App) void {
-    self.panning = true;
+    self.input_state.setMiddleDown();
 }
 
 pub fn setMiddleUp(self: *App) void {
-    self.panning = false;
+    self.input_state.setMiddleUp();
 }
 
 pub fn clickRightMouse(self: *App) !void {
-    switch (self.objects.get(self.selected_object).data) {
-        .path => |*p| {
-            try p.addPoint(self.alloc, self.view_state.clipToObject(self.mouse_pos, self.selectedDims()));
-            try self.regeneratePathMasks(self.selected_object);
-        },
-        else => {},
-    }
+    const input_action = self.input_state.clickRightMouse();
+    try self.handleInputAction(input_action);
+}
+
+pub fn setSelectedObject(self: *App, id: ObjectId) void {
+    self.input_state.selectObject(id, &self.objects);
+    self.view_state.reset();
 }
 
 pub fn scroll(self: *App, amount: f32) void {
@@ -137,28 +137,10 @@ pub fn scroll(self: *App, amount: f32) void {
 pub fn setMousePos(self: *App, xpos: f32, ypos: f32) !void {
     const new_x = self.view_state.windowToClipX(xpos);
     const new_y = self.view_state.windowToClipY(ypos);
-    const new_pos = Vec2{ new_x, new_y };
-    defer self.mouse_pos = new_pos;
+    const new_pos = self.view_state.clipToObject(Vec2{ new_x, new_y }, self.selectedDims());
+    const input_action = self.input_state.setMousePos(new_pos);
 
-    const selected_dims = self.selectedDims();
-    const offs_obj_coords = self.view_state.clipToObject(new_pos, selected_dims) - self.view_state.clipToObject(self.mouse_pos, selected_dims);
-
-    switch (self.objects.get(self.selected_object).data) {
-        .composition => |*composition_object| {
-            composition_object.moveObject(offs_obj_coords);
-        },
-        .path => |*p| {
-            p.movePoint(offs_obj_coords);
-            if (p.selected_point) |_| {
-                try self.regeneratePathMasks(self.selected_object);
-            }
-        },
-        else => {},
-    }
-
-    if (self.panning) {
-        self.view_state.pan(self.mouse_pos - new_pos);
-    }
+    try self.handleInputAction(input_action);
 }
 
 pub fn createPath(self: *App) !void {
@@ -171,7 +153,7 @@ pub fn createPath(self: *App) !void {
     const path_obj = try obj_mod.PathObject.init(
         self.alloc,
         initial_positions,
-        self.selected_object,
+        self.input_state.selected_object,
         self.renderer.path_program.vpos_location,
     );
     try self.objects.append(self.alloc, .{
@@ -181,7 +163,7 @@ pub fn createPath(self: *App) !void {
         },
     });
 
-    const selected_dims = self.objects.get(self.selected_object).dims(&self.objects);
+    const selected_dims = self.objects.get(self.input_state.selected_object).dims(&self.objects);
     const mask_id = self.objects.nextId();
     try self.objects.append(self.alloc, .{
         .name = try self.alloc.dupe(u8, "new mask"),
@@ -193,13 +175,13 @@ pub fn createPath(self: *App) !void {
     try self.objects.append(self.alloc, .{
         .name = try self.alloc.dupe(u8, "masked obj"),
         .data = .{
-            .shader = try obj_mod.ShaderObject.init(self.alloc, &.{ self.selected_object, mask_id }, Renderer.mul_fragment_shader, &.{ "u_texture", "u_texture_2" }, selected_dims[0], selected_dims[1]),
+            .shader = try obj_mod.ShaderObject.init(self.alloc, &.{ self.input_state.selected_object, mask_id }, Renderer.mul_fragment_shader, &.{ "u_texture", "u_texture_2" }, selected_dims[0], selected_dims[1]),
         },
     });
 }
 
 pub fn addToComposition(self: *App, id: obj_mod.ObjectId) !void {
-    const selected_object = self.objects.get(self.selected_object);
+    const selected_object = self.objects.get(self.input_state.selected_object);
 
     if (selected_object.data != .composition) {
         return error.SelectedItemNotComposition;
@@ -209,13 +191,15 @@ pub fn addToComposition(self: *App, id: obj_mod.ObjectId) !void {
 }
 
 pub fn deleteFromComposition(self: *App, id: obj_mod.CompositionIdx) !void {
-    const selected_object = self.objects.get(self.selected_object);
+    const selected_object = self.objects.get(self.input_state.selected_object);
 
     if (selected_object.data != .composition) {
         return error.SelectedItemNotComposition;
     }
 
     selected_object.data.composition.removeObj(id);
+    // Force input state to release any references to a composition object
+    self.input_state.setMouseUp();
 }
 
 pub fn addComposition(self: *App) !ObjectId {
@@ -277,8 +261,12 @@ pub fn addShaderObject(self: *App, name: []const u8, input_images: []const Objec
     return shader_id;
 }
 
+fn selectedObject(self: *App) *Object {
+    return self.objects.get(self.input_state.selected_object);
+}
+
 fn selectedDims(self: *App) PixelDims {
-    return self.objects.get(self.selected_object).dims(&self.objects);
+    return self.objects.get(self.input_state.selected_object).dims(&self.objects);
 }
 
 const ViewState = struct {
@@ -287,8 +275,13 @@ const ViewState = struct {
     viewport_center: Vec2 = .{ 0.0, 0.0 },
     zoom_level: f32 = 1.0,
 
-    fn pan(self: *ViewState, movement_clip: Vec2) void {
-        self.viewport_center += movement_clip / Vec2{ self.zoom_level, self.zoom_level };
+    fn reset(self: *ViewState) void {
+        self.viewport_center = .{ 0.0, 0.0 };
+        self.zoom_level = 1.0;
+    }
+
+    fn pan(self: *ViewState, movement_obj: Vec2) void {
+        self.viewport_center -= movement_obj;
     }
 
     fn zoom(self: *ViewState, amount: f32) void {
@@ -426,6 +419,173 @@ const ViewState = struct {
     }
 };
 
+const InputState = struct {
+    selected_object: ObjectId = .{ .value = 0 },
+    // object coords
+    mouse_pos: lin.Vec2 = .{ 0.0, 0.0 },
+    panning: bool = false,
+    data: union(enum) {
+        composition: union(enum) {
+            move: obj_mod.CompositionIdx,
+            none,
+        },
+        path: ?obj_mod.PathIdx,
+        none,
+    } = .none,
+
+    const InputAction = union(enum) {
+        add_path_elem: Vec2,
+        move_composition_obj: struct {
+            idx: obj_mod.CompositionIdx,
+            amount: Vec2,
+        },
+        move_path_point: struct {
+            idx: obj_mod.PathIdx,
+            amount: Vec2,
+        },
+        save,
+        pan: Vec2,
+    };
+
+    fn selectObject(self: *InputState, id: ObjectId, objects: *Objects) void {
+        const obj = objects.get(id);
+        switch (obj.data) {
+            .composition => self.data = .{ .composition = .none },
+            .path => self.data = .{ .path = null },
+            else => self.data = .none,
+        }
+        self.selected_object = id;
+    }
+
+    // FIXME: Objects should be const
+    fn setMouseDown(self: *InputState, objects: *obj_mod.Objects) void {
+        switch (self.data) {
+            .composition => |*action| {
+                const composition_obj = &objects.get(self.selected_object).data.composition;
+                var closest_idx: usize = 0;
+                var current_dist = std.math.inf(f32);
+
+                for (0..composition_obj.objects.items.len) |idx| {
+                    const transform = composition_obj.objects.items[idx].transform;
+                    const center = lin.applyHomogenous(transform.apply(Vec3{ 0, 0, 1 }));
+                    const dist = lin.length2(center - self.mouse_pos);
+                    if (dist < current_dist) {
+                        closest_idx = idx;
+                        current_dist = dist;
+                    }
+                }
+
+                if (current_dist == std.math.inf(f32)) {
+                    action.* = .none;
+                } else {
+                    action.* = .{
+                        .move = .{ .value = closest_idx },
+                    };
+                }
+            },
+            .path => |*selected_obj| {
+                const path = objects.get(self.selected_object).asPath() orelse return; // FIXME assert?
+                var closest_point: usize = 0;
+                var min_dist = std.math.inf(f32);
+
+                for (path.points.items, 0..) |point, idx| {
+                    const dist = lin.length2(self.mouse_pos - point);
+                    if (dist < min_dist) {
+                        closest_point = idx;
+                        min_dist = dist;
+                    }
+                }
+
+                if (min_dist != std.math.inf(f32)) {
+                    selected_obj.* = .{ .value = closest_point };
+                }
+            },
+            .none => {},
+        }
+    }
+
+    fn setMouseUp(self: *InputState) void {
+        switch (self.data) {
+            .composition => |*action| action.* = .none,
+            .path => |*selected_path_item| selected_path_item.* = null,
+            .none => {},
+        }
+    }
+
+    fn setMousePos(self: *InputState, new_pos: Vec2) ?InputAction {
+        var apply_mouse_pos = true;
+        defer if (apply_mouse_pos) {
+            self.mouse_pos = new_pos;
+        };
+
+        switch (self.data) {
+            .composition => |*composition_state| {
+                switch (composition_state.*) {
+                    .move => |idx| return InputAction{
+                        .move_composition_obj = .{
+                            .idx = idx,
+                            .amount = new_pos - self.mouse_pos,
+                        },
+                    },
+                    .none => {},
+                }
+            },
+            .path => |path_idx| {
+                if (path_idx) |idx| {
+                    return InputAction{ .move_path_point = .{
+                        .idx = idx,
+                        .amount = new_pos - self.mouse_pos,
+                    } };
+                }
+            },
+            else => {},
+        }
+
+        if (self.panning) {
+            // A little odd, the camera movement is applied in object space,
+            // because that's the coordinate space we store our mouse in. If we
+            // apply a pan, the mouse SHOULD NOT MOVE in object space. Because
+            // of this we ask that the viewport moves us around, but do not
+            // update our internal cached position
+            apply_mouse_pos = false;
+            return .{
+                .pan = new_pos - self.mouse_pos,
+            };
+        }
+
+        return null;
+    }
+
+    fn clickRightMouse(self: *InputState) ?InputAction {
+        switch (self.data) {
+            .path => {
+                return .{ .add_path_elem = self.mouse_pos };
+            },
+            else => return null,
+        }
+    }
+
+    fn setMiddleDown(self: *InputState) void {
+        self.panning = true;
+    }
+
+    fn setMiddleUp(self: *InputState) void {
+        self.panning = false;
+    }
+
+    fn setKeyDown(_: *InputState, key: u8, ctrl: bool) ?InputAction {
+        switch (key) {
+            'S' => {
+                if (ctrl) {
+                    return .save;
+                }
+            },
+            else => {},
+        }
+        return null;
+    }
+};
+
 const MaskIterator = struct {
     it: Objects.IdIter,
     objects: *Objects,
@@ -442,6 +602,40 @@ const MaskIterator = struct {
         return null;
     }
 };
+
+fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
+    switch (action orelse return) {
+        .add_path_elem => |obj_loc| {
+            const selected_object = self.selectedObject();
+            if (selected_object.asPath()) |p| {
+                try p.addPoint(self.alloc, obj_loc);
+                try self.regeneratePathMasks(self.input_state.selected_object);
+            }
+        },
+        .move_composition_obj => |movement| {
+            const selected_object = self.selectedObject();
+            if (selected_object.asComposition()) |composition| {
+                composition.moveObject(movement.idx, movement.amount);
+            }
+        },
+        .move_path_point => |movement| {
+            const selected_object = self.selectedObject();
+            if (selected_object.asPath()) |path| {
+                path.movePoint(
+                    movement.idx,
+                    movement.amount,
+                );
+                try self.regeneratePathMasks(self.input_state.selected_object);
+            }
+        },
+        .save => {
+            try self.save("save.json");
+        },
+        .pan => |amount| {
+            self.view_state.pan(amount);
+        },
+    }
+}
 
 fn regenerateMask(self: *App, mask: *obj_mod.GeneratedMaskObject) !void {
     const path_obj = self.objects.get(mask.source);
@@ -473,7 +667,7 @@ fn regenerateAllMasks(self: *App) !void {
 }
 
 fn getCompositionObj(self: *App) ?*obj_mod.CompositionObject {
-    switch (self.objects.get(self.selected_object).data) {
+    switch (self.objects.get(self.input_state.selected_object).data) {
         .composition => |*c| return c,
         else => return null,
     }

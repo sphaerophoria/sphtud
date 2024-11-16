@@ -441,7 +441,10 @@ pub fn main() !void {
             try app.load(s);
         },
         .open_images => |images| {
-            _ = try app.addComposition();
+            const composition_idx = try app.addComposition();
+
+            app.setSelectedObject(composition_idx);
+
             for (images) |path| {
                 const fs_id = try app.loadImage(path);
                 const image_dims = app.objects.get(fs_id).dims(&app.objects);
@@ -467,11 +470,11 @@ pub fn main() !void {
         app.view_state.window_height = height;
 
         Imgui.startFrame();
-        if (try Imgui.renderObjectList(&app.objects, app.selected_object)) |idx| {
-            app.selected_object = idx;
+        if (try Imgui.renderObjectList(&app.objects, app.input_state.selected_object)) |idx| {
+            app.setSelectedObject(idx);
         }
 
-        if (try Imgui.renderObjectProperties(app.objects.get(app.selected_object), &app.objects)) |action| {
+        if (try Imgui.renderObjectProperties(app.objects.get(app.input_state.selected_object), &app.objects)) |action| {
             switch (action) {
                 .create_path => {
                     try app.createPath();
@@ -489,13 +492,8 @@ pub fn main() !void {
         while (glfw.queue.readItem()) |action| {
             switch (action) {
                 .key_down => |key| {
-                    switch (key.key) {
-                        glfwb.GLFW_KEY_S => {
-                            if (key.ctrl) {
-                                try app.save("save.json");
-                            }
-                        },
-                        else => {},
+                    if (key.key >= glfwb.GLFW_KEY_0 and key.key <= glfwb.GLFW_KEY_Z) {
+                        try app.setKeyDown(@intCast(key.key), key.ctrl);
                     }
                 },
                 .mouse_move => |p| if (glfw_mouse) {
