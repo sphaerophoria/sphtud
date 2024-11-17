@@ -119,6 +119,20 @@ pub const Object = struct {
             },
         }
     }
+
+    pub fn isComposable(self: Object) bool {
+        return switch (self.data) {
+            .filesystem => true,
+            .path => false,
+            .generated_mask => true,
+            .shader => true,
+            .composition => false,
+        };
+    }
+};
+
+pub const CompositionIdx = struct {
+    value: usize,
 };
 
 pub const CompositionObject = struct {
@@ -148,7 +162,9 @@ pub const CompositionObject = struct {
             }
         }
 
-        self.selected_obj = closest_idx;
+        if (current_dist != std.math.inf(f32)) {
+            self.selected_obj = closest_idx;
+        }
     }
 
     pub fn moveObject(self: *CompositionObject, movement: Vec2) void {
@@ -156,6 +172,22 @@ pub const CompositionObject = struct {
             const obj = &self.objects.items[idx];
 
             obj.transform = obj.transform.then(Transform.translate(movement[0], movement[1]));
+        }
+    }
+
+    pub fn addObj(self: *CompositionObject, alloc: Allocator, id: ObjectId) !void {
+        try self.objects.append(alloc, .{
+            .id = id,
+            .transform = Transform.identity,
+        });
+    }
+
+    pub fn removeObj(self: *CompositionObject, id: CompositionIdx) void {
+        _ = self.objects.swapRemove(id.value);
+
+        // FIXME: selected_obj should be strong type too
+        if (self.selected_obj == id.value) {
+            self.selected_obj = null;
         }
     }
 

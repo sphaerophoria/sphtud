@@ -190,20 +190,91 @@ pub fn createPath(self: *App) !void {
         },
     });
 
-    const masked_obj_id = self.objects.nextId();
     try self.objects.append(self.alloc, .{
         .name = try self.alloc.dupe(u8, "masked obj"),
         .data = .{
             .shader = try obj_mod.ShaderObject.init(self.alloc, &.{ self.selected_object, mask_id }, Renderer.mul_fragment_shader, &.{ "u_texture", "u_texture_2" }, selected_dims[0], selected_dims[1]),
         },
     });
+}
 
-    // HACK: Assume composition object is 0
-    const composition = &self.objects.get(.{ .value = 0 }).data.composition;
-    try composition.objects.append(self.alloc, .{
-        .id = masked_obj_id,
-        .transform = Transform.scale(0.5, 0.5),
+pub fn addToComposition(self: *App, id: obj_mod.ObjectId) !void {
+    const selected_object = self.objects.get(self.selected_object);
+
+    if (selected_object.data != .composition) {
+        return error.SelectedItemNotComposition;
+    }
+
+    try selected_object.data.composition.addObj(self.alloc, id);
+}
+
+pub fn deleteFromComposition(self: *App, id: obj_mod.CompositionIdx) !void {
+    const selected_object = self.objects.get(self.selected_object);
+
+    if (selected_object.data != .composition) {
+        return error.SelectedItemNotComposition;
+    }
+
+    selected_object.data.composition.removeObj(id);
+}
+
+pub fn addComposition(self: *App) !ObjectId {
+    const id = self.objects.nextId();
+
+    const name = try self.alloc.dupe(u8, "composition");
+    errdefer self.alloc.free(name);
+
+    try self.objects.append(self.alloc, .{
+        .name = name,
+        .data = .{ .composition = obj_mod.CompositionObject{} },
     });
+
+    return id;
+}
+
+pub fn loadImage(self: *App, path: [:0]const u8) !ObjectId {
+    const id = self.objects.nextId();
+
+    const obj = try obj_mod.FilesystemObject.load(self.alloc, path);
+    errdefer obj.deinit(self.alloc);
+
+    const name = try self.alloc.dupe(u8, path);
+    errdefer self.alloc.free(name);
+
+    try self.objects.append(self.alloc, .{
+        .name = name,
+        .data = .{
+            .filesystem = obj,
+        },
+    });
+
+    return id;
+}
+
+pub fn addShaderObject(self: *App, name: []const u8, input_images: []const ObjectId, shader_source: [:0]const u8, texture_names: []const [:0]const u8, width: usize, height: usize) !ObjectId {
+    const shader_id = self.objects.nextId();
+
+    const duped_name = try self.alloc.dupe(u8, name);
+    errdefer self.alloc.free(duped_name);
+
+    var obj = try obj_mod.ShaderObject.init(
+        self.alloc,
+        input_images,
+        shader_source,
+        texture_names,
+        width,
+        height,
+    );
+    errdefer obj.deinit(self.alloc);
+
+    try self.objects.append(self.alloc, .{
+        .name = duped_name,
+        .data = .{
+            .shader = obj,
+        },
+    });
+
+    return shader_id;
 }
 
 fn selectedDims(self: *App) PixelDims {

@@ -216,11 +216,13 @@ const Imgui = struct {
         return if (c.igButton("Create path", null_size)) .create_path else null;
     }
 
-    const PropertyAction = enum {
+    const PropertyAction = union(enum) {
         create_path,
+        delete_from_composition: obj_mod.CompositionIdx,
+        add_to_composition: obj_mod.ObjectId,
     };
 
-    fn renderObjectProperties(selected_object: *obj_mod.Object) !?PropertyAction {
+    fn renderObjectProperties(selected_object: *obj_mod.Object, objects: *obj_mod.Objects) !?PropertyAction {
         if (!c.igBegin("Object properties", null, 0)) {
             return null;
         }
@@ -258,8 +260,50 @@ const Imgui = struct {
 
                 if (createPathButton()) |a| ret = a;
             },
-            .composition => {
+            .composition => |*comp| blk: {
                 c.igText("Composition");
+                const table_ret = c.igBeginTable("table", 2, 0, null_size, 0);
+                if (!table_ret) break :blk;
+
+                const dims = selected_object.dims(objects);
+
+                c.igTableNextRow(0, 0);
+                if (c.igTableNextColumn()) c.igText("Width");
+                if (c.igTableNextColumn()) c.igText("%lu", dims[0]);
+
+                c.igTableNextRow(0, 0);
+                if (c.igTableNextColumn()) c.igText("Height");
+                if (c.igTableNextColumn()) c.igText("%lu", dims[1]);
+
+                c.igEndTable();
+
+                for (comp.objects.items, 0..) |child, idx| {
+                    const child_obj = objects.get(child.id);
+                    var buf: [1024]u8 = undefined;
+                    const delete_s = try std.fmt.bufPrintZ(&buf, "Delete##composition_item_{d}", .{idx});
+                    if (c.igButton(delete_s, null_size)) {
+                        ret = .{ .delete_from_composition = .{ .value = idx } };
+                    }
+
+                    c.igSameLine(0, 0);
+                    c.igText(" %.*s", child_obj.name.len, child_obj.name.ptr);
+                }
+
+                var obj_it = objects.idIter();
+                if (!c.igBeginCombo("Availble objects", "Select to add", 0)) break :blk;
+                while (obj_it.next()) |obj_id| {
+                    const obj = objects.get(obj_id);
+                    if (!obj.isComposable()) continue;
+
+                    var buf: [1024]u8 = undefined;
+                    const obj_namez = try std.fmt.bufPrintZ(&buf, "{s}##{d}", .{ obj.name, obj_id.value });
+                    if (c.igSelectable_Bool(obj_namez.ptr, false, 0, null_size)) {
+                        ret = .{
+                            .add_to_composition = obj_id,
+                        };
+                    }
+                }
+                c.igEndCombo();
             },
             .shader => {
                 // FIXME: Log something interesting like uniforms etc.
@@ -397,36 +441,22 @@ pub fn main() !void {
             try app.load(s);
         },
         .open_images => |images| {
-            const composition_idx = app.objects.nextId();
-            try app.objects.append(alloc, .{ .name = try alloc.dupe(u8, "composition"), .data = .{ .composition = obj_mod.CompositionObject{} } });
+            _ = try app.addComposition();
             for (images) |path| {
-                const fs_id = app.objects.nextId();
-                const fs_obj = try obj_mod.FilesystemObject.load(alloc, path);
-                try app.objects.append(alloc, .{
-                    .name = try alloc.dupe(u8, path),
-                    .data = .{
-                        .filesystem = fs_obj,
-                    },
-                });
+                const fs_id = try app.loadImage(path);
+                const image_dims = app.objects.get(fs_id).dims(&app.objects);
 
-                const swapped_name = try std.fmt.allocPrint(alloc, "{s}_swapped", .{path});
-                errdefer alloc.free(swapped_name);
+                var buf: [1024]u8 = undefined;
+                const swapped_name = try std.fmt.bufPrint(&buf, "{s}_swapped", .{path});
 
-                const shader_id = app.objects.nextId();
-                try app.objects.append(alloc, .{
-                    .name = swapped_name,
-                    .data = .{ .shader = try obj_mod.ShaderObject.init(alloc, &.{fs_id}, swap_colors_frag, &.{"u_texture"}, fs_obj.width, fs_obj.height) },
-                });
-
-                try app.objects.get(composition_idx).data.composition.objects.append(alloc, .{
-                    .id = fs_id,
-                    .transform = lin.Transform.scale(0.5, 0.5),
-                });
-
-                try app.objects.get(composition_idx).data.composition.objects.append(alloc, .{
-                    .id = shader_id,
-                    .transform = lin.Transform.scale(0.5, 0.5),
-                });
+                _ = try app.addShaderObject(
+                    swapped_name,
+                    &.{fs_id},
+                    swap_colors_frag,
+                    &.{"u_texture"},
+                    image_dims[0],
+                    image_dims[1],
+                );
             }
         },
     }
@@ -441,10 +471,16 @@ pub fn main() !void {
             app.selected_object = idx;
         }
 
-        if (try Imgui.renderObjectProperties(app.objects.get(app.selected_object))) |action| {
+        if (try Imgui.renderObjectProperties(app.objects.get(app.selected_object), &app.objects)) |action| {
             switch (action) {
                 .create_path => {
                     try app.createPath();
+                },
+                .delete_from_composition => |id| {
+                    try app.deleteFromComposition(id);
+                },
+                .add_to_composition => |id| {
+                    try app.addToComposition(id);
                 },
             }
         }
@@ -470,7 +506,7 @@ pub fn main() !void {
                 .middle_up => if (glfw_mouse) app.setMiddleUp(),
                 .middle_down => if (glfw_mouse) app.setMiddleDown(),
                 .right_click => if (glfw_mouse) try app.clickRightMouse(),
-                .scroll => |amount| {
+                .scroll => |amount| if (glfw_mouse) {
                     app.scroll(amount);
                 },
             }
