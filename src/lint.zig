@@ -73,6 +73,7 @@ pub fn writeDummyImage(alloc: Allocator, path: [:0]const u8) !void {
 }
 
 pub fn inputOnCanvas(app: *App) !void {
+    // Try dragging some stuff around
     try app.setMousePos(300, 300);
     app.setMouseDown();
     try app.render();
@@ -81,6 +82,7 @@ pub fn inputOnCanvas(app: *App) !void {
     app.setMouseUp();
     try app.render();
 
+    // Try panning
     try app.setMousePos(100, 100);
     app.setMiddleDown();
     try app.render();
@@ -89,6 +91,7 @@ pub fn inputOnCanvas(app: *App) !void {
     app.setMiddleUp();
     try app.render();
 
+    // Click the right mouse button a few times (create path elements)
     try app.setMousePos(400, 400);
     try app.clickRightMouse();
     try app.render();
@@ -96,6 +99,26 @@ pub fn inputOnCanvas(app: *App) !void {
     try app.setMousePos(200, 300);
     try app.clickRightMouse();
     try app.render();
+
+    // Try to scale an object
+    try app.setKeyDown('S', false);
+    try app.render();
+
+    try app.setMousePos(400, 400);
+    try app.render();
+
+    // Cancel the scale
+    try app.clickRightMouse();
+
+    // Try to scale an object
+    try app.setKeyDown('S', false);
+    try app.render();
+
+    try app.setMousePos(400, 400);
+    try app.render();
+    // Submit the scale
+    app.setMouseDown();
+    app.setMouseUp();
 }
 
 const swap_colors_frag =

@@ -100,7 +100,7 @@ pub fn render(self: *App) !void {
 }
 
 pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {
-    const action = self.input_state.setKeyDown(key, ctrl);
+    const action = self.input_state.setKeyDown(key, ctrl, &self.objects);
     try self.handleInputAction(action);
 }
 
@@ -137,7 +137,8 @@ pub fn scroll(self: *App, amount: f32) void {
 pub fn setMousePos(self: *App, xpos: f32, ypos: f32) !void {
     const new_x = self.view_state.windowToClipX(xpos);
     const new_y = self.view_state.windowToClipY(ypos);
-    const new_pos = self.view_state.clipToObject(Vec2{ new_x, new_y }, self.selectedDims());
+    const selected_dims = self.selectedDims();
+    const new_pos = self.view_state.clipToObject(Vec2{ new_x, new_y }, selected_dims);
     const input_action = self.input_state.setMousePos(new_pos);
 
     try self.handleInputAction(input_action);
@@ -427,6 +428,11 @@ const InputState = struct {
     data: union(enum) {
         composition: union(enum) {
             move: obj_mod.CompositionIdx,
+            scale: struct {
+                initial_transform: Transform,
+                start_pos: lin.Vec2,
+                idx: obj_mod.CompositionIdx,
+            },
             none,
         },
         path: ?obj_mod.PathIdx,
@@ -438,6 +444,10 @@ const InputState = struct {
         move_composition_obj: struct {
             idx: obj_mod.CompositionIdx,
             amount: Vec2,
+        },
+        set_composition_transform: struct {
+            idx: obj_mod.CompositionIdx,
+            transform: Transform,
         },
         move_path_point: struct {
             idx: obj_mod.PathIdx,
@@ -461,26 +471,12 @@ const InputState = struct {
     fn setMouseDown(self: *InputState, objects: *obj_mod.Objects) void {
         switch (self.data) {
             .composition => |*action| {
-                const composition_obj = &objects.get(self.selected_object).data.composition;
-                var closest_idx: usize = 0;
-                var current_dist = std.math.inf(f32);
-
-                for (0..composition_obj.objects.items.len) |idx| {
-                    const transform = composition_obj.objects.items[idx].transform;
-                    const center = lin.applyHomogenous(transform.apply(Vec3{ 0, 0, 1 }));
-                    const dist = lin.length2(center - self.mouse_pos);
-                    if (dist < current_dist) {
-                        closest_idx = idx;
-                        current_dist = dist;
-                    }
-                }
-
-                if (current_dist == std.math.inf(f32)) {
-                    action.* = .none;
-                } else {
+                if (self.findCompositionIdx(objects)) |idx| {
                     action.* = .{
-                        .move = .{ .value = closest_idx },
+                        .move = idx,
                     };
+                } else {
+                    action.* = .none;
                 }
             },
             .path => |*selected_obj| {
@@ -527,6 +523,18 @@ const InputState = struct {
                             .amount = new_pos - self.mouse_pos,
                         },
                     },
+                    .scale => |*params| {
+                        const comp_to_obj = params.initial_transform.invert();
+                        const transformed_start = comp_to_obj.apply(Vec3{ params.start_pos[0], params.start_pos[1], 1.0 });
+                        const transformed_end = comp_to_obj.apply(Vec3{ new_pos[0], new_pos[1], 1.0 });
+                        const scale = lin.applyHomogenous(transformed_end) / lin.applyHomogenous(transformed_start);
+                        return InputAction{
+                            .set_composition_transform = .{
+                                .idx = params.idx,
+                                .transform = Transform.scale(scale[0], scale[1]).then(params.initial_transform),
+                            },
+                        };
+                    },
                     .none => {},
                 }
             },
@@ -561,6 +569,22 @@ const InputState = struct {
             .path => {
                 return .{ .add_path_elem = self.mouse_pos };
             },
+            .composition => |*c| {
+                switch (c.*) {
+                    .scale => |*params| {
+                        defer c.* = .none;
+                        return .{
+                            .set_composition_transform = .{
+                                .idx = params.idx,
+                                .transform = params.initial_transform,
+                            },
+                        };
+                    },
+                    // FIXME: Cancel movement
+                    else => {},
+                }
+                return .{ .add_path_elem = self.mouse_pos };
+            },
             else => return null,
         }
     }
@@ -573,16 +597,58 @@ const InputState = struct {
         self.panning = false;
     }
 
-    fn setKeyDown(_: *InputState, key: u8, ctrl: bool) ?InputAction {
+    // FIXME: Const objects probably
+    fn setKeyDown(self: *InputState, key: u8, ctrl: bool, objects: *Objects) ?InputAction {
         switch (key) {
             'S' => {
                 if (ctrl) {
                     return .save;
                 }
+
+                switch (self.data) {
+                    .composition => |*c| {
+                        if (self.findCompositionIdx(objects)) |idx| {
+                            const obj = if (objects.get(self.selected_object).asComposition()) |comp| comp else unreachable;
+                            const transform = obj.objects.items[idx.value].transform;
+                            c.* = .{
+                                .scale = .{
+                                    .initial_transform = transform,
+                                    .idx = idx,
+                                    .start_pos = self.mouse_pos,
+                                },
+                            };
+                        }
+                        return null;
+                    },
+                    else => return null,
+                }
             },
-            else => {},
+            else => {
+                return null;
+            },
         }
-        return null;
+    }
+
+    fn findCompositionIdx(self: *InputState, objects: *Objects) ?obj_mod.CompositionIdx {
+        const composition_obj = &objects.get(self.selected_object).data.composition;
+        var closest_idx: usize = 0;
+        var current_dist = std.math.inf(f32);
+
+        for (0..composition_obj.objects.items.len) |idx| {
+            const transform = composition_obj.objects.items[idx].transform;
+            const center = lin.applyHomogenous(transform.apply(Vec3{ 0, 0, 1 }));
+            const dist = lin.length2(center - self.mouse_pos);
+            if (dist < current_dist) {
+                closest_idx = idx;
+                current_dist = dist;
+            }
+        }
+
+        if (current_dist == std.math.inf(f32)) {
+            return null;
+        } else {
+            return .{ .value = closest_idx };
+        }
     }
 };
 
@@ -616,6 +682,12 @@ fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
             const selected_object = self.selectedObject();
             if (selected_object.asComposition()) |composition| {
                 composition.moveObject(movement.idx, movement.amount);
+            }
+        },
+        .set_composition_transform => |movement| {
+            const selected_object = self.selectedObject();
+            if (selected_object.asComposition()) |composition| {
+                composition.setTransform(movement.idx, movement.transform);
             }
         },
         .move_path_point => |movement| {

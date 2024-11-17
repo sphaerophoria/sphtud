@@ -167,6 +167,11 @@ pub const CompositionObject = struct {
         obj.transform = obj.transform.then(Transform.translate(movement[0], movement[1]));
     }
 
+    pub fn setTransform(self: *CompositionObject, idx: CompositionIdx, transform: Transform) void {
+        const obj = &self.objects.items[idx.value];
+        obj.transform = transform;
+    }
+
     pub fn addObj(self: *CompositionObject, alloc: Allocator, id: ObjectId) !void {
         try self.objects.append(alloc, .{
             .id = id,
