@@ -182,6 +182,19 @@ pub const Transform = struct {
         } };
     }
 
+    pub fn rotate(angle: f32) Transform {
+        const c = @cos(angle);
+        const s = @sin(angle);
+
+        return .{ .inner = .{
+            .data = .{
+                c,   -s,  0.0,
+                s,   c,   0.0,
+                0.0, 0.0, 1.0,
+            },
+        } };
+    }
+
     pub fn translate(x: f32, y: f32) Transform {
         return .{ .inner = .{ .data = .{
             1.0, 0.0, x,

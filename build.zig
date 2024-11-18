@@ -10,19 +10,7 @@ fn addAppDependencies(b: *std.Build, exe: *std.Build.Step.Compile) void {
     exe.linkLibCpp();
 }
 
-pub fn build(b: *std.Build) !void {
-    const target = b.standardTargetOptions(.{});
-    const opt = b.standardOptimizeOption(.{});
-    const test_step = b.step("test", "run tests");
-
-    const exe = b.addExecutable(.{
-        .name = "sphimp",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = opt,
-    });
-
-    addAppDependencies(b, exe);
+fn addGuiDependencies(b: *std.Build, exe: *std.Build.Step.Compile) void {
     exe.linkSystemLibrary("glfw");
     exe.addCSourceFiles(.{
         .files = &.{
@@ -41,7 +29,34 @@ pub fn build(b: *std.Build) !void {
     exe.addIncludePath(b.path("cimgui/imgui/backends"));
     exe.addIncludePath(b.path("cimgui/imgui"));
     exe.defineCMacro("IMGUI_IMPL_API", "extern \"C\"");
+}
+
+pub fn build(b: *std.Build) !void {
+    const target = b.standardTargetOptions(.{});
+    const opt = b.standardOptimizeOption(.{});
+    const test_step = b.step("test", "run tests");
+
+    const exe = b.addExecutable(.{
+        .name = "sphimp",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = opt,
+    });
+
+    addAppDependencies(b, exe);
+    addGuiDependencies(b, exe);
     b.installArtifact(exe);
+
+    const transform_viz = b.addExecutable(.{
+        .name = "transform-viz",
+        .root_source_file = b.path("src/tranform-viz.zig"),
+        .target = target,
+        .optimize = opt,
+    });
+
+    addAppDependencies(b, transform_viz);
+    addGuiDependencies(b, transform_viz);
+    b.installArtifact(transform_viz);
 
     const lint_exe = b.addExecutable(.{
         .name = "lint",

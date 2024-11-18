@@ -231,7 +231,7 @@ pub const PlaneRenderProgram = struct {
         gl.glDeleteProgram(self.program);
     }
 
-    fn render(self: PlaneRenderProgram, textures: []const Texture, transform: lin.Transform, aspect: f32) void {
+    pub fn render(self: PlaneRenderProgram, textures: []const Texture, transform: lin.Transform, aspect: f32) void {
         gl.glUseProgram(self.program);
         gl.glBindVertexArray(self.vertex_array);
         gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &transform.inner.data);
@@ -435,8 +435,8 @@ fn makeTextureCommon() Texture {
     gl.glBindTexture(gl.GL_TEXTURE_2D, texture);
 
     // Set texture parameters (you can adjust these for your needs)
-    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT); // Wrap horizontally
-    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT); // Wrap vertically
+    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE); // Wrap horizontally
+    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE); // Wrap vertically
     gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR); // Minification filter
     gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR); // Magnification filter
 
