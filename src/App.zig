@@ -96,7 +96,7 @@ pub fn load(self: *App, path: []const u8) !void {
 }
 
 pub fn render(self: *App) !void {
-    try self.renderer.render(self.alloc, &self.objects, self.input_state.selected_object, self.view_state.objectToWindowTransform(self.selectedDims()), self.view_state.window_width, self.view_state.window_height);
+    try self.renderer.render(self.alloc, &self.objects, self.input_state.selected_object, self.view_state.objectToClipTransform(self.selectedDims()), self.view_state.window_width, self.view_state.window_height);
 }
 
 pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {
@@ -314,21 +314,11 @@ const ViewState = struct {
     }
 
     fn clipToObject(self: *ViewState, val: Vec2, object_dims: PixelDims) Vec2 {
-        const obj_aspect = coords.calcAspect(object_dims[0], object_dims[1]);
-        const window_aspect = coords.calcAspect(self.window_width, self.window_height);
-
-        var aspect_aspect_v: Vec2 = undefined;
-
-        if (window_aspect > obj_aspect) {
-            aspect_aspect_v = Vec2{ obj_aspect / window_aspect, 1.0 };
-        } else {
-            aspect_aspect_v = Vec2{ 1.0, window_aspect / obj_aspect };
-        }
-
-        return (self.viewport_center + val / Vec2{ self.zoom_level, self.zoom_level }) / aspect_aspect_v;
+        const transform = self.objectToClipTransform(object_dims).invert();
+        return lin.applyHomogenous(transform.apply(Vec3{ val[0], val[1], 1.0 }));
     }
 
-    fn objectToWindowTransform(self: ViewState, object_dims: PixelDims) Transform {
+    fn objectToClipTransform(self: ViewState, object_dims: PixelDims) Transform {
         const aspect_transform = coords.aspectRatioCorrectedFill(
             object_dims[0],
             object_dims[1],
@@ -336,9 +326,9 @@ const ViewState = struct {
             self.window_height,
         );
 
-        return aspect_transform
-            .then(Transform.translate(-self.viewport_center[0], -self.viewport_center[1]))
-            .then(Transform.scale(self.zoom_level, self.zoom_level));
+        return Transform.translate(-self.viewport_center[0], -self.viewport_center[1])
+            .then(Transform.scale(self.zoom_level, self.zoom_level))
+            .then(aspect_transform);
     }
 
     test "test aspect no zoom/pan" {
@@ -349,7 +339,7 @@ const ViewState = struct {
             .zoom_level = 1.0,
         };
 
-        const transform = view_state.objectToWindowTransform(.{ 50, 100 });
+        const transform = view_state.objectToClipTransform(.{ 50, 100 });
         // Given an object that's 50x100, in a window 100x50
         //
         //  ______________________
@@ -397,7 +387,7 @@ const ViewState = struct {
             .zoom_level = 2.0,
         };
 
-        const transform = view_state.objectToWindowTransform(.{ 50, 100 });
+        const transform = view_state.objectToClipTransform(.{ 50, 100 });
 
         const tl_obj = Vec3{ -1.0, 1.0, 1.0 };
         const br_obj = Vec3{ 1.0, -1.0, 1.0 };
@@ -412,11 +402,11 @@ const ViewState = struct {
         try std.testing.expectApproxEqAbs(-3.0, br_obj_win[1], 0.01);
 
         // In unzoomed space, the answer was [-0.25, 0.25]. We are centered at
-        // 0.5, with a 2x zoom. This means that the right side is 0.25 to our
-        // left (un zoomed), and the left side is 0.5 farther than that. Double
-        // the distances for 2x zoom, and we get -0.5, -1.5
-        try std.testing.expectApproxEqAbs(-1.5, tl_obj_win[0], 0.01);
-        try std.testing.expectApproxEqAbs(-0.5, br_obj_win[0], 0.01);
+        // 0.5 in object space, with a 2x zoom. The 2x zoom gives moves the
+        // total range to 1.0. We are centered 1/4 to the right, which means we
+        // have 0.25 to the right, and 0.75 to the left
+        try std.testing.expectApproxEqAbs(-0.75, tl_obj_win[0], 0.01);
+        try std.testing.expectApproxEqAbs(0.25, br_obj_win[0], 0.01);
     }
 };
 
