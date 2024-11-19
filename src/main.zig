@@ -85,9 +85,10 @@ fn scrollCallbackGlfw(window: ?*glfwb.GLFWwindow, _: f64, y: f64) callconv(.C) v
     };
 }
 
+const MousePos = struct { x: f32, y: f32 };
 const WindowAction = union(enum) {
     key_down: struct { key: c_int, ctrl: bool },
-    mouse_move: struct { x: f32, y: f32 },
+    mouse_move: MousePos,
     mouse_down,
     mouse_up,
     middle_down,
@@ -489,6 +490,7 @@ pub fn main() !void {
         }
 
         const glfw_mouse = !Imgui.consumedMouseInput();
+        var last_mouse: ?MousePos = null;
         while (glfw.queue.readItem()) |action| {
             switch (action) {
                 .key_down => |key| {
@@ -497,7 +499,7 @@ pub fn main() !void {
                     }
                 },
                 .mouse_move => |p| if (glfw_mouse) {
-                    try app.setMousePos(p.x, p.y);
+                    last_mouse = p;
                 },
                 .mouse_up => if (glfw_mouse) app.setMouseUp(),
                 .mouse_down => if (glfw_mouse) app.setMouseDown(),
@@ -508,6 +510,10 @@ pub fn main() !void {
                     app.scroll(amount);
                 },
             }
+        }
+
+        if (last_mouse) |p| {
+            try app.setMousePos(p.x, p.y);
         }
 
         try app.render();
