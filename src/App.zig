@@ -410,31 +410,71 @@ const ViewState = struct {
     }
 };
 
+// State required to adjust the transformation of a composed object according
+// to some mouse movement
+const TransformAdjustingInputState = struct {
+    // Transform to go from composition space to the coordinate frame of the
+    // composed object
+    //
+    // Confusing, but not the inverse of initial_transform. Note
+    // that there are expectations about extra work done on the
+    // stored transform to correct for aspect ratios of the
+    // container and the object
+    comp_to_object: Transform,
+    // Object transform when adjustment started
+    initial_transform: Transform,
+    // Mouse position in composition space when adjustment started
+    start_pos: lin.Vec2,
+    // Which object is being modified
+    idx: obj_mod.CompositionIdx,
+
+    fn init(mouse_pos: Vec2, composition_id: ObjectId, comp_idx: obj_mod.CompositionIdx, objects: *Objects) TransformAdjustingInputState {
+        const composition_obj = objects.get(composition_id);
+        const composition_dims = composition_obj.dims(objects);
+        const composition_aspect = coords.calcAspect(composition_dims[0], composition_dims[1]);
+
+        const composition_data = if (composition_obj.asComposition()) |comp| comp else unreachable;
+
+        const composed_obj = composition_data.objects.items[comp_idx.value];
+        const composed_to_comp = composed_obj.composedToCompositionTransform(objects, composition_aspect);
+        const initial_transform = composed_obj.transform;
+
+        return .{
+            .comp_to_object = composed_to_comp.invert(),
+            .initial_transform = initial_transform,
+            .idx = comp_idx,
+            .start_pos = mouse_pos,
+        };
+    }
+};
+
 const InputState = struct {
     selected_object: ObjectId = .{ .value = 0 },
     // object coords
     mouse_pos: lin.Vec2 = .{ 0.0, 0.0 },
     panning: bool = false,
     data: union(enum) {
-        composition: union(enum) {
-            move: obj_mod.CompositionIdx,
-            scale: struct {
-                initial_transform: Transform,
-                start_pos: lin.Vec2,
-                idx: obj_mod.CompositionIdx,
-            },
-            none,
-        },
+        composition: CompositionInputState,
         path: ?obj_mod.PathIdx,
         none,
     } = .none,
 
+    const CompositionInputPurpose = enum {
+        move,
+        rotation,
+        scale,
+        none,
+    };
+
+    const CompositionInputState = union(CompositionInputPurpose) {
+        move: TransformAdjustingInputState,
+        rotation: TransformAdjustingInputState,
+        scale: TransformAdjustingInputState,
+        none,
+    };
+
     const InputAction = union(enum) {
         add_path_elem: Vec2,
-        move_composition_obj: struct {
-            idx: obj_mod.CompositionIdx,
-            amount: Vec2,
-        },
         set_composition_transform: struct {
             idx: obj_mod.CompositionIdx,
             transform: Transform,
@@ -461,13 +501,7 @@ const InputState = struct {
     fn setMouseDown(self: *InputState, objects: *obj_mod.Objects) void {
         switch (self.data) {
             .composition => |*action| {
-                if (self.findCompositionIdx(objects)) |idx| {
-                    action.* = .{
-                        .move = idx,
-                    };
-                } else {
-                    action.* = .none;
-                }
+                action.* = self.makeCompositionInputState(objects, .move);
             },
             .path => |*selected_obj| {
                 const path = objects.get(self.selected_object).asPath() orelse return; // FIXME assert?
@@ -507,16 +541,52 @@ const InputState = struct {
         switch (self.data) {
             .composition => |*composition_state| {
                 switch (composition_state.*) {
-                    .move => |idx| return InputAction{
-                        .move_composition_obj = .{
-                            .idx = idx,
-                            .amount = new_pos - self.mouse_pos,
-                        },
+                    .move => |*params| {
+                        const transformed_start = params.comp_to_object.apply(
+                            Vec3{ params.start_pos[0], params.start_pos[1], 1.0 },
+                        );
+                        const transformed_end = params.comp_to_object.apply(Vec3{ new_pos[0], new_pos[1], 1.0 });
+                        const movement = transformed_end - transformed_start;
+
+                        return InputAction{
+                            .set_composition_transform = .{
+                                .idx = params.idx,
+                                .transform = Transform.translate(movement[0], movement[1]).then(params.initial_transform),
+                            },
+                        };
+                    },
+                    .rotation => |*params| {
+                        const transformed_start = params.comp_to_object.apply(
+                            Vec3{ params.start_pos[0], params.start_pos[1], 1.0 },
+                        );
+                        const transformed_end = params.comp_to_object.apply(Vec3{ new_pos[0], new_pos[1], 1.0 });
+
+                        const rotate = Transform.rotateAToB(
+                            lin.applyHomogenous(transformed_start),
+                            lin.applyHomogenous(transformed_end),
+                        );
+
+                        const translation_vec = lin.applyHomogenous(params.initial_transform.apply(Vec3{ 0, 0, 1.0 }));
+                        const inv_translation = Transform.translate(-translation_vec[0], -translation_vec[1]);
+                        const retranslate = Transform.translate(translation_vec[0], translation_vec[1]);
+
+                        const transform = params.initial_transform
+                            .then(inv_translation)
+                            .then(rotate)
+                            .then(retranslate);
+
+                        return InputAction{
+                            .set_composition_transform = .{
+                                .idx = params.idx,
+                                .transform = transform,
+                            },
+                        };
                     },
                     .scale => |*params| {
-                        const comp_to_obj = params.initial_transform.invert();
-                        const transformed_start = comp_to_obj.apply(Vec3{ params.start_pos[0], params.start_pos[1], 1.0 });
-                        const transformed_end = comp_to_obj.apply(Vec3{ new_pos[0], new_pos[1], 1.0 });
+                        const transformed_start = params.comp_to_object.apply(
+                            Vec3{ params.start_pos[0], params.start_pos[1], 1.0 },
+                        );
+                        const transformed_end = params.comp_to_object.apply(Vec3{ new_pos[0], new_pos[1], 1.0 });
                         const scale = lin.applyHomogenous(transformed_end) / lin.applyHomogenous(transformed_start);
                         return InputAction{
                             .set_composition_transform = .{
@@ -561,7 +631,7 @@ const InputState = struct {
             },
             .composition => |*c| {
                 switch (c.*) {
-                    .scale => |*params| {
+                    .move, .rotation, .scale => |*params| {
                         defer c.* = .none;
                         return .{
                             .set_composition_transform = .{
@@ -589,43 +659,40 @@ const InputState = struct {
 
     // FIXME: Const objects probably
     fn setKeyDown(self: *InputState, key: u8, ctrl: bool, objects: *Objects) ?InputAction {
-        switch (key) {
-            'S' => {
-                if (ctrl) {
-                    return .save;
-                }
-
-                switch (self.data) {
-                    .composition => |*c| {
-                        if (self.findCompositionIdx(objects)) |idx| {
-                            const obj = if (objects.get(self.selected_object).asComposition()) |comp| comp else unreachable;
-                            const transform = obj.objects.items[idx.value].transform;
-                            c.* = .{
-                                .scale = .{
-                                    .initial_transform = transform,
-                                    .idx = idx,
-                                    .start_pos = self.mouse_pos,
-                                },
-                            };
-                        }
-                        return null;
-                    },
-                    else => return null,
+        switch (self.data) {
+            .composition => |*c| {
+                switch (key) {
+                    'S' => c.* = self.makeCompositionInputState(objects, .scale),
+                    'R' => c.* = self.makeCompositionInputState(objects, .rotation),
+                    else => {},
                 }
             },
-            else => {
-                return null;
-            },
+            else => {},
         }
+
+        if (key == 'S' and ctrl) {
+            return .save;
+        }
+
+        return null;
     }
 
-    fn findCompositionIdx(self: *InputState, objects: *Objects) ?obj_mod.CompositionIdx {
-        const composition_obj = &objects.get(self.selected_object).data.composition;
+    fn makeCompositionInputState(self: InputState, objects: *Objects, comptime purpose: CompositionInputPurpose) CompositionInputState {
+        const idx = self.findCompositionIdx(objects) orelse return .none;
+        const state = TransformAdjustingInputState.init(self.mouse_pos, self.selected_object, idx, objects);
+        return @unionInit(CompositionInputState, @tagName(purpose), state);
+    }
+
+    fn findCompositionIdx(self: InputState, objects: *Objects) ?obj_mod.CompositionIdx {
+        const obj = objects.get(self.selected_object);
+        const composition_obj = &obj.data.composition;
         var closest_idx: usize = 0;
         var current_dist = std.math.inf(f32);
+        const composition_dims = obj.dims(objects);
+        const composition_aspect = coords.calcAspect(composition_dims[0], composition_dims[1]);
 
         for (0..composition_obj.objects.items.len) |idx| {
-            const transform = composition_obj.objects.items[idx].transform;
+            const transform = composition_obj.objects.items[idx].composedToCompositionTransform(objects, composition_aspect);
             const center = lin.applyHomogenous(transform.apply(Vec3{ 0, 0, 1 }));
             const dist = lin.length2(center - self.mouse_pos);
             if (dist < current_dist) {
@@ -666,12 +733,6 @@ fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
             if (selected_object.asPath()) |p| {
                 try p.addPoint(self.alloc, obj_loc);
                 try self.regeneratePathMasks(self.input_state.selected_object);
-            }
-        },
-        .move_composition_obj => |movement| {
-            const selected_object = self.selectedObject();
-            if (selected_object.asComposition()) |composition| {
-                composition.moveObject(movement.idx, movement.amount);
             }
         },
         .set_composition_transform => |movement| {

@@ -70,23 +70,18 @@ fn renderedTexture(self: *Renderer, alloc: Allocator, objects: *Objects, texture
 fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Objects, object: Object, transform: Transform, texture_cache: *TextureCache) !void {
     switch (object.data) {
         .composition => |c| {
+            const composition_object_dims = object.dims(objects);
+            const composition_object_aspect = coords.calcAspect(composition_object_dims[0], composition_object_dims[1]);
+
             for (c.objects.items) |composition_object| {
                 const next_object = objects.get(composition_object.id);
                 switch (next_object.data) {
                     .composition => return error.NestedComposition,
                     else => {},
                 }
-                const next_object_dims = next_object.dims(objects);
-                const composition_dims = object.dims(objects);
 
-                const next_transform =
-                    coords.aspectRatioCorrectedFill(
-                    next_object_dims[0],
-                    next_object_dims[1],
-                    composition_dims[0],
-                    composition_dims[1],
-                )
-                    .then(composition_object.transform)
+                const compsoed_to_composition = composition_object.composedToCompositionTransform(objects, composition_object_aspect);
+                const next_transform = compsoed_to_composition
                     .then(transform);
 
                 try self.renderObjectWithTransform(alloc, objects, next_object.*, next_transform, texture_cache);

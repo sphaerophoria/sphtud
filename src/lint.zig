@@ -100,25 +100,29 @@ pub fn inputOnCanvas(app: *App) !void {
     try app.clickRightMouse();
     try app.render();
 
-    // Try to scale an object
-    try app.setKeyDown('S', false);
-    try app.render();
+    const keys = [_]u8{ 'S', 'R' };
+    for (keys) |key| {
+        // Try to apply transformation to an object
+        try app.setKeyDown(key, false);
+        try app.render();
 
-    try app.setMousePos(400, 400);
-    try app.render();
+        try app.setMousePos(400, 400);
+        try app.render();
 
-    // Cancel the scale
-    try app.clickRightMouse();
+        // Cancel the transformation
+        try app.clickRightMouse();
 
-    // Try to scale an object
-    try app.setKeyDown('S', false);
-    try app.render();
+        // Try to apply transformation to an object
+        try app.setKeyDown(key, false);
+        try app.render();
 
-    try app.setMousePos(400, 400);
-    try app.render();
-    // Submit the scale
-    app.setMouseDown();
-    app.setMouseUp();
+        try app.setMousePos(400, 400);
+        try app.render();
+
+        // Submit the transformation
+        app.setMouseDown();
+        app.setMouseUp();
+    }
 }
 
 const swap_colors_frag =

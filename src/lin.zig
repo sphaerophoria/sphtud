@@ -27,6 +27,11 @@ test "dot sanity" {
     try std.testing.expectApproxEqAbs(32, ret, 0.001);
 }
 
+pub fn normalize(in: Vec2) Vec2 {
+    const l: Vec2 = @splat(length(in));
+    return in / l;
+}
+
 pub fn cross(a: Vec3, b: Vec3) Vec3 {
     return .{
         a[1] * b[2] - a[2] * b[1],
@@ -40,6 +45,10 @@ test "cross sanity" {
     try std.testing.expectApproxEqAbs(35, ret[0], 0.0001);
     try std.testing.expectApproxEqAbs(-19, ret[1], 0.0001);
     try std.testing.expectApproxEqAbs(1, ret[2], 0.0001);
+}
+
+pub fn cross2(a: Vec2, b: Vec2) f32 {
+    return a[0] * b[1] - a[1] * b[0];
 }
 
 pub const Mat3x3 = struct {
@@ -152,6 +161,22 @@ pub const Transform = struct {
             .data = .{
                 x,   0.0, 0.0,
                 0.0, y,   0.0,
+                0.0, 0.0, 1.0,
+            },
+        } };
+    }
+
+    pub fn rotateAToB(a: Vec2, b: Vec2) Transform {
+        const a_norm = normalize(a);
+        const b_norm = normalize(b);
+
+        const c = dot(a_norm, b_norm);
+        const s = cross2(a_norm, b_norm);
+
+        return .{ .inner = .{
+            .data = .{
+                c,   -s,  0.0,
+                s,   c,   0.0,
                 0.0, 0.0, 1.0,
             },
         } };

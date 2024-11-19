@@ -4,6 +4,7 @@ const gl = @import("gl.zig");
 const lin = @import("lin.zig");
 const Renderer = @import("Renderer.zig");
 const StbImage = @import("StbImage.zig");
+const coords = @import("coords.zig");
 
 const Transform = lin.Transform;
 const Vec3 = lin.Vec3;
@@ -152,20 +153,33 @@ pub const CompositionIdx = struct {
 pub const CompositionObject = struct {
     const ComposedObject = struct {
         id: ObjectId,
-        // Identity represents a aspect ratio corrected object that fills the
-        // parent. E.g. if the parent is wide, and the child is tall, the
-        // identity matrix will position the child such that it fills the
-        // parent vertically in the center
+        // Identity represents an aspect ratio corrected object that would fill
+        // the composition if it were square. E.g. if the object is wide, it
+        // scales until it fits horizontally in a 1:1 square, if it is tall it
+        // scales to fit vertically. The actual composition will ensure that
+        // this 1:1 square is fully visible, but may contain extra stuff
+        // outside depending on the aspect ratio of the composition
         transform: Transform,
+
+        pub fn composedToCompositionTransform(self: ComposedObject, objects: *Objects, composition_aspect: f32) Transform {
+            const object = objects.get(self.id);
+            const object_dims = object.dims(objects);
+
+            // Put it in a square
+            const obj_aspect_transform = coords.aspectRatioCorrectedFill(object_dims[0], object_dims[1], 1, 1);
+
+            const composition_aspect_transform = if (composition_aspect > 1.0)
+                Transform.scale(1.0 / composition_aspect, 1.0)
+            else
+                Transform.scale(1.0, composition_aspect);
+
+            return obj_aspect_transform
+                .then(self.transform)
+                .then(composition_aspect_transform);
+        }
     };
 
     objects: std.ArrayListUnmanaged(ComposedObject) = .{},
-
-    pub fn moveObject(self: *CompositionObject, idx: CompositionIdx, movement: Vec2) void {
-        const obj = &self.objects.items[idx.value];
-
-        obj.transform = obj.transform.then(Transform.translate(movement[0], movement[1]));
-    }
 
     pub fn setTransform(self: *CompositionObject, idx: CompositionIdx, transform: Transform) void {
         const obj = &self.objects.items[idx.value];
