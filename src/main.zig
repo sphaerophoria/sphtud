@@ -213,14 +213,10 @@ const Imgui = struct {
         return ret;
     }
 
-    fn createPathButton() ?PropertyAction {
-        return if (c.igButton("Create path", null_size)) .create_path else null;
-    }
-
     const PropertyAction = union(enum) {
-        create_path,
         delete_from_composition: obj_mod.CompositionIdx,
         add_to_composition: obj_mod.ObjectId,
+        update_path_display_obj: obj_mod.ObjectId,
     };
 
     fn renderObjectProperties(selected_object: *obj_mod.Object, objects: *obj_mod.Objects) !?PropertyAction {
@@ -258,8 +254,6 @@ const Imgui = struct {
                 if (c.igTableNextColumn()) c.igText("%lu", f.height);
 
                 c.igEndTable();
-
-                if (createPathButton()) |a| ret = a;
             },
             .composition => |*comp| blk: {
                 c.igText("Composition");
@@ -290,31 +284,31 @@ const Imgui = struct {
                     c.igText(" %.*s", child_obj.name.len, child_obj.name.ptr);
                 }
 
-                var obj_it = objects.idIter();
                 if (!c.igBeginCombo("Availble objects", "Select to add", 0)) break :blk;
-                while (obj_it.next()) |obj_id| {
-                    const obj = objects.get(obj_id);
-                    if (!obj.isComposable()) continue;
-
-                    var buf: [1024]u8 = undefined;
-                    const obj_namez = try std.fmt.bufPrintZ(&buf, "{s}##{d}", .{ obj.name, obj_id.value });
-                    if (c.igSelectable_Bool(obj_namez.ptr, false, 0, null_size)) {
-                        ret = .{
-                            .add_to_composition = obj_id,
-                        };
-                    }
+                if (try addComposableObjects(objects, "compose", null, null)) |selected| {
+                    ret = .{
+                        .add_to_composition = selected,
+                    };
                 }
                 c.igEndCombo();
             },
             .shader => {
                 // FIXME: Log something interesting like uniforms etc.
                 c.igText("Shader");
-
-                if (createPathButton()) |a| ret = a;
             },
-            .path => {
+            .path => |p| {
                 c.igText("Path");
-                // Parent object
+
+                var source_name_buf: [1024]u8 = undefined;
+                const source_name = try std.fmt.bufPrintZ(&source_name_buf, "{s}", .{objects.get(p.display_object).name});
+                if (c.igBeginCombo("Source object", source_name, 0)) {
+                    if (try addComposableObjects(objects, "path_display_object", p.display_object, null)) |new_source| {
+                        ret = .{
+                            .update_path_display_obj = new_source,
+                        };
+                    }
+                    c.igEndCombo();
+                }
             },
             .generated_mask => {
                 c.igText("Generated mask");
@@ -322,6 +316,55 @@ const Imgui = struct {
         }
         c.igEnd();
 
+        return ret;
+    }
+
+    const AddObjectAction = union(enum) {
+        create_path,
+        create_composition,
+    };
+
+    fn renderAddObjectView() !?AddObjectAction {
+        if (!c.igBegin("Create an object", null, 0)) {
+            return null;
+        }
+
+        var ret: ?AddObjectAction = null;
+
+        if (c.igButton("Create path", null_size)) {
+            ret = .create_path;
+        }
+
+        if (c.igButton("Create composition", null_size)) {
+            ret = .create_composition;
+        }
+
+        c.igEnd();
+
+        return ret;
+    }
+
+    fn addComposableObjects(objects: *obj_mod.Objects, purpose: []const u8, selected: ?obj_mod.ObjectId, rejected_id: ?obj_mod.ObjectId) !?obj_mod.ObjectId {
+        var ret: ?obj_mod.ObjectId = null;
+        var obj_it = objects.idIter();
+        while (obj_it.next()) |obj_id| {
+            if (rejected_id != null and obj_id.value == rejected_id.?.value) continue;
+            const obj = objects.get(obj_id);
+            if (!obj.isComposable()) continue;
+
+            var buf: [1024]u8 = undefined;
+            const obj_namez = try std.fmt.bufPrintZ(&buf, "{s}##{s}_{d}", .{ obj.name, purpose, obj_id.value });
+            const clicked = c.igSelectable_Bool(
+                obj_namez.ptr,
+                selected != null and selected.?.value == obj_id.value,
+                0,
+                null_size,
+            );
+
+            if (clicked) {
+                ret = obj_id;
+            }
+        }
         return ret;
     }
 
@@ -477,14 +520,31 @@ pub fn main() !void {
 
         if (try Imgui.renderObjectProperties(app.objects.get(app.input_state.selected_object), &app.objects)) |action| {
             switch (action) {
-                .create_path => {
-                    try app.createPath();
-                },
                 .delete_from_composition => |id| {
-                    try app.deleteFromComposition(id);
+                    app.deleteFromComposition(id) catch |e| {
+                        logError("Failed to delete item from composition", e, @errorReturnTrace());
+                    };
                 },
                 .add_to_composition => |id| {
-                    try app.addToComposition(id);
+                    _ = app.addToComposition(id) catch |e| {
+                        logError("Failed to add item to composition", e, @errorReturnTrace());
+                    };
+                },
+                .update_path_display_obj => |id| {
+                    app.updatePathDisplayObj(id) catch |e| {
+                        logError("Failed to set path object", e, @errorReturnTrace());
+                    };
+                },
+            }
+        }
+
+        if (try Imgui.renderAddObjectView()) |action| {
+            switch (action) {
+                .create_path => {
+                    _ = try app.createPath();
+                },
+                .create_composition => {
+                    _ = try app.addComposition();
                 },
             }
         }

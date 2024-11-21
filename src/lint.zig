@@ -181,14 +181,19 @@ pub fn main() !void {
         );
 
         app.setSelectedObject(composition_idx);
-        try app.addToComposition(id);
-        try app.addToComposition(shader_id);
+        _ = try app.addToComposition(id);
+        const shader_composition_idx = try app.addToComposition(shader_id);
+        _ = try app.addToComposition(shader_id);
+        try app.deleteFromComposition(shader_composition_idx);
 
         app.setSelectedObject(id);
-        try app.createPath();
+        _ = try app.createPath();
 
         app.setSelectedObject(shader_id);
-        try app.createPath();
+        const path_id = try app.createPath();
+
+        app.setSelectedObject(path_id);
+        try app.updatePathDisplayObj(id);
     }
 
     var it = app.objects.idIter();

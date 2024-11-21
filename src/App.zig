@@ -6,6 +6,7 @@ const Renderer = @import("Renderer.zig");
 const obj_mod = @import("object.zig");
 const StbImage = @import("StbImage.zig");
 const coords = @import("coords.zig");
+const dependency_loop = @import("dependency_loop.zig");
 
 const Object = obj_mod.Object;
 const ObjectId = obj_mod.ObjectId;
@@ -144,7 +145,7 @@ pub fn setMousePos(self: *App, xpos: f32, ypos: f32) !void {
     try self.handleInputAction(input_action);
 }
 
-pub fn createPath(self: *App) !void {
+pub fn createPath(self: *App) !ObjectId {
     const initial_positions: []const Vec2 = &.{
         Vec2{ -0.5, -0.5 },
         Vec2{ 0.5, 0.5 },
@@ -179,16 +180,22 @@ pub fn createPath(self: *App) !void {
             .shader = try obj_mod.ShaderObject.init(self.alloc, &.{ self.input_state.selected_object, mask_id }, Renderer.mul_fragment_shader, &.{ "u_texture", "u_texture_2" }, selected_dims[0], selected_dims[1]),
         },
     });
+
+    return path_id;
 }
 
-pub fn addToComposition(self: *App, id: obj_mod.ObjectId) !void {
+pub fn addToComposition(self: *App, id: obj_mod.ObjectId) !obj_mod.CompositionIdx {
     const selected_object = self.objects.get(self.input_state.selected_object);
 
     if (selected_object.data != .composition) {
         return error.SelectedItemNotComposition;
     }
 
-    try selected_object.data.composition.addObj(self.alloc, id);
+    const new_idx = try selected_object.data.composition.addObj(self.alloc, id);
+    errdefer selected_object.data.composition.removeObj(new_idx);
+
+    try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
+    return new_idx;
 }
 
 pub fn deleteFromComposition(self: *App, id: obj_mod.CompositionIdx) !void {
@@ -215,6 +222,16 @@ pub fn addComposition(self: *App) !ObjectId {
     });
 
     return id;
+}
+
+pub fn updatePathDisplayObj(self: *App, id: ObjectId) !void {
+    const path_data = self.selectedObject().asPath() orelse return error.SelectedItemNotPath;
+    const prev = path_data.display_object;
+
+    path_data.display_object = id;
+    errdefer path_data.display_object = prev;
+
+    try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
 }
 
 pub fn loadImage(self: *App, path: [:0]const u8) !ObjectId {

@@ -121,13 +121,60 @@ pub const Object = struct {
         }
     }
 
+    const DependencyIt = struct {
+        idx: usize = 0,
+        object: Object,
+
+        pub fn next(self: *DependencyIt) ?ObjectId {
+            switch (self.object.data) {
+                .filesystem => return null,
+                .path => |*p| {
+                    if (self.idx >= 1) {
+                        return null;
+                    }
+                    defer self.idx += 1;
+                    return p.display_object;
+                },
+                .shader => |*s| {
+                    while (self.idx < s.input_images.len) {
+                        defer self.idx += 1;
+
+                        return s.input_images[self.idx];
+                    }
+
+                    return null;
+                },
+                .composition => |*c| {
+                    if (self.idx >= c.objects.items.len) {
+                        return null;
+                    }
+                    defer self.idx += 1;
+                    return c.objects.items[self.idx].id;
+                },
+                .generated_mask => |*m| {
+                    if (self.idx > 0) {
+                        return null;
+                    }
+                    defer self.idx += 1;
+                    return m.source;
+                },
+            }
+        }
+    };
+
+    pub fn dependencies(self: Object) DependencyIt {
+        return .{
+            .object = self,
+        };
+    }
+
     pub fn isComposable(self: Object) bool {
         return switch (self.data) {
             .filesystem => true,
             .path => false,
             .generated_mask => true,
             .shader => true,
-            .composition => false,
+            .composition => true,
         };
     }
 
@@ -186,11 +233,13 @@ pub const CompositionObject = struct {
         obj.transform = transform;
     }
 
-    pub fn addObj(self: *CompositionObject, alloc: Allocator, id: ObjectId) !void {
+    pub fn addObj(self: *CompositionObject, alloc: Allocator, id: ObjectId) !CompositionIdx {
+        const ret = self.objects.items.len;
         try self.objects.append(alloc, .{
             .id = id,
             .transform = Transform.identity,
         });
+        return .{ .value = ret };
     }
 
     pub fn removeObj(self: *CompositionObject, id: CompositionIdx) void {

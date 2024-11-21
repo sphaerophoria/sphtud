@@ -75,10 +75,6 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
 
             for (c.objects.items) |composition_object| {
                 const next_object = objects.get(composition_object.id);
-                switch (next_object.data) {
-                    .composition => return error.NestedComposition,
-                    else => {},
-                }
 
                 const compsoed_to_composition = composition_object.composedToCompositionTransform(objects, composition_object_aspect);
                 const next_transform = compsoed_to_composition
