@@ -8,20 +8,17 @@ pub const Item = struct {
     name: []const u8,
     program: Renderer.PlaneRenderProgram,
     fs_source: [:0]const u8,
-    texture_names: []const [:0]const u8,
 
     fn deinit(self: *Item, alloc: Allocator) void {
         alloc.free(self.name);
         alloc.free(self.fs_source);
         self.program.deinit(alloc);
-        freeTextureNames(alloc, self.texture_names);
     }
 
     fn save(self: Item) Save {
         return .{
             .name = self.name,
             .fs_source = self.fs_source,
-            .texture_names = self.texture_names,
         };
     }
 };
@@ -29,7 +26,6 @@ pub const Item = struct {
 pub const Save = struct {
     name: []const u8,
     fs_source: [:0]const u8,
-    texture_names: []const [:0]const u8,
 };
 
 storage: std.ArrayListUnmanaged(Item) = .{},
@@ -61,17 +57,14 @@ pub fn idIter(self: ShaderStorage) ShaderIdIterator {
     return .{ .max = self.storage.items.len };
 }
 
-pub fn addShader(self: *ShaderStorage, alloc: Allocator, name: []const u8, fs_source: [:0]const u8, texture_names: []const [:0]const u8) !ShaderId {
+pub fn addShader(self: *ShaderStorage, alloc: Allocator, name: []const u8, fs_source: [:0]const u8) !ShaderId {
     const id = ShaderId{ .value = self.storage.items.len };
 
     const name_duped = try alloc.dupe(u8, name);
     errdefer alloc.free(name_duped);
 
-    const program = try Renderer.PlaneRenderProgram.init(alloc, Renderer.plane_vertex_shader, fs_source, texture_names);
+    const program = try Renderer.PlaneRenderProgram.init(alloc, Renderer.plane_vertex_shader, fs_source);
     errdefer program.deinit(alloc);
-
-    const duped_texture_names = try copyTextureNames(alloc, texture_names);
-    errdefer freeTextureNames(alloc, duped_texture_names);
 
     const duped_fs_source = try alloc.dupeZ(u8, fs_source);
     errdefer alloc.free(duped_fs_source);
@@ -79,7 +72,6 @@ pub fn addShader(self: *ShaderStorage, alloc: Allocator, name: []const u8, fs_so
     try self.storage.append(alloc, .{
         .name = name_duped,
         .program = program,
-        .texture_names = duped_texture_names,
         .fs_source = duped_fs_source,
     });
     return id;
@@ -98,29 +90,4 @@ pub fn save(self: ShaderStorage, alloc: Allocator) ![]Save {
     }
 
     return saves;
-}
-
-fn copyTextureNames(alloc: Allocator, texture_names: []const [:0]const u8) ![]const [:0]const u8 {
-    var i: usize = 0;
-    const duped_texture_names = try alloc.alloc([:0]const u8, texture_names.len);
-    errdefer {
-        for (0..i) |j| {
-            alloc.free(duped_texture_names[j]);
-        }
-        alloc.free(duped_texture_names);
-    }
-
-    while (i < texture_names.len) {
-        duped_texture_names[i] = try alloc.dupeZ(u8, texture_names[i]);
-        i += 1;
-    }
-
-    return duped_texture_names;
-}
-
-fn freeTextureNames(alloc: Allocator, texture_names: []const [:0]const u8) void {
-    for (texture_names) |n| {
-        alloc.free(n);
-    }
-    alloc.free(texture_names);
 }

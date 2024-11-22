@@ -55,7 +55,7 @@ pub const Object = struct {
         };
     }
 
-    pub fn load(alloc: Allocator, save_obj: SaveObject, path_vpos_loc: gl.GLint) !Object {
+    pub fn load(alloc: Allocator, save_obj: SaveObject, shaders: ShaderStorage, path_vpos_loc: gl.GLint) !Object {
         const data: Data = switch (save_obj.data) {
             .filesystem => |s| blk: {
                 break :blk .{
@@ -79,12 +79,11 @@ pub const Object = struct {
                     std.debug.assert(@sizeOf(ObjectId) == @sizeOf(usize));
                 }
 
-                var shader_object = try ShaderObject.init(alloc, s.input_images.len, .{ .value = s.shader_id }, s.primary_input_idx);
+                var shader_object = try ShaderObject.init(alloc, .{ .value = s.shader_id }, shaders, s.primary_input_idx);
                 errdefer shader_object.deinit(alloc);
 
-                for (0..s.input_images.len) |idx| {
-                    const input_id: ?ObjectId = if (s.input_images[idx]) |input_id| ObjectId{ .value = input_id } else null;
-                    try shader_object.setInputImage(idx, input_id);
+                for (0..s.bindings.len) |idx| {
+                    try shader_object.setUniform(idx, s.bindings[idx]);
                 }
                 break :blk .{ .shader = shader_object };
             },
@@ -118,8 +117,11 @@ pub const Object = struct {
                 return dims(source.*, object_list);
             },
             .shader => |s| {
-                const dims_id = s.input_images[s.primary_input_idx] orelse return .{ 1024, 1024 };
-                const source = object_list.get(dims_id);
+                const primary_input = s.bindings[s.primary_input_idx];
+                const default_res = PixelDims{ 1024, 1024 };
+                if (primary_input != .image) return default_res;
+                if (primary_input.image == null) return default_res;
+                const source = object_list.get(primary_input.image.?);
 
                 return dims(source.*, object_list);
             },
@@ -145,10 +147,13 @@ pub const Object = struct {
                     return p.display_object;
                 },
                 .shader => |*s| {
-                    while (self.idx < s.input_images.len) {
+                    while (self.idx < s.bindings.len) {
                         defer self.idx += 1;
 
-                        return s.input_images[self.idx];
+                        const binding = s.bindings[self.idx];
+                        if (binding == .image and binding.image != null) {
+                            return binding.image.?;
+                        }
                     }
 
                     return null;
@@ -268,34 +273,38 @@ pub const CompositionObject = struct {
 };
 
 pub const ShaderObject = struct {
-    input_images: []?ObjectId,
     primary_input_idx: usize,
-
     program: ShaderStorage.ShaderId,
+    bindings: []Renderer.UniformValue,
 
-    pub fn init(alloc: Allocator, num_input_images: usize, shader_id: ShaderStorage.ShaderId, primary_input_idx: usize) !ShaderObject {
-        const input_images = try alloc.alloc(?ObjectId, num_input_images);
-        errdefer alloc.free(input_images);
-        @memset(input_images, null);
+    pub fn init(alloc: Allocator, id: ShaderStorage.ShaderId, shaders: ShaderStorage, primary_input_idx: usize) !ShaderObject {
+        const program = shaders.get(id).program;
+
+        const bindings = try alloc.alloc(Renderer.UniformValue, program.uniforms.len);
+        errdefer alloc.free(bindings);
+
+        for (program.uniforms, 0..) |uniform, idx| {
+            bindings[idx] = uniform.default;
+        }
 
         return .{
-            .input_images = input_images,
-            .program = shader_id,
             .primary_input_idx = primary_input_idx,
+            .program = id,
+            .bindings = bindings,
         };
     }
 
     pub fn deinit(self: *ShaderObject, alloc: Allocator) void {
-        alloc.free(self.input_images);
+        alloc.free(self.bindings);
     }
 
-    // FIXME: strong type
-    pub fn setInputImage(self: *ShaderObject, idx: usize, val: ?ObjectId) !void {
-        if (idx >= self.input_images.len) {
+    pub fn setUniform(self: *ShaderObject, idx: usize, val: Renderer.UniformValue) !void {
+        if (idx >= self.bindings.len) {
             return error.InvalidShaderIndex;
         }
+        // FIXME: ensure type match
 
-        self.input_images[idx] = val;
+        self.bindings[idx] = val;
     }
 
     pub fn save(self: ShaderObject) SaveObject.Data {
@@ -306,7 +315,7 @@ pub const ShaderObject = struct {
 
         return .{
             .shader = .{
-                .input_images = @ptrCast(self.input_images),
+                .bindings = self.bindings,
                 .shader_id = self.program.value,
                 .primary_input_idx = self.primary_input_idx,
             },
@@ -537,7 +546,7 @@ pub const SaveObject = struct {
         filesystem: [:0]const u8,
         composition: []CompositionObject.ComposedObject,
         shader: struct {
-            input_images: []?usize,
+            bindings: []Renderer.UniformValue,
             shader_id: usize,
             primary_input_idx: usize,
         },

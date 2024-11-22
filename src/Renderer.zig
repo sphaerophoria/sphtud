@@ -22,10 +22,10 @@ pub fn init(alloc: Allocator) !Renderer {
     gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA);
     gl.glEnable(gl.GL_BLEND);
 
-    const plane_program = try PlaneRenderProgram.init(alloc, plane_vertex_shader, plane_fragment_shader, &.{"u_texture"});
+    const plane_program = try PlaneRenderProgram.init(alloc, plane_vertex_shader, plane_fragment_shader);
     errdefer plane_program.deinit(alloc);
 
-    const background_program = try PlaneRenderProgram.init(alloc, plane_vertex_shader, checkerboard_fragment_shader, &.{});
+    const background_program = try PlaneRenderProgram.init(alloc, plane_vertex_shader, checkerboard_fragment_shader);
     errdefer background_program.deinit(alloc);
 
     const path_program = try PathRenderProgram.init();
@@ -40,6 +40,8 @@ pub fn init(alloc: Allocator) !Renderer {
 
 pub fn deinit(self: *Renderer, alloc: Allocator) void {
     self.program.deinit(alloc);
+    self.background_program.deinit(alloc);
+    self.path_program.deinit();
 }
 
 pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage, selected_object: ObjectId, transform: Transform, window_width: usize, window_height: usize) !void {
@@ -85,19 +87,32 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
             }
         },
         .filesystem => |f| {
-            self.program.render(&.{f.texture}, transform, coords.calcAspect(f.width, f.height));
+            self.program.render(&.{.{ .image = f.texture.inner }}, transform, coords.calcAspect(f.width, f.height));
         },
         .shader => |s| {
-            var sources = std.ArrayList(Texture).init(alloc);
+            var sources = std.ArrayList(ResolvedUniformValue).init(alloc);
             defer sources.deinit();
 
-            for (s.input_images) |input_image| {
-                const texture = if (input_image) |id|
-                    try self.renderedTexture(alloc, objects, shaders, texture_cache, id)
-                else
-                    Texture.invalid;
+            for (s.bindings) |binding| {
+                switch (binding) {
+                    .image => |opt_id| {
+                        const texture = if (opt_id) |o|
+                            try self.renderedTexture(alloc, objects, shaders, texture_cache, o)
+                        else
+                            Texture.invalid;
 
-                try sources.append(texture);
+                        try sources.append(.{ .image = texture.inner });
+                    },
+                    .float => |f| {
+                        try sources.append(.{ .float = f });
+                    },
+                    .float3 => |f| {
+                        try sources.append(.{ .float3 = f });
+                    },
+                    .int => |i| {
+                        try sources.append(.{ .int = i });
+                    },
+                }
             }
 
             const object_dims = object.dims(objects);
@@ -111,7 +126,7 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
         },
         .generated_mask => |m| {
             const object_dims = object.dims(objects);
-            self.program.render(&.{m.texture}, transform, coords.calcAspect(object_dims[0], object_dims[1]));
+            self.program.render(&.{.{ .image = m.texture.inner }}, transform, coords.calcAspect(object_dims[0], object_dims[1]));
         },
     }
 }
@@ -171,15 +186,65 @@ pub const Texture = struct {
     }
 };
 
+pub const UniformType = enum {
+    image,
+    float,
+    float3,
+    int,
+
+    fn fromGlType(typ: gl.GLenum) ?UniformType {
+        switch (typ) {
+            gl.GL_SAMPLER_2D => return .image,
+            gl.GL_FLOAT => return .float,
+            gl.GL_FLOAT_VEC3 => return .float3,
+            gl.GL_INT => return .int,
+            else => return null,
+        }
+    }
+};
+
+const ResolvedUniformValue = union(UniformType) {
+    image: gl.GLuint,
+    float: f32,
+    float3: [3]f32,
+    int: i32,
+};
+
+pub const UniformValue = union(UniformType) {
+    image: ?ObjectId,
+    float: f32,
+    float3: [3]f32,
+    int: i32,
+};
+
+pub const Uniform = struct {
+    name: []const u8,
+    loc: gl.GLint,
+    default: UniformValue,
+
+    fn clone(self: Uniform, alloc: Allocator) !Uniform {
+        return .{
+            .name = try alloc.dupe(u8, self.name),
+            .loc = self.loc,
+            .default = self.default,
+        };
+    }
+
+    fn deinit(self: Uniform, alloc: Allocator) void {
+        alloc.free(self.name);
+    }
+};
+
 pub const PlaneRenderProgram = struct {
     program: gl.GLuint,
     transform_location: gl.GLint,
     aspect_location: gl.GLint,
-    texture_locations: []gl.GLint,
     vertex_buffer: gl.GLuint,
     vertex_array: gl.GLuint,
 
-    pub fn init(alloc: Allocator, vs: [:0]const u8, fs: [:0]const u8, texture_names: []const [:0]const u8) !PlaneRenderProgram {
+    uniforms: []Uniform,
+
+    pub fn init(alloc: Allocator, vs: [:0]const u8, fs: [:0]const u8) !PlaneRenderProgram {
         const program = try compileLinkProgram(vs, fs);
         errdefer gl.glDeleteProgram(program);
 
@@ -188,12 +253,19 @@ pub const PlaneRenderProgram = struct {
         const transform_location = gl.glGetUniformLocation(program, "transform");
         const aspect_location = gl.glGetUniformLocation(program, "aspect");
 
-        var texture_locations = std.ArrayList(gl.GLint).init(alloc);
-        defer texture_locations.deinit();
+        var uniforms = std.ArrayList(Uniform).init(alloc);
+        defer {
+            for (uniforms.items) |item| {
+                item.deinit(alloc);
+            }
+            uniforms.deinit();
+        }
 
-        for (texture_names) |n| {
-            const texture_location = gl.glGetUniformLocation(program, n);
-            try texture_locations.append(texture_location);
+        var uniform_it = try ProgramUniformIt.init(program);
+        while (uniform_it.next()) |uniform| {
+            const cloned = try uniform.clone(alloc);
+            errdefer cloned.deinit(alloc);
+            try uniforms.append(cloned);
         }
 
         var vertex_buffer: gl.GLuint = 0;
@@ -217,35 +289,130 @@ pub const PlaneRenderProgram = struct {
 
         return .{
             .program = program,
-            .texture_locations = try texture_locations.toOwnedSlice(),
             .aspect_location = aspect_location,
             .vertex_buffer = vertex_buffer,
             .vertex_array = vertex_array,
             .transform_location = transform_location,
+            .uniforms = try uniforms.toOwnedSlice(),
         };
     }
 
     pub fn deinit(self: PlaneRenderProgram, alloc: Allocator) void {
-        alloc.free(self.texture_locations);
         gl.glDeleteBuffers(1, &self.vertex_buffer);
         gl.glDeleteVertexArrays(1, &self.vertex_array);
         gl.glDeleteProgram(self.program);
+
+        for (self.uniforms) |uniform| {
+            uniform.deinit(alloc);
+        }
+        alloc.free(self.uniforms);
     }
 
-    pub fn render(self: PlaneRenderProgram, textures: []const Texture, transform: lin.Transform, aspect: f32) void {
+    pub fn render(self: PlaneRenderProgram, uniforms: []const ResolvedUniformValue, transform: lin.Transform, aspect: f32) void {
         gl.glUseProgram(self.program);
         gl.glBindVertexArray(self.vertex_array);
         gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &transform.inner.data);
         gl.glUniform1f(self.aspect_location, aspect);
 
-        for (0..textures.len) |i| {
-            const texture_unit = gl.GL_TEXTURE0 + i;
-            gl.glActiveTexture(@intCast(texture_unit));
-            gl.glBindTexture(gl.GL_TEXTURE_2D, textures[i].inner);
-            gl.glUniform1i(self.texture_locations[i], @intCast(i));
+        for (self.uniforms, 0..) |uniform, i| {
+            if (i >= uniforms.len) continue;
+            const val = uniforms[i];
+            if (std.meta.activeTag(uniform.default) != std.meta.activeTag(val)) {
+                std.log.err("Uniform type mismatch", .{});
+                continue;
+            }
+
+            switch (val) {
+                .image => |t| {
+                    const texture_unit = gl.GL_TEXTURE0 + i;
+                    gl.glActiveTexture(@intCast(texture_unit));
+                    gl.glBindTexture(gl.GL_TEXTURE_2D, t);
+                    gl.glUniform1i(uniform.loc, @intCast(i));
+                },
+                .float => |f| {
+                    gl.glUniform1f(uniform.loc, f);
+                },
+                .float3 => |f| {
+                    gl.glUniform3f(uniform.loc, f[0], f[1], f[2]);
+                },
+                .int => |v| {
+                    gl.glUniform1i(uniform.loc, v);
+                },
+            }
         }
 
         gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4);
+    }
+};
+
+const ProgramUniformIt = struct {
+    num_uniforms: usize,
+    program: gl.GLuint,
+    name_buf: [1024]u8 = undefined,
+    idx: usize = 0,
+
+    fn init(program: gl.GLuint) !ProgramUniformIt {
+        var num_uniforms: gl.GLint = 0;
+        gl.glGetProgramiv(program, gl.GL_ACTIVE_UNIFORMS, &num_uniforms);
+
+        if (num_uniforms < 0) {
+            return error.InvalidNumUniforms;
+        }
+
+        return .{
+            .program = program,
+            .num_uniforms = @intCast(num_uniforms),
+        };
+    }
+
+    fn next(self: *ProgramUniformIt) ?Uniform {
+        while (self.idx < self.num_uniforms) {
+            defer self.idx += 1;
+
+            var name_len: gl.GLsizei = 0;
+            var uniform_size: gl.GLint = 0;
+            var uniform_type: gl.GLenum = 0;
+
+            gl.glGetActiveUniform(
+                self.program,
+                @intCast(self.idx),
+                @intCast(self.name_buf.len),
+                &name_len,
+                &uniform_size,
+                &uniform_type,
+                &self.name_buf,
+            );
+
+            const parsed_typ = UniformType.fromGlType(uniform_type) orelse continue;
+
+            const default: UniformValue = switch (parsed_typ) {
+                .image => .{ .image = null },
+                .float => blk: {
+                    var default: f32 = 0.0;
+                    gl.glGetUniformfv(self.program, @intCast(self.idx), &default);
+                    break :blk .{ .float = default };
+                },
+                .float3 => blk: {
+                    var default: [3]f32 = .{ 0.0, 0.0, 0.0 };
+                    gl.glGetUniformfv(self.program, @intCast(self.idx), &default);
+                    break :blk .{ .float3 = default };
+                },
+                .int => blk: {
+                    var default: gl.GLint = 0;
+                    gl.glGetUniformiv(self.program, @intCast(self.idx), &default);
+                    break :blk .{ .int = @intCast(default) };
+                },
+            };
+            if (name_len < 0) continue;
+
+            return .{
+                .name = self.name_buf[0..@intCast(name_len)],
+                .loc = @intCast(self.idx),
+                .default = default,
+            };
+        }
+
+        return null;
     }
 };
 
@@ -470,10 +637,10 @@ pub const plane_fragment_shader =
     \\in vec2 uv;
     \\out vec4 fragment;
     \\uniform float aspect;
-    \\uniform sampler2D u_texture;  // The texture
+    \\uniform sampler2D input_image;  // The texture
     \\void main()
     \\{
-    \\    fragment = texture(u_texture, vec2(uv.x, uv.y));
+    \\    fragment = texture(input_image, vec2(uv.x, uv.y));
     \\}
 ;
 
@@ -494,13 +661,13 @@ pub const mul_fragment_shader =
     \\#version 330 core
     \\in vec2 uv;
     \\out vec4 fragment;
-    \\uniform sampler2D u_texture;
-    \\uniform sampler2D u_texture_2;
+    \\uniform sampler2D input_image;
+    \\uniform sampler2D mask;
     \\void main()
     \\{
-    \\    vec4 val = texture(u_texture, vec2(uv.x, uv.y));
-    \\    float mask = texture(u_texture_2, vec2(uv.x, uv.y)).r;
-    \\    fragment = vec4(val.xyz, val.w * mask);
+    \\    vec4 val = texture(input_image, vec2(uv.x, uv.y));
+    \\    float mask_val = texture(mask, vec2(uv.x, uv.y)).r;
+    \\    fragment = vec4(val.xyz, val.w * mask_val);
     \\}
 ;
 

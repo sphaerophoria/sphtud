@@ -162,7 +162,7 @@ pub fn main() !void {
     const dummy_path = try std.fmt.bufPrintZ(&dummy_path_buf, "{s}/dummy.png", .{tmpdir_path});
     try writeDummyImage(alloc, dummy_path);
 
-    const swap_colors_id = try app.addShaderFromFragmentSource("swap colors", swap_colors_frag, &.{"u_texture"});
+    const swap_colors_id = try app.addShaderFromFragmentSource("swap colors", swap_colors_frag);
 
     for (0..2) |_| {
         const composition_idx = try app.addComposition();
@@ -177,7 +177,7 @@ pub fn main() !void {
             swap_colors_id,
         );
         app.setSelectedObject(shader_id);
-        try app.setShaderDependency(0, id);
+        try app.setShaderDependency(0, .{ .image = id });
 
         app.setSelectedObject(composition_idx);
         _ = try app.addToComposition(id);

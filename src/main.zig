@@ -5,6 +5,7 @@ const App = @import("App.zig");
 const obj_mod = @import("object.zig");
 const lin = @import("lin.zig");
 const ShaderStorage = @import("ShaderStorage.zig");
+const Renderer = @import("Renderer.zig");
 const c = @cImport({
     @cInclude("GLFW/glfw3.h");
     @cDefine("CIMGUI_DEFINE_ENUMS_AND_STRUCTS", "");
@@ -218,10 +219,10 @@ const Imgui = struct {
         delete_from_composition: obj_mod.CompositionIdx,
         add_to_composition: obj_mod.ObjectId,
         update_path_display_obj: obj_mod.ObjectId,
-        set_shader_dependency: struct {
+        set_shader_binding_value: struct {
             // FIXME: strong type?
             idx: usize,
-            val: obj_mod.ObjectId,
+            val: Renderer.UniformValue,
         },
         set_shader_primary_input: usize,
     };
@@ -303,37 +304,19 @@ const Imgui = struct {
             .shader => |shader_object| {
                 c.igText("Shader");
 
-                const shader = shaders.get(shader_object.program);
-                for (0..shader.texture_names.len) |idx| {
-                    var name_buf: [1024]u8 = undefined;
-                    const name = try std.fmt.bufPrintZ(&name_buf, "{s}", .{shader.texture_names[idx]});
-
-                    var bound_name_buf: [1024]u8 = undefined;
-                    const input_image = shader_object.input_images[idx];
-                    const bound_object_name = if (input_image) |id|
-                        try std.fmt.bufPrintZ(&bound_name_buf, "{s}", .{objects.get(id).name})
-                    else
-                        "none";
-
-                    if (c.igBeginCombo(name, bound_object_name, 0)) {
-                        if (try addComposableObjects(objects, "shader_input", null, selected_object_id)) |next_input_image| {
-                            ret = .{
-                                .set_shader_dependency = .{
-                                    .idx = idx,
-                                    .val = next_input_image,
-                                },
-                            };
-                        }
-                        c.igEndCombo();
+                const program = shaders.get(shader_object.program).program;
+                for (0..program.uniforms.len) |idx| {
+                    if (try renderShaderUniform(idx, shader_object.bindings, program, objects, selected_object_id)) |action| {
+                        ret = action;
                     }
+                }
 
-                    var primary_input_idx: c_int = @intCast(shader_object.primary_input_idx);
-                    if (c.igInputInt("Primary input idx", &primary_input_idx, 1, 1, 0)) {
-                        if (primary_input_idx < 0) primary_input_idx = 0;
-                        ret = .{
-                            .set_shader_primary_input = @intCast(primary_input_idx),
-                        };
-                    }
+                var primary_input_idx: c_int = @intCast(shader_object.primary_input_idx);
+                if (c.igInputInt("Primary input idx", &primary_input_idx, 1, 1, 0)) {
+                    if (primary_input_idx < 0) primary_input_idx = 0;
+                    ret = .{
+                        .set_shader_primary_input = @intCast(primary_input_idx),
+                    };
                 }
             },
             .path => |p| {
@@ -421,6 +404,71 @@ const Imgui = struct {
                 ret = obj_id;
             }
         }
+        return ret;
+    }
+
+    fn renderShaderUniform(idx: usize, bindings: []const Renderer.UniformValue, program: Renderer.PlaneRenderProgram, objects: *obj_mod.Objects, selected_object_id: obj_mod.ObjectId) !?PropertyAction {
+        var name_buf: [1024]u8 = undefined;
+        const uniform = program.uniforms[idx];
+        const name = try std.fmt.bufPrintZ(&name_buf, "{s}", .{uniform.name});
+
+        var ret: ?PropertyAction = null;
+        const binding = bindings[idx];
+        switch (binding) {
+            .image => |bound_object_id| {
+                var bound_name_buf: [1024]u8 = undefined;
+                const bound_object_name = if (bound_object_id) |id|
+                    try std.fmt.bufPrintZ(&bound_name_buf, "{s}", .{objects.get(id).name})
+                else
+                    "none";
+
+                if (c.igBeginCombo(name, bound_object_name, 0)) {
+                    if (try addComposableObjects(objects, "uniform_input", null, selected_object_id)) |uniform_dep| {
+                        ret = .{
+                            .set_shader_binding_value = .{
+                                .idx = idx,
+                                .val = .{ .image = uniform_dep },
+                            },
+                        };
+                    }
+                    c.igEndCombo();
+                }
+            },
+            .float => |f| {
+                var val = f;
+                if (c.igDragFloat(name, &val, 0.01, -std.math.inf(f32), std.math.inf(f32), "%.03f", 0)) {
+                    ret = .{
+                        .set_shader_binding_value = .{
+                            .idx = idx,
+                            .val = .{ .float = val },
+                        },
+                    };
+                }
+            },
+            .float3 => |f| {
+                var val = f;
+                if (c.igColorEdit3(name, &val, c.ImGuiColorEditFlags_Float | c.ImGuiColorEditFlags_HDR)) {
+                    ret = .{
+                        .set_shader_binding_value = .{
+                            .idx = idx,
+                            .val = .{ .float3 = val },
+                        },
+                    };
+                }
+            },
+            .int => |i| {
+                var val = i;
+                if (c.igDragInt(name, &val, 1, -std.math.maxInt(i32), std.math.maxInt(i32), null, 0)) {
+                    ret = .{
+                        .set_shader_binding_value = .{
+                            .idx = idx,
+                            .val = .{ .int = val },
+                        },
+                    };
+                }
+            },
+        }
+
         return ret;
     }
 
@@ -545,7 +593,7 @@ pub fn main() !void {
 
             app.setSelectedObject(composition_idx);
 
-            const swap_shaders_id = try app.addShaderFromFragmentSource("swap colors", swap_colors_frag, &.{"u_texture"});
+            const swap_shaders_id = try app.addShaderFromFragmentSource("swap colors", swap_colors_frag);
 
             for (images) |path| {
                 const fs_id = try app.loadImage(path);
@@ -558,7 +606,7 @@ pub fn main() !void {
                     swap_shaders_id,
                 );
                 app.setSelectedObject(shader_id);
-                try app.setShaderDependency(0, fs_id);
+                try app.setShaderDependency(0, .{ .image = fs_id });
             }
         },
     }
@@ -590,7 +638,7 @@ pub fn main() !void {
                         logError("Failed to set path object", e, @errorReturnTrace());
                     };
                 },
-                .set_shader_dependency => |params| {
+                .set_shader_binding_value => |params| {
                     app.setShaderDependency(params.idx, params.val) catch |e| {
                         logError("Failed to set shader dependency", e, @errorReturnTrace());
                     };

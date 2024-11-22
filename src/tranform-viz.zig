@@ -327,8 +327,9 @@ pub fn main() !void {
     var gui = try Imgui.init(alloc, &glfw);
     defer gui.deinit();
 
-    const program = try Renderer.PlaneRenderProgram.init(alloc, Renderer.plane_vertex_shader, Renderer.plane_fragment_shader, &.{"u_texture"});
+    const program = try Renderer.PlaneRenderProgram.init(alloc, Renderer.plane_vertex_shader, Renderer.plane_fragment_shader);
     defer program.deinit(alloc);
+
     const image_width = 600;
     const image_height = 600;
     const image = try alloc.alloc(u32, image_width * image_height);
@@ -361,7 +362,7 @@ pub fn main() !void {
         }
         const aspect_corrected = transform.then(coords.aspectRatioCorrectedFill(image_width, image_height, width, height));
 
-        program.render(&.{texture}, aspect_corrected, image_width / image_height);
+        program.render(&.{.{ .image = texture.inner }}, aspect_corrected, image_width / image_height);
 
         try gui.renderUi();
         try gui.renderTransform(transform);
