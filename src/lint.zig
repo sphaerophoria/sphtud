@@ -175,11 +175,12 @@ pub fn main() !void {
 
         const shader_id = try app.addShaderObject(
             swapped_name,
-            &.{id},
             swap_colors_id,
             image_dims[0],
             image_dims[1],
         );
+        app.setSelectedObject(shader_id);
+        try app.setShaderDependency(0, id);
 
         app.setSelectedObject(composition_idx);
         _ = try app.addToComposition(id);

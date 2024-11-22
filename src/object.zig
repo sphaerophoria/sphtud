@@ -79,9 +79,14 @@ pub const Object = struct {
                     std.debug.assert(@sizeOf(ObjectId) == @sizeOf(usize));
                 }
 
-                break :blk .{
-                    .shader = try ShaderObject.init(alloc, @ptrCast(s.input_images), .{ .value = s.shader_id }, s.width, s.height),
-                };
+                var shader_object = try ShaderObject.init(alloc, s.input_images.len, .{ .value = s.shader_id }, s.width, s.height);
+                errdefer shader_object.deinit(alloc);
+
+                for (0..s.input_images.len) |idx| {
+                    const input_id: ?ObjectId = if (s.input_images[idx]) |input_id| ObjectId{ .value = input_id } else null;
+                    try shader_object.setInputImage(idx, input_id);
+                }
+                break :blk .{ .shader = shader_object };
             },
             .path => |p| blk: {
                 break :blk .{
@@ -192,6 +197,13 @@ pub const Object = struct {
             else => return null,
         }
     }
+
+    pub fn asShader(self: *Object) ?*ShaderObject {
+        switch (self.data) {
+            .shader => |*s| return s,
+            else => return null,
+        }
+    }
 };
 
 pub const CompositionIdx = struct {
@@ -253,18 +265,19 @@ pub const CompositionObject = struct {
 };
 
 pub const ShaderObject = struct {
-    input_images: []ObjectId,
+    input_images: []?ObjectId,
     width: usize,
     height: usize,
 
     program: ShaderStorage.ShaderId,
 
-    pub fn init(alloc: Allocator, input_images: []const ObjectId, shader_id: ShaderStorage.ShaderId, width: usize, height: usize) !ShaderObject {
-        const duped_images = try alloc.dupe(ObjectId, input_images);
-        errdefer alloc.free(duped_images);
+    pub fn init(alloc: Allocator, num_input_images: usize, shader_id: ShaderStorage.ShaderId, width: usize, height: usize) !ShaderObject {
+        const input_images = try alloc.alloc(?ObjectId, num_input_images);
+        errdefer alloc.free(input_images);
+        @memset(input_images, null);
 
         return .{
-            .input_images = duped_images,
+            .input_images = input_images,
             .program = shader_id,
             .width = width,
             .height = height,
@@ -273,6 +286,15 @@ pub const ShaderObject = struct {
 
     pub fn deinit(self: *ShaderObject, alloc: Allocator) void {
         alloc.free(self.input_images);
+    }
+
+    // FIXME: strong type
+    pub fn setInputImage(self: *ShaderObject, idx: usize, val: ?ObjectId) !void {
+        if (idx >= self.input_images.len) {
+            return error.InvalidShaderIndex;
+        }
+
+        self.input_images[idx] = val;
     }
 
     pub fn save(self: ShaderObject) SaveObject.Data {
@@ -515,7 +537,7 @@ pub const SaveObject = struct {
         filesystem: [:0]const u8,
         composition: []CompositionObject.ComposedObject,
         shader: struct {
-            input_images: []usize,
+            input_images: []?usize,
             shader_id: usize,
             width: usize,
             height: usize,

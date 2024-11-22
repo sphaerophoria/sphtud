@@ -92,7 +92,11 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
             defer sources.deinit();
 
             for (s.input_images) |input_image| {
-                const texture = try self.renderedTexture(alloc, objects, shaders, texture_cache, input_image);
+                const texture = if (input_image) |id|
+                    try self.renderedTexture(alloc, objects, shaders, texture_cache, id)
+                else
+                    Texture.invalid;
+
                 try sources.append(texture);
             }
 

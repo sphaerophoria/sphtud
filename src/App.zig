@@ -202,10 +202,15 @@ pub fn createPath(self: *App) !ObjectId {
         },
     });
 
+    const num_textures = self.shaders.get(self.mul_fragment_shader).texture_names.len;
+    var shader = try obj_mod.ShaderObject.init(self.alloc, num_textures, self.mul_fragment_shader, selected_dims[0], selected_dims[1]);
+    try shader.setInputImage(0, self.input_state.selected_object);
+    try shader.setInputImage(1, mask_id);
+
     try self.objects.append(self.alloc, .{
         .name = try self.alloc.dupe(u8, "masked obj"),
         .data = .{
-            .shader = try obj_mod.ShaderObject.init(self.alloc, &.{ self.input_state.selected_object, mask_id }, self.mul_fragment_shader, selected_dims[0], selected_dims[1]),
+            .shader = shader,
         },
     });
 
@@ -262,6 +267,20 @@ pub fn updatePathDisplayObj(self: *App, id: ObjectId) !void {
     try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
 }
 
+pub fn setShaderDependency(self: *App, idx: usize, val: ObjectId) !void {
+    const shader_data = self.selectedObject().asShader() orelse return error.SelectedItemNotShader;
+    if (idx >= shader_data.input_images.len) {
+        return error.InvalidShaderIdx;
+    }
+
+    const prev_val = shader_data.input_images[idx];
+
+    shader_data.input_images[idx] = val;
+    errdefer shader_data.input_images[idx] = prev_val;
+
+    try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
+}
+
 pub fn loadImage(self: *App, path: [:0]const u8) !ObjectId {
     const id = self.objects.nextId();
 
@@ -285,7 +304,7 @@ pub fn addShaderFromFragmentSource(self: *App, name: []const u8, fs_source: [:0]
     return try self.shaders.addShader(self.alloc, name, fs_source, texture_names);
 }
 
-pub fn addShaderObject(self: *App, name: []const u8, input_images: []const ObjectId, shader_id: ShaderStorage.ShaderId, width: usize, height: usize) !ObjectId {
+pub fn addShaderObject(self: *App, name: []const u8, shader_id: ShaderStorage.ShaderId, width: usize, height: usize) !ObjectId {
     const object_id = self.objects.nextId();
 
     const duped_name = try self.alloc.dupe(u8, name);
@@ -293,7 +312,7 @@ pub fn addShaderObject(self: *App, name: []const u8, input_images: []const Objec
 
     var obj = try obj_mod.ShaderObject.init(
         self.alloc,
-        input_images,
+        self.shaders.get(shader_id).texture_names.len,
         shader_id,
         width,
         height,

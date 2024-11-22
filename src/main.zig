@@ -4,6 +4,7 @@ const gl = @import("gl.zig");
 const App = @import("App.zig");
 const obj_mod = @import("object.zig");
 const lin = @import("lin.zig");
+const ShaderStorage = @import("ShaderStorage.zig");
 const c = @cImport({
     @cInclude("GLFW/glfw3.h");
     @cDefine("CIMGUI_DEFINE_ENUMS_AND_STRUCTS", "");
@@ -217,9 +218,15 @@ const Imgui = struct {
         delete_from_composition: obj_mod.CompositionIdx,
         add_to_composition: obj_mod.ObjectId,
         update_path_display_obj: obj_mod.ObjectId,
+        set_shader_dependency: struct {
+            // FIXME: strong type?
+            idx: usize,
+            val: obj_mod.ObjectId,
+        },
     };
 
-    fn renderObjectProperties(selected_object: *obj_mod.Object, objects: *obj_mod.Objects) !?PropertyAction {
+    fn renderObjectProperties(selected_object_id: obj_mod.ObjectId, objects: *obj_mod.Objects, shaders: ShaderStorage) !?PropertyAction {
+        const selected_object = objects.get(selected_object_id);
         if (!c.igBegin("Object properties", null, 0)) {
             return null;
         }
@@ -292,9 +299,33 @@ const Imgui = struct {
                 }
                 c.igEndCombo();
             },
-            .shader => {
-                // FIXME: Log something interesting like uniforms etc.
+            .shader => |shader_object| {
                 c.igText("Shader");
+
+                const shader = shaders.get(shader_object.program);
+                for (0..shader.texture_names.len) |idx| {
+                    var name_buf: [1024]u8 = undefined;
+                    const name = try std.fmt.bufPrintZ(&name_buf, "{s}", .{shader.texture_names[idx]});
+
+                    var bound_name_buf: [1024]u8 = undefined;
+                    const input_image = shader_object.input_images[idx];
+                    const bound_object_name = if (input_image) |id|
+                        try std.fmt.bufPrintZ(&bound_name_buf, "{s}", .{objects.get(id).name})
+                    else
+                        "none";
+
+                    if (c.igBeginCombo(name, bound_object_name, 0)) {
+                        if (try addComposableObjects(objects, "shader_input", null, selected_object_id)) |next_input_image| {
+                            ret = .{
+                                .set_shader_dependency = .{
+                                    .idx = idx,
+                                    .val = next_input_image,
+                                },
+                            };
+                        }
+                        c.igEndCombo();
+                    }
+                }
             },
             .path => |p| {
                 c.igText("Path");
@@ -320,16 +351,32 @@ const Imgui = struct {
     }
 
     const AddObjectAction = union(enum) {
+        shader_object: ShaderStorage.ShaderId,
         create_path,
         create_composition,
     };
 
-    fn renderAddObjectView() !?AddObjectAction {
+    fn renderAddObjectView(shaders: ShaderStorage) !?AddObjectAction {
         if (!c.igBegin("Create an object", null, 0)) {
             return null;
         }
 
         var ret: ?AddObjectAction = null;
+        if (c.igBeginCombo("Add shader", "Add shader", 0)) {
+            var shader_it = shaders.idIter();
+            while (shader_it.next()) |id| {
+                const name = shaders.get(id).name;
+                var name_buf: [1024]u8 = undefined;
+
+                const label = try std.fmt.bufPrintZ(&name_buf, "{s}##add_shader_{d}", .{ name, id.value });
+
+                if (c.igSelectable_Bool(label, false, 0, null_size)) {
+                    ret = .{ .shader_object = id };
+                }
+            }
+
+            c.igEndCombo();
+        }
 
         if (c.igButton("Create path", null_size)) {
             ret = .create_path;
@@ -498,13 +545,14 @@ pub fn main() !void {
                 var buf: [1024]u8 = undefined;
                 const swapped_name = try std.fmt.bufPrint(&buf, "{s}_swapped", .{path});
 
-                _ = try app.addShaderObject(
+                const shader_id = try app.addShaderObject(
                     swapped_name,
-                    &.{fs_id},
                     swap_shaders_id,
                     image_dims[0],
                     image_dims[1],
                 );
+                app.setSelectedObject(shader_id);
+                try app.setShaderDependency(0, fs_id);
             }
         },
     }
@@ -519,7 +567,7 @@ pub fn main() !void {
             app.setSelectedObject(idx);
         }
 
-        if (try Imgui.renderObjectProperties(app.objects.get(app.input_state.selected_object), &app.objects)) |action| {
+        if (try Imgui.renderObjectProperties(app.input_state.selected_object, &app.objects, app.shaders)) |action| {
             switch (action) {
                 .delete_from_composition => |id| {
                     app.deleteFromComposition(id) catch |e| {
@@ -536,11 +584,20 @@ pub fn main() !void {
                         logError("Failed to set path object", e, @errorReturnTrace());
                     };
                 },
+                .set_shader_dependency => |params| {
+                    app.setShaderDependency(params.idx, params.val) catch |e| {
+                        logError("Failed to set shader dependency", e, @errorReturnTrace());
+                    };
+                },
             }
         }
 
-        if (try Imgui.renderAddObjectView()) |action| {
+        if (try Imgui.renderAddObjectView(app.shaders)) |action| {
             switch (action) {
+                .shader_object => |id| {
+                    // FIXME: Sane size
+                    _ = try app.addShaderObject("new shader", id, 800, 800);
+                },
                 .create_path => {
                     _ = try app.createPath();
                 },
