@@ -4,6 +4,7 @@ const gl = @import("gl.zig");
 const lin = @import("lin.zig");
 const Renderer = @import("Renderer.zig");
 const StbImage = @import("StbImage.zig");
+const ShaderStorage = @import("ShaderStorage.zig");
 const coords = @import("coords.zig");
 
 const Transform = lin.Transform;
@@ -79,7 +80,7 @@ pub const Object = struct {
                 }
 
                 break :blk .{
-                    .shader = try ShaderObject.init(alloc, @ptrCast(s.input_images), s.shader_source, s.texture_names, s.width, s.height),
+                    .shader = try ShaderObject.init(alloc, @ptrCast(s.input_images), .{ .value = s.shader_id }, s.width, s.height),
                 };
             },
             .path => |p| blk: {
@@ -253,41 +254,25 @@ pub const CompositionObject = struct {
 
 pub const ShaderObject = struct {
     input_images: []ObjectId,
-    shader_source: [:0]const u8,
-    texture_names: []const [:0]const u8,
     width: usize,
     height: usize,
 
-    program: Renderer.PlaneRenderProgram,
+    program: ShaderStorage.ShaderId,
 
-    pub fn init(alloc: Allocator, input_images: []const ObjectId, shader_source: [:0]const u8, texture_names: []const [:0]const u8, width: usize, height: usize) !ShaderObject {
-        const program = try Renderer.PlaneRenderProgram.init(alloc, Renderer.plane_vertex_shader, shader_source, texture_names);
-        errdefer program.deinit(alloc);
-
-        const duped_names = try copyTextureNames(alloc, texture_names);
-        errdefer freeTextureNames(alloc, duped_names);
-
+    pub fn init(alloc: Allocator, input_images: []const ObjectId, shader_id: ShaderStorage.ShaderId, width: usize, height: usize) !ShaderObject {
         const duped_images = try alloc.dupe(ObjectId, input_images);
         errdefer alloc.free(duped_images);
 
-        const duped_source = try alloc.dupeZ(u8, shader_source);
-        errdefer alloc.free(duped_source);
-
         return .{
             .input_images = duped_images,
-            .shader_source = duped_source,
-            .texture_names = duped_names,
-            .program = program,
+            .program = shader_id,
             .width = width,
             .height = height,
         };
     }
 
     pub fn deinit(self: *ShaderObject, alloc: Allocator) void {
-        self.program.deinit(alloc);
         alloc.free(self.input_images);
-        alloc.free(self.shader_source);
-        freeTextureNames(alloc, self.texture_names);
     }
 
     pub fn save(self: ShaderObject) SaveObject.Data {
@@ -299,37 +284,11 @@ pub const ShaderObject = struct {
         return .{
             .shader = .{
                 .input_images = @ptrCast(self.input_images),
-                .shader_source = @ptrCast(self.shader_source),
+                .shader_id = self.program.value,
                 .width = self.width,
                 .height = self.height,
-                .texture_names = self.texture_names,
             },
         };
-    }
-
-    fn copyTextureNames(alloc: Allocator, texture_names: []const [:0]const u8) ![]const [:0]const u8 {
-        var i: usize = 0;
-        const duped_texture_names = try alloc.alloc([:0]const u8, texture_names.len);
-        errdefer {
-            for (0..i) |j| {
-                alloc.free(duped_texture_names[j]);
-            }
-            alloc.free(duped_texture_names);
-        }
-
-        while (i < texture_names.len) {
-            duped_texture_names[i] = try alloc.dupeZ(u8, texture_names[i]);
-            i += 1;
-        }
-
-        return duped_texture_names;
-    }
-
-    fn freeTextureNames(alloc: Allocator, texture_names: []const [:0]const u8) void {
-        for (texture_names) |n| {
-            alloc.free(n);
-        }
-        alloc.free(texture_names);
     }
 };
 
@@ -548,7 +507,7 @@ pub const GeneratedMaskObject = struct {
     }
 };
 
-const SaveObject = struct {
+pub const SaveObject = struct {
     name: []const u8,
     data: Data,
 
@@ -557,8 +516,7 @@ const SaveObject = struct {
         composition: []CompositionObject.ComposedObject,
         shader: struct {
             input_images: []usize,
-            shader_source: [:0]const u8,
-            texture_names: []const [:0]const u8,
+            shader_id: usize,
             width: usize,
             height: usize,
         },
@@ -568,10 +526,6 @@ const SaveObject = struct {
         },
         generated_mask: usize,
     };
-};
-
-pub const SaveData = struct {
-    objects: []SaveObject,
 };
 
 pub const ObjectId = struct {

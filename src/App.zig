@@ -7,6 +7,7 @@ const obj_mod = @import("object.zig");
 const StbImage = @import("StbImage.zig");
 const coords = @import("coords.zig");
 const dependency_loop = @import("dependency_loop.zig");
+const ShaderStorage = @import("ShaderStorage.zig");
 
 const Object = obj_mod.Object;
 const ObjectId = obj_mod.ObjectId;
@@ -21,42 +22,58 @@ const App = @This();
 
 alloc: Allocator,
 objects: Objects = .{},
+shaders: ShaderStorage,
 renderer: Renderer,
 view_state: ViewState,
 input_state: InputState = .{},
+
+mul_fragment_shader: ShaderStorage.ShaderId,
 
 pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
     var objects = Objects{};
     errdefer objects.deinit(alloc);
 
-    const renderer = try Renderer.init(alloc);
+    var renderer = try Renderer.init(alloc);
+    errdefer renderer.deinit(alloc);
+
+    var shaders = ShaderStorage{};
+    errdefer shaders.deinit(alloc);
+
+    const mul_fragment_shader_id = try shaders.addShader(alloc, "mask_mul", Renderer.mul_fragment_shader, &.{ "u_texture", "u_texture_2" });
 
     return .{
         .alloc = alloc,
         .objects = objects,
+        .shaders = shaders,
         .renderer = renderer,
         .view_state = .{
             .window_width = window_width,
             .window_height = window_height,
         },
+        .mul_fragment_shader = mul_fragment_shader_id,
     };
 }
 
 pub fn deinit(self: *App) void {
     self.objects.deinit(self.alloc);
     self.renderer.deinit(self.alloc);
+    self.shaders.deinit(self.alloc);
 }
 
 pub fn save(self: *App, path: []const u8) !void {
     const object_saves = try self.objects.save(self.alloc);
     defer self.alloc.free(object_saves);
 
+    const shader_saves = try self.shaders.save(self.alloc);
+    defer self.alloc.free(shader_saves);
+
     const out_f = try std.fs.cwd().createFile(path, .{});
     defer out_f.close();
 
     try std.json.stringify(
-        obj_mod.SaveData{
+        SaveData{
             .objects = object_saves,
+            .shaders = shader_saves,
         },
         .{ .whitespace = .indent_2 },
         out_f.writer(),
@@ -70,8 +87,19 @@ pub fn load(self: *App, path: []const u8) !void {
     var json_reader = std.json.reader(self.alloc, in_f.reader());
     defer json_reader.deinit();
 
-    const parsed = try std.json.parseFromTokenSource(obj_mod.SaveData, self.alloc, &json_reader, .{});
+    const parsed = try std.json.parseFromTokenSource(SaveData, self.alloc, &json_reader, .{});
     defer parsed.deinit();
+
+    var new_shaders = ShaderStorage{};
+    // Note that shaders gets swapped in and is freed by this defer
+    defer new_shaders.deinit(self.alloc);
+
+    for (parsed.value.shaders) |saved_shader| {
+        _ = try new_shaders.addShader(self.alloc, saved_shader.name, saved_shader.fs_source, saved_shader.texture_names);
+    }
+
+    // Swap objects so the old ones get deinited
+    std.mem.swap(ShaderStorage, &new_shaders, &self.shaders);
 
     var new_objects = try Objects.initCapacity(self.alloc, parsed.value.objects.len);
     // Note that objects gets swapped in and is freed by this defer
@@ -97,7 +125,7 @@ pub fn load(self: *App, path: []const u8) !void {
 }
 
 pub fn render(self: *App) !void {
-    try self.renderer.render(self.alloc, &self.objects, self.input_state.selected_object, self.view_state.objectToClipTransform(self.selectedDims()), self.view_state.window_width, self.view_state.window_height);
+    try self.renderer.render(self.alloc, &self.objects, self.shaders, self.input_state.selected_object, self.view_state.objectToClipTransform(self.selectedDims()), self.view_state.window_width, self.view_state.window_height);
 }
 
 pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {
@@ -177,7 +205,7 @@ pub fn createPath(self: *App) !ObjectId {
     try self.objects.append(self.alloc, .{
         .name = try self.alloc.dupe(u8, "masked obj"),
         .data = .{
-            .shader = try obj_mod.ShaderObject.init(self.alloc, &.{ self.input_state.selected_object, mask_id }, Renderer.mul_fragment_shader, &.{ "u_texture", "u_texture_2" }, selected_dims[0], selected_dims[1]),
+            .shader = try obj_mod.ShaderObject.init(self.alloc, &.{ self.input_state.selected_object, mask_id }, self.mul_fragment_shader, selected_dims[0], selected_dims[1]),
         },
     });
 
@@ -253,8 +281,12 @@ pub fn loadImage(self: *App, path: [:0]const u8) !ObjectId {
     return id;
 }
 
-pub fn addShaderObject(self: *App, name: []const u8, input_images: []const ObjectId, shader_source: [:0]const u8, texture_names: []const [:0]const u8, width: usize, height: usize) !ObjectId {
-    const shader_id = self.objects.nextId();
+pub fn addShaderFromFragmentSource(self: *App, name: []const u8, fs_source: [:0]const u8, texture_names: []const [:0]const u8) !ShaderStorage.ShaderId {
+    return try self.shaders.addShader(self.alloc, name, fs_source, texture_names);
+}
+
+pub fn addShaderObject(self: *App, name: []const u8, input_images: []const ObjectId, shader_id: ShaderStorage.ShaderId, width: usize, height: usize) !ObjectId {
+    const object_id = self.objects.nextId();
 
     const duped_name = try self.alloc.dupe(u8, name);
     errdefer self.alloc.free(duped_name);
@@ -262,8 +294,7 @@ pub fn addShaderObject(self: *App, name: []const u8, input_images: []const Objec
     var obj = try obj_mod.ShaderObject.init(
         self.alloc,
         input_images,
-        shader_source,
-        texture_names,
+        shader_id,
         width,
         height,
     );
@@ -276,7 +307,7 @@ pub fn addShaderObject(self: *App, name: []const u8, input_images: []const Objec
         },
     });
 
-    return shader_id;
+    return object_id;
 }
 
 fn selectedObject(self: *App) *Object {
@@ -812,6 +843,11 @@ fn getCompositionObj(self: *App) ?*obj_mod.CompositionObject {
         else => return null,
     }
 }
+
+pub const SaveData = struct {
+    shaders: []ShaderStorage.Save,
+    objects: []obj_mod.SaveObject,
+};
 
 test {
     std.testing.refAllDeclsRecursive(@This());

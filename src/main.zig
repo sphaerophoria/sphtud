@@ -489,6 +489,8 @@ pub fn main() !void {
 
             app.setSelectedObject(composition_idx);
 
+            const swap_shaders_id = try app.addShaderFromFragmentSource("swap colors", swap_colors_frag, &.{"u_texture"});
+
             for (images) |path| {
                 const fs_id = try app.loadImage(path);
                 const image_dims = app.objects.get(fs_id).dims(&app.objects);
@@ -499,8 +501,7 @@ pub fn main() !void {
                 _ = try app.addShaderObject(
                     swapped_name,
                     &.{fs_id},
-                    swap_colors_frag,
-                    &.{"u_texture"},
+                    swap_shaders_id,
                     image_dims[0],
                     image_dims[1],
                 );

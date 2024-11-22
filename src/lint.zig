@@ -162,6 +162,8 @@ pub fn main() !void {
     const dummy_path = try std.fmt.bufPrintZ(&dummy_path_buf, "{s}/dummy.png", .{tmpdir_path});
     try writeDummyImage(alloc, dummy_path);
 
+    const swap_colors_id = try app.addShaderFromFragmentSource("swap colors", swap_colors_frag, &.{"u_texture"});
+
     for (0..2) |_| {
         const composition_idx = try app.addComposition();
 
@@ -174,8 +176,7 @@ pub fn main() !void {
         const shader_id = try app.addShaderObject(
             swapped_name,
             &.{id},
-            swap_colors_frag,
-            &.{"u_texture"},
+            swap_colors_id,
             image_dims[0],
             image_dims[1],
         );
@@ -206,6 +207,9 @@ pub fn main() !void {
     const save_path = try std.fmt.bufPrint(&save_path_buf, "{s}/save.json", .{tmpdir_path});
 
     try app.save(save_path);
+    app.deinit();
+
+    app = try App.init(alloc, 640, 480);
     try app.load(save_path);
 
     it = app.objects.idIter();

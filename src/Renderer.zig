@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const lin = @import("lin.zig");
 const obj_mod = @import("object.zig");
 const coords = @import("coords.zig");
+const ShaderStorage = @import("ShaderStorage.zig");
 
 const Objects = obj_mod.Objects;
 const Object = obj_mod.Object;
@@ -41,7 +42,7 @@ pub fn deinit(self: *Renderer, alloc: Allocator) void {
     self.program.deinit(alloc);
 }
 
-pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, selected_object: ObjectId, transform: Transform, window_width: usize, window_height: usize) !void {
+pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage, selected_object: ObjectId, transform: Transform, window_width: usize, window_height: usize) !void {
     gl.glViewport(0, 0, @intCast(window_width), @intCast(window_height));
     gl.glClear(gl.GL_COLOR_BUFFER_BIT);
 
@@ -54,20 +55,20 @@ pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, selected_obj
     const toplevel_aspect = coords.calcAspect(object_dims[0], object_dims[1]);
     self.background_program.render(&.{}, transform, toplevel_aspect);
 
-    try self.renderObjectWithTransform(alloc, objects, active_object.*, transform, &texture_cache);
+    try self.renderObjectWithTransform(alloc, objects, shaders, active_object.*, transform, &texture_cache);
 }
 
-fn renderedTexture(self: *Renderer, alloc: Allocator, objects: *Objects, texture_cache: *TextureCache, id: ObjectId) !Texture {
+fn renderedTexture(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage, texture_cache: *TextureCache, id: ObjectId) !Texture {
     if (texture_cache.get(id)) |t| {
         return t;
     }
 
-    const texture = try self.renderObjectToTexture(alloc, objects, objects.get(id).*, texture_cache);
+    const texture = try self.renderObjectToTexture(alloc, objects, shaders, objects.get(id).*, texture_cache);
     try texture_cache.put(id, texture);
     return texture;
 }
 
-fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Objects, object: Object, transform: Transform, texture_cache: *TextureCache) !void {
+fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage, object: Object, transform: Transform, texture_cache: *TextureCache) !void {
     switch (object.data) {
         .composition => |c| {
             const composition_object_dims = object.dims(objects);
@@ -80,7 +81,7 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
                 const next_transform = compsoed_to_composition
                     .then(transform);
 
-                try self.renderObjectWithTransform(alloc, objects, next_object.*, next_transform, texture_cache);
+                try self.renderObjectWithTransform(alloc, objects, shaders, next_object.*, next_transform, texture_cache);
             }
         },
         .filesystem => |f| {
@@ -91,16 +92,16 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
             defer sources.deinit();
 
             for (s.input_images) |input_image| {
-                const texture = try self.renderedTexture(alloc, objects, texture_cache, input_image);
+                const texture = try self.renderedTexture(alloc, objects, shaders, texture_cache, input_image);
                 try sources.append(texture);
             }
 
             const object_dims = object.dims(objects);
-            s.program.render(sources.items, transform, coords.calcAspect(object_dims[0], object_dims[1]));
+            shaders.get(s.program).program.render(sources.items, transform, coords.calcAspect(object_dims[0], object_dims[1]));
         },
         .path => |p| {
             const display_object = objects.get(p.display_object);
-            try self.renderObjectWithTransform(alloc, objects, display_object.*, transform, texture_cache);
+            try self.renderObjectWithTransform(alloc, objects, shaders, display_object.*, transform, texture_cache);
 
             self.path_program.render(p.vertex_array, transform, p.selected_point, p.points.items.len);
         },
@@ -136,7 +137,7 @@ const TemporaryViewport = struct {
     }
 };
 
-fn renderObjectToTexture(self: *Renderer, alloc: Allocator, objects: *Objects, input: Object, texture_cache: *TextureCache) anyerror!Texture {
+fn renderObjectToTexture(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage, input: Object, texture_cache: *TextureCache) anyerror!Texture {
     const dep_width, const dep_height = input.dims(objects);
 
     const texture = makeTextureOfSize(@intCast(dep_width), @intCast(dep_height));
@@ -152,7 +153,7 @@ fn renderObjectToTexture(self: *Renderer, alloc: Allocator, objects: *Objects, i
 
     temp_viewport.setViewport(@intCast(dep_width), @intCast(dep_height));
 
-    try self.renderObjectWithTransform(alloc, objects, input, Transform.identity, texture_cache);
+    try self.renderObjectWithTransform(alloc, objects, shaders, input, Transform.identity, texture_cache);
     return texture;
 }
 
