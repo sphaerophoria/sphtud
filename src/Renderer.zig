@@ -537,6 +537,21 @@ fn checkShaderCompilation(shader: gl.GLuint) !void {
     return error.ShaderCompilationFailed;
 }
 
+fn checkProgramLink(program: gl.GLuint) !void {
+    var status: c_int = 0;
+    gl.glGetProgramiv(program, gl.GL_LINK_STATUS, &status);
+
+    if (status == gl.GL_TRUE) {
+        return;
+    }
+
+    var buf: [1024]u8 = undefined;
+    var len: gl.GLsizei = 0;
+    gl.glGetProgramInfoLog(program, buf.len, &len, &buf);
+    std.log.err("Program linking failed: {s}", .{buf[0..@intCast(len)]});
+    return error.ProgramLinkFailed;
+}
+
 fn compileLinkProgram(vs: [:0]const u8, fs: [:0]const u8) !gl.GLuint {
     const vertex_shader = gl.glCreateShader(gl.GL_VERTEX_SHADER);
     gl.glShaderSource(vertex_shader, 1, @ptrCast(&vs), null);
@@ -554,6 +569,7 @@ fn compileLinkProgram(vs: [:0]const u8, fs: [:0]const u8) !gl.GLuint {
     gl.glAttachShader(program, vertex_shader);
     gl.glAttachShader(program, fragment_shader);
     gl.glLinkProgram(program);
+    try checkProgramLink(program);
 
     return program;
 }
