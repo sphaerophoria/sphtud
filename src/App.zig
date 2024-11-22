@@ -203,7 +203,7 @@ pub fn createPath(self: *App) !ObjectId {
     });
 
     const num_textures = self.shaders.get(self.mul_fragment_shader).texture_names.len;
-    var shader = try obj_mod.ShaderObject.init(self.alloc, num_textures, self.mul_fragment_shader, selected_dims[0], selected_dims[1]);
+    var shader = try obj_mod.ShaderObject.init(self.alloc, num_textures, self.mul_fragment_shader, 0);
     try shader.setInputImage(0, self.input_state.selected_object);
     try shader.setInputImage(1, mask_id);
 
@@ -281,6 +281,15 @@ pub fn setShaderDependency(self: *App, idx: usize, val: ObjectId) !void {
     try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
 }
 
+pub fn setShaderPrimaryInput(self: *App, idx: usize) !void {
+    const shader_data = self.selectedObject().asShader() orelse return error.SelectedItemNotShader;
+    if (idx >= shader_data.input_images.len) {
+        return error.InvalidShaderIdx;
+    }
+
+    shader_data.primary_input_idx = idx;
+}
+
 pub fn loadImage(self: *App, path: [:0]const u8) !ObjectId {
     const id = self.objects.nextId();
 
@@ -304,7 +313,7 @@ pub fn addShaderFromFragmentSource(self: *App, name: []const u8, fs_source: [:0]
     return try self.shaders.addShader(self.alloc, name, fs_source, texture_names);
 }
 
-pub fn addShaderObject(self: *App, name: []const u8, shader_id: ShaderStorage.ShaderId, width: usize, height: usize) !ObjectId {
+pub fn addShaderObject(self: *App, name: []const u8, shader_id: ShaderStorage.ShaderId) !ObjectId {
     const object_id = self.objects.nextId();
 
     const duped_name = try self.alloc.dupe(u8, name);
@@ -314,8 +323,7 @@ pub fn addShaderObject(self: *App, name: []const u8, shader_id: ShaderStorage.Sh
         self.alloc,
         self.shaders.get(shader_id).texture_names.len,
         shader_id,
-        width,
-        height,
+        0,
     );
     errdefer obj.deinit(self.alloc);
 

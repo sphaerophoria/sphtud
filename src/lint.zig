@@ -168,7 +168,6 @@ pub fn main() !void {
         const composition_idx = try app.addComposition();
 
         const id = try app.loadImage(dummy_path);
-        const image_dims = app.objects.get(id).dims(&app.objects);
 
         var buf: [1024]u8 = undefined;
         const swapped_name = try std.fmt.bufPrint(&buf, "{s}_swapped", .{dummy_path});
@@ -176,8 +175,6 @@ pub fn main() !void {
         const shader_id = try app.addShaderObject(
             swapped_name,
             swap_colors_id,
-            image_dims[0],
-            image_dims[1],
         );
         app.setSelectedObject(shader_id);
         try app.setShaderDependency(0, id);

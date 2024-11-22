@@ -223,6 +223,7 @@ const Imgui = struct {
             idx: usize,
             val: obj_mod.ObjectId,
         },
+        set_shader_primary_input: usize,
     };
 
     fn renderObjectProperties(selected_object_id: obj_mod.ObjectId, objects: *obj_mod.Objects, shaders: ShaderStorage) !?PropertyAction {
@@ -324,6 +325,14 @@ const Imgui = struct {
                             };
                         }
                         c.igEndCombo();
+                    }
+
+                    var primary_input_idx: c_int = @intCast(shader_object.primary_input_idx);
+                    if (c.igInputInt("Primary input idx", &primary_input_idx, 1, 1, 0)) {
+                        if (primary_input_idx < 0) primary_input_idx = 0;
+                        ret = .{
+                            .set_shader_primary_input = @intCast(primary_input_idx),
+                        };
                     }
                 }
             },
@@ -540,7 +549,6 @@ pub fn main() !void {
 
             for (images) |path| {
                 const fs_id = try app.loadImage(path);
-                const image_dims = app.objects.get(fs_id).dims(&app.objects);
 
                 var buf: [1024]u8 = undefined;
                 const swapped_name = try std.fmt.bufPrint(&buf, "{s}_swapped", .{path});
@@ -548,8 +556,6 @@ pub fn main() !void {
                 const shader_id = try app.addShaderObject(
                     swapped_name,
                     swap_shaders_id,
-                    image_dims[0],
-                    image_dims[1],
                 );
                 app.setSelectedObject(shader_id);
                 try app.setShaderDependency(0, fs_id);
@@ -589,6 +595,11 @@ pub fn main() !void {
                         logError("Failed to set shader dependency", e, @errorReturnTrace());
                     };
                 },
+                .set_shader_primary_input => |idx| {
+                    app.setShaderPrimaryInput(idx) catch |e| {
+                        logError("Failed to set primary input", e, @errorReturnTrace());
+                    };
+                },
             }
         }
 
@@ -596,7 +607,7 @@ pub fn main() !void {
             switch (action) {
                 .shader_object => |id| {
                     // FIXME: Sane size
-                    _ = try app.addShaderObject("new shader", id, 800, 800);
+                    _ = try app.addShaderObject("new shader", id);
                 },
                 .create_path => {
                     _ = try app.createPath();

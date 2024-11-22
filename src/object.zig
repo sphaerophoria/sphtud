@@ -79,7 +79,7 @@ pub const Object = struct {
                     std.debug.assert(@sizeOf(ObjectId) == @sizeOf(usize));
                 }
 
-                var shader_object = try ShaderObject.init(alloc, s.input_images.len, .{ .value = s.shader_id }, s.width, s.height);
+                var shader_object = try ShaderObject.init(alloc, s.input_images.len, .{ .value = s.shader_id }, s.primary_input_idx);
                 errdefer shader_object.deinit(alloc);
 
                 for (0..s.input_images.len) |idx| {
@@ -118,7 +118,10 @@ pub const Object = struct {
                 return dims(source.*, object_list);
             },
             .shader => |s| {
-                return .{ s.width, s.height };
+                const dims_id = s.input_images[s.primary_input_idx] orelse return .{ 1024, 1024 };
+                const source = object_list.get(dims_id);
+
+                return dims(source.*, object_list);
             },
             .composition => {
                 // FIXME: Customize composition size
@@ -266,12 +269,11 @@ pub const CompositionObject = struct {
 
 pub const ShaderObject = struct {
     input_images: []?ObjectId,
-    width: usize,
-    height: usize,
+    primary_input_idx: usize,
 
     program: ShaderStorage.ShaderId,
 
-    pub fn init(alloc: Allocator, num_input_images: usize, shader_id: ShaderStorage.ShaderId, width: usize, height: usize) !ShaderObject {
+    pub fn init(alloc: Allocator, num_input_images: usize, shader_id: ShaderStorage.ShaderId, primary_input_idx: usize) !ShaderObject {
         const input_images = try alloc.alloc(?ObjectId, num_input_images);
         errdefer alloc.free(input_images);
         @memset(input_images, null);
@@ -279,8 +281,7 @@ pub const ShaderObject = struct {
         return .{
             .input_images = input_images,
             .program = shader_id,
-            .width = width,
-            .height = height,
+            .primary_input_idx = primary_input_idx,
         };
     }
 
@@ -307,8 +308,7 @@ pub const ShaderObject = struct {
             .shader = .{
                 .input_images = @ptrCast(self.input_images),
                 .shader_id = self.program.value,
-                .width = self.width,
-                .height = self.height,
+                .primary_input_idx = self.primary_input_idx,
             },
         };
     }
@@ -539,8 +539,7 @@ pub const SaveObject = struct {
         shader: struct {
             input_images: []?usize,
             shader_id: usize,
-            width: usize,
-            height: usize,
+            primary_input_idx: usize,
         },
         path: struct {
             points: []Vec2,
