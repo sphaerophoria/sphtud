@@ -306,6 +306,16 @@ pub fn loadImage(self: *App, path: [:0]const u8) !ObjectId {
     return id;
 }
 
+pub fn loadShader(self: *App, path: [:0]const u8) !ShaderStorage.ShaderId {
+    const f = try std.fs.cwd().openFile(path, .{});
+    defer f.close();
+
+    const fragment_source = try f.readToEndAllocOptions(self.alloc, 1 << 20, null, 4, 0);
+    defer self.alloc.free(fragment_source);
+
+    return self.addShaderFromFragmentSource(path, fragment_source);
+}
+
 pub fn addShaderFromFragmentSource(self: *App, name: []const u8, fs_source: [:0]const u8) !ShaderStorage.ShaderId {
     return try self.shaders.addShader(self.alloc, name, fs_source);
 }

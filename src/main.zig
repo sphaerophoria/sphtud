@@ -482,17 +482,6 @@ const Imgui = struct {
         c.ImGui_ImplOpenGL3_RenderDrawData(c.igGetDrawData());
     }
 };
-const swap_colors_frag =
-    \\#version 330
-    \\in vec2 uv;
-    \\out vec4 fragment;
-    \\uniform sampler2D u_texture;  // The texture
-    \\void main()
-    \\{
-    \\    vec4 tmp = texture(u_texture, vec2(uv.x, uv.y));
-    \\    fragment = vec4(tmp.y, tmp.x, tmp.z, tmp.w);
-    \\}
-;
 
 const Args = struct {
     action: Action,
@@ -500,7 +489,7 @@ const Args = struct {
 
     const Action = union(enum) {
         load: []const u8,
-        open_images: [][:0]const u8,
+        new: [][:0]const u8,
     };
 
     fn parse(alloc: Allocator) !Args {
@@ -531,7 +520,7 @@ const Args = struct {
         }
 
         return .{
-            .action = .{ .open_images = try images.toOwnedSlice() },
+            .action = .{ .new = try images.toOwnedSlice() },
             .it = it,
         };
     }
@@ -539,7 +528,7 @@ const Args = struct {
     fn deinit(self: *Args, alloc: Allocator) void {
         switch (self.action) {
             .load => {},
-            .open_images => |images| {
+            .new => |images| {
                 alloc.free(images);
             },
         }
@@ -588,25 +577,13 @@ pub fn main() !void {
         .load => |s| {
             try app.load(s);
         },
-        .open_images => |images| {
-            const composition_idx = try app.addComposition();
-
-            app.setSelectedObject(composition_idx);
-
-            const swap_shaders_id = try app.addShaderFromFragmentSource("swap colors", swap_colors_frag);
-
-            for (images) |path| {
-                const fs_id = try app.loadImage(path);
-
-                var buf: [1024]u8 = undefined;
-                const swapped_name = try std.fmt.bufPrint(&buf, "{s}_swapped", .{path});
-
-                const shader_id = try app.addShaderObject(
-                    swapped_name,
-                    swap_shaders_id,
-                );
-                app.setSelectedObject(shader_id);
-                try app.setShaderDependency(0, .{ .image = fs_id });
+        .new => |paths| {
+            for (paths) |path| {
+                if (std.mem.endsWith(u8, path, ".glsl")) {
+                    _ = try app.loadShader(path);
+                } else {
+                    _ = try app.loadImage(path);
+                }
             }
         },
     }
