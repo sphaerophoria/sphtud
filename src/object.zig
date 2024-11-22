@@ -9,6 +9,7 @@ const coords = @import("coords.zig");
 
 const ShaderStorage = shader_storage.ShaderStorage;
 const ShaderId = shader_storage.ShaderId;
+const BrushId = shader_storage.BrushId;
 
 const Transform = lin.Transform;
 const Vec3 = lin.Vec3;
@@ -25,6 +26,7 @@ pub const Object = struct {
         shader: ShaderObject,
         path: PathObject,
         generated_mask: GeneratedMaskObject,
+        drawing: DrawingObject,
     };
 
     pub fn deinit(self: *Object, alloc: Allocator) void {
@@ -35,10 +37,11 @@ pub const Object = struct {
             .shader => |*s| s.deinit(alloc),
             .path => |*p| p.deinit(alloc),
             .generated_mask => |*g| g.deinit(),
+            .drawing => |*d| d.deinit(alloc),
         }
     }
 
-    pub fn save(self: Object) SaveObject {
+    pub fn saveLeaky(self: Object, alloc: Allocator) !SaveObject {
         const data: SaveObject.Data = switch (self.data) {
             .filesystem => |s| .{ .filesystem = s.source },
             .composition => |c| .{ .composition = c.objects.items },
@@ -50,6 +53,9 @@ pub const Object = struct {
             .generated_mask => |g| .{
                 .generated_mask = g.source.value,
             },
+            .drawing => |d| .{
+                .drawing = try d.saveLeaky(alloc),
+            },
         };
 
         return .{
@@ -58,7 +64,7 @@ pub const Object = struct {
         };
     }
 
-    pub fn load(alloc: Allocator, save_obj: SaveObject, shaders: ShaderStorage(ShaderId), path_render_program: Renderer.PathRenderProgram) !Object {
+    pub fn load(alloc: Allocator, save_obj: SaveObject, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), path_render_program: Renderer.PathRenderProgram) !Object {
         const data: Data = switch (save_obj.data) {
             .filesystem => |s| blk: {
                 break :blk .{
@@ -98,6 +104,33 @@ pub const Object = struct {
             .generated_mask => |source| .{
                 .generated_mask = GeneratedMaskObject.initNullTexture(.{ .value = source }),
             },
+            .drawing => |d| blk: {
+                var drawing_object = try DrawingObject.init(
+                    alloc,
+                    .{ .value = d.display_object },
+                    .{ .value = d.brush },
+                    brushes,
+                );
+                errdefer drawing_object.deinit(alloc);
+
+                for (0..d.bindings.len) |idx| {
+                    try drawing_object.setUniform(idx, d.bindings[idx]);
+                }
+
+                for (d.strokes) |saved_stroke| {
+                    var stroke = DrawingObject.Stroke{
+                        .points = .{},
+                    };
+                    errdefer stroke.deinit(alloc);
+
+                    try stroke.points.appendSlice(alloc, saved_stroke);
+                    try drawing_object.strokes.append(alloc, stroke);
+                }
+
+                break :blk .{
+                    .drawing = drawing_object,
+                };
+            },
         };
 
         return .{
@@ -131,6 +164,10 @@ pub const Object = struct {
             .composition => {
                 // FIXME: Customize composition size
                 return .{ 1920, 1080 };
+            },
+            .drawing => |d| {
+                const display_object = object_list.get(d.display_object);
+                return dims(display_object.*, object_list);
             },
         }
     }
@@ -175,6 +212,13 @@ pub const Object = struct {
                     defer self.idx += 1;
                     return m.source;
                 },
+                .drawing => |*d| {
+                    if (self.idx >= 1) {
+                        return null;
+                    }
+                    defer self.idx += 1;
+                    return d.display_object;
+                },
             }
         }
     };
@@ -192,12 +236,20 @@ pub const Object = struct {
             .generated_mask => true,
             .shader => true,
             .composition => true,
+            .drawing => true,
         };
     }
 
     pub fn asPath(self: *Object) ?*PathObject {
         switch (self.data) {
             .path => |*p| return p,
+            else => return null,
+        }
+    }
+
+    pub fn asDrawing(self: *Object) ?*DrawingObject {
+        switch (self.data) {
+            .drawing => |*d| return d,
             else => return null,
         }
     }
@@ -522,6 +574,173 @@ pub const GeneratedMaskObject = struct {
     }
 };
 
+pub const DrawingObject = struct {
+    pub const Stroke = struct {
+        points: std.ArrayListUnmanaged(Vec2) = .{},
+
+        fn deinit(self: *Stroke, alloc: Allocator) void {
+            self.points.deinit(alloc);
+        }
+
+        fn addPoint(self: *Stroke, alloc: Allocator, point: Vec2) !void {
+            try self.points.append(alloc, point);
+        }
+    };
+
+    const StrokeVertexArrayIt = struct {
+        inner_idx: usize = 0,
+        idx: usize = 0,
+        strokes: []Stroke,
+
+        const Output = union(enum) {
+            new_line: Vec2,
+            line_point: Vec2,
+        };
+
+        pub fn next(self: *StrokeVertexArrayIt) ?Output {
+            while (true) {
+                if (self.idx >= self.strokes.len) {
+                    return null;
+                }
+
+                if (self.inner_idx >= self.strokes[self.idx].points.items.len) {
+                    self.idx += 1;
+                    self.inner_idx = 0;
+                    continue;
+                }
+
+                defer self.inner_idx += 1;
+                const point = self.strokes[self.idx].points.items[self.inner_idx];
+                if (self.inner_idx == 0) return .{
+                    .new_line = point,
+                } else return .{
+                    .line_point = point,
+                };
+            }
+        }
+    };
+
+    display_object: ObjectId,
+    strokes: std.ArrayListUnmanaged(Stroke) = .{},
+
+    brush: BrushId,
+    bindings: []Renderer.UniformValue,
+    distance_field: Renderer.Texture = Renderer.Texture.invalid,
+
+    pub const Save = struct {
+        display_object: usize,
+        strokes: [][]const Vec2,
+        brush: usize,
+        bindings: []Renderer.UniformValue,
+    };
+
+    pub fn init(alloc: Allocator, display_object: ObjectId, brush_id: BrushId, brushes: ShaderStorage(BrushId)) !DrawingObject {
+        const brush = brushes.get(brush_id);
+        const uniforms = brush.program.uniforms;
+        const bindings = try alloc.alloc(Renderer.UniformValue, uniforms.len);
+        errdefer alloc.free(bindings);
+
+        for (0..bindings.len) |i| {
+            bindings[i] = uniforms[i].default;
+        }
+        return .{
+            .display_object = display_object,
+            .brush = brush_id,
+            .bindings = bindings,
+        };
+    }
+
+    pub fn addStroke(
+        self: *DrawingObject,
+        alloc: Allocator,
+        pos: Vec2,
+        objects: *Objects,
+        distance_field_renderer: Renderer.DistanceFieldGenerator,
+    ) !void {
+        try self.strokes.append(alloc, Stroke{});
+        try self.addSample(alloc, pos, objects, distance_field_renderer);
+    }
+
+    pub fn addSample(
+        self: *DrawingObject,
+        alloc: Allocator,
+        pos: Vec2,
+        objects: *Objects,
+        distance_field_renderer: Renderer.DistanceFieldGenerator,
+    ) !void {
+        const last_stroke = &self.strokes.items[self.strokes.items.len - 1];
+        try last_stroke.addPoint(alloc, pos);
+
+        try self.generateDistanceField(alloc, objects, distance_field_renderer);
+    }
+
+    pub fn generateDistanceField(
+        self: *DrawingObject,
+        alloc: Allocator,
+        objects: *Objects,
+        distance_field_renderer: Renderer.DistanceFieldGenerator,
+    ) !void {
+        var vertex_array_it = StrokeVertexArrayIt{ .strokes = self.strokes.items };
+
+        const dims = objects.get(self.display_object).dims(objects);
+
+        const new_distance_field = try distance_field_renderer.generateDistanceField(
+            alloc,
+            &vertex_array_it,
+            @intCast(dims[0]),
+            @intCast(dims[1]),
+        );
+
+        self.distance_field.deinit();
+        self.distance_field = new_distance_field;
+    }
+
+    pub fn hasPoints(self: DrawingObject) bool {
+        return self.strokes.items.len > 0;
+    }
+
+    pub fn setUniform(self: *DrawingObject, idx: usize, val: Renderer.UniformValue) !void {
+        if (idx >= self.bindings.len) return error.InvalidBrushUniformIdx;
+        self.bindings[idx] = val;
+    }
+
+    pub fn updateBrush(self: *DrawingObject, alloc: Allocator, brush_id: BrushId, brushes: ShaderStorage(BrushId)) !void {
+        const brush = brushes.get(brush_id);
+        const uniforms = brush.program.uniforms;
+
+        var bindings = try alloc.alloc(Renderer.UniformValue, uniforms.len);
+        defer alloc.free(bindings);
+
+        for (0..bindings.len) |i| {
+            bindings[i] = uniforms[i].default;
+        }
+        self.brush = brush_id;
+        std.mem.swap([]Renderer.UniformValue, &bindings, &self.bindings);
+    }
+
+    pub fn saveLeaky(self: DrawingObject, alloc: Allocator) !Save {
+        const strokes = try alloc.alloc([]const Vec2, self.strokes.items.len);
+        for (0..strokes.len) |i| {
+            strokes[i] = self.strokes.items[i].points.items;
+        }
+
+        return .{
+            .display_object = self.display_object.value,
+            .strokes = strokes,
+            .brush = self.brush.value,
+            .bindings = self.bindings,
+        };
+    }
+
+    fn deinit(self: *DrawingObject, alloc: Allocator) void {
+        for (self.strokes.items) |*stroke| {
+            stroke.deinit(alloc);
+        }
+        self.strokes.deinit(alloc);
+        alloc.free(self.bindings);
+    }
+};
+
 pub const SaveObject = struct {
     name: []const u8,
     data: Data,
@@ -539,6 +758,7 @@ pub const SaveObject = struct {
             display_object: usize,
         },
         generated_mask: usize,
+        drawing: DrawingObject.Save,
     };
 };
 
@@ -585,12 +805,12 @@ pub const Objects = struct {
         return .{ .max = self.inner.items.len };
     }
 
-    pub fn save(self: Objects, alloc: Allocator) ![]SaveObject {
+    pub fn saveLeaky(self: Objects, alloc: Allocator) ![]SaveObject {
         const object_saves = try alloc.alloc(SaveObject, self.inner.items.len);
         errdefer alloc.free(object_saves);
 
         for (0..self.inner.items.len) |i| {
-            object_saves[i] = self.inner.items[i].save();
+            object_saves[i] = try self.inner.items[i].saveLeaky(alloc);
         }
 
         return object_saves;

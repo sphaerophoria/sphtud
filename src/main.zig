@@ -219,19 +219,23 @@ const Imgui = struct {
         return ret;
     }
 
+    const ShaderUniformModification = struct {
+        idx: usize,
+        val: Renderer.UniformValue,
+    };
+
     const PropertyAction = union(enum) {
         delete_from_composition: obj_mod.CompositionIdx,
         add_to_composition: obj_mod.ObjectId,
         update_path_display_obj: obj_mod.ObjectId,
-        set_shader_binding_value: struct {
-            // FIXME: strong type?
-            idx: usize,
-            val: Renderer.UniformValue,
-        },
+        set_shader_binding_value: ShaderUniformModification,
+        set_brush_binding_value: ShaderUniformModification,
         set_shader_primary_input: usize,
+        update_drawing_display_obj: obj_mod.ObjectId,
+        set_brush: BrushId,
     };
 
-    fn renderObjectProperties(selected_object_id: obj_mod.ObjectId, objects: *obj_mod.Objects, shaders: ShaderStorage(ShaderId)) !?PropertyAction {
+    fn renderObjectProperties(selected_object_id: obj_mod.ObjectId, objects: *obj_mod.Objects, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId)) !?PropertyAction {
         const selected_object = objects.get(selected_object_id);
         if (!c.igBegin("Object properties", null, 0)) {
             return null;
@@ -310,8 +314,8 @@ const Imgui = struct {
 
                 const program = shaders.get(shader_object.program).program;
                 for (0..program.uniforms.len) |idx| {
-                    if (try renderShaderUniform(idx, shader_object.bindings, program, objects, selected_object_id)) |action| {
-                        ret = action;
+                    if (try renderShaderUniform(idx, shader_object.bindings, program.uniforms, objects, selected_object_id)) |action| {
+                        ret = .{ .set_shader_binding_value = action };
                     }
                 }
 
@@ -340,6 +344,49 @@ const Imgui = struct {
             .generated_mask => {
                 c.igText("Generated mask");
             },
+            .drawing => |d| {
+                c.igText("Drawing");
+                var buf: [1024]u8 = undefined;
+                const source_name = try std.fmt.bufPrintZ(&buf, "{s}", .{objects.get(d.display_object).name});
+                // FIXME: Dedup with path
+                if (c.igBeginCombo("Source object", source_name, 0)) {
+                    if (try addComposableObjects(objects, "drawing_display_object", d.display_object, selected_object_id)) |new_source| {
+                        ret = .{
+                            .update_drawing_display_obj = new_source,
+                        };
+                    }
+                    c.igEndCombo();
+                }
+
+                const selected_brush_name = try std.fmt.bufPrintZ(&buf, "{s}", .{brushes.get(d.brush).name});
+                if (c.igBeginCombo("Brush", selected_brush_name, 0)) {
+                    var brush_it = brushes.idIter();
+                    while (brush_it.next()) |brush_id| {
+                        const brush = brushes.get(brush_id);
+                        const obj_namez = try std.fmt.bufPrintZ(&buf, "{s}##{d}", .{ brush.name, brush_id.value });
+                        const clicked = c.igSelectable_Bool(
+                            obj_namez.ptr,
+                            false,
+                            0,
+                            null_size,
+                        );
+                        if (clicked) {
+                            ret = .{
+                                .set_brush = brush_id,
+                            };
+                        }
+                    }
+                    c.igEndCombo();
+                }
+
+                const brush = brushes.get(d.brush);
+                const brush_uniforms = brush.program.uniforms;
+                for (0..brush_uniforms.len) |idx| {
+                    if (try renderShaderUniform(idx, d.bindings, brush_uniforms, objects, selected_object_id)) |action| {
+                        ret = .{ .set_brush_binding_value = action };
+                    }
+                }
+            },
         }
         c.igEnd();
 
@@ -350,6 +397,7 @@ const Imgui = struct {
         shader_object: ShaderId,
         create_path,
         create_composition,
+        create_drawing,
     };
 
     fn renderAddObjectView(shaders: ShaderStorage(ShaderId)) !?AddObjectAction {
@@ -382,6 +430,10 @@ const Imgui = struct {
             ret = .create_composition;
         }
 
+        if (c.igButton("Create drawing", null_size)) {
+            ret = .create_drawing;
+        }
+
         c.igEnd();
 
         return ret;
@@ -411,12 +463,12 @@ const Imgui = struct {
         return ret;
     }
 
-    fn renderShaderUniform(idx: usize, bindings: []const Renderer.UniformValue, program: Renderer.PlaneRenderProgram, objects: *obj_mod.Objects, selected_object_id: obj_mod.ObjectId) !?PropertyAction {
+    fn renderShaderUniform(idx: usize, bindings: []const Renderer.UniformValue, uniforms: []const Renderer.Uniform, objects: *obj_mod.Objects, selected_object_id: obj_mod.ObjectId) !?ShaderUniformModification {
         var name_buf: [1024]u8 = undefined;
-        const uniform = program.uniforms[idx];
+        const uniform = uniforms[idx];
         const name = try std.fmt.bufPrintZ(&name_buf, "{s}", .{uniform.name});
 
-        var ret: ?PropertyAction = null;
+        var ret: ?ShaderUniformModification = null;
         const binding = bindings[idx];
         switch (binding) {
             .image => |bound_object_id| {
@@ -429,10 +481,8 @@ const Imgui = struct {
                 if (c.igBeginCombo(name, bound_object_name, 0)) {
                     if (try addComposableObjects(objects, "uniform_input", null, selected_object_id)) |uniform_dep| {
                         ret = .{
-                            .set_shader_binding_value = .{
-                                .idx = idx,
-                                .val = .{ .image = uniform_dep },
-                            },
+                            .idx = idx,
+                            .val = .{ .image = uniform_dep },
                         };
                     }
                     c.igEndCombo();
@@ -442,10 +492,8 @@ const Imgui = struct {
                 var val = f;
                 if (c.igDragFloat(name, &val, 0.01, -std.math.inf(f32), std.math.inf(f32), "%.03f", 0)) {
                     ret = .{
-                        .set_shader_binding_value = .{
-                            .idx = idx,
-                            .val = .{ .float = val },
-                        },
+                        .idx = idx,
+                        .val = .{ .float = val },
                     };
                 }
             },
@@ -453,10 +501,8 @@ const Imgui = struct {
                 var val = f;
                 if (c.igDragFloat2(name, &val, 0.01, -std.math.inf(f32), std.math.inf(f32), "%.03f", 0)) {
                     ret = .{
-                        .set_shader_binding_value = .{
-                            .idx = idx,
-                            .val = .{ .float2 = val },
-                        },
+                        .idx = idx,
+                        .val = .{ .float2 = val },
                     };
                 }
             },
@@ -464,10 +510,8 @@ const Imgui = struct {
                 var val = f;
                 if (c.igColorEdit3(name, &val, c.ImGuiColorEditFlags_Float | c.ImGuiColorEditFlags_HDR)) {
                     ret = .{
-                        .set_shader_binding_value = .{
-                            .idx = idx,
-                            .val = .{ .float3 = val },
-                        },
+                        .idx = idx,
+                        .val = .{ .float3 = val },
                     };
                 }
             },
@@ -475,10 +519,8 @@ const Imgui = struct {
                 var val = i;
                 if (c.igDragInt(name, &val, 1, -std.math.maxInt(i32), std.math.maxInt(i32), null, 0)) {
                     ret = .{
-                        .set_shader_binding_value = .{
-                            .idx = idx,
-                            .val = .{ .int = val },
-                        },
+                        .idx = idx,
+                        .val = .{ .int = val },
                     };
                 }
             },
@@ -661,7 +703,7 @@ pub fn main() !void {
             app.setSelectedObject(idx);
         }
 
-        if (try Imgui.renderObjectProperties(app.input_state.selected_object, &app.objects, app.shaders)) |action| {
+        if (try Imgui.renderObjectProperties(app.input_state.selected_object, &app.objects, app.shaders, app.brushes)) |action| {
             switch (action) {
                 .delete_from_composition => |id| {
                     app.deleteFromComposition(id) catch |e| {
@@ -683,9 +725,24 @@ pub fn main() !void {
                         logError("Failed to set shader dependency", e, @errorReturnTrace());
                     };
                 },
+                .set_brush_binding_value => |params| {
+                    app.setBrushDependency(params.idx, params.val) catch |e| {
+                        logError("Failed to set shader dependency", e, @errorReturnTrace());
+                    };
+                },
                 .set_shader_primary_input => |idx| {
                     app.setShaderPrimaryInput(idx) catch |e| {
                         logError("Failed to set primary input", e, @errorReturnTrace());
+                    };
+                },
+                .update_drawing_display_obj => |id| {
+                    app.updateDrawingDisplayObj(id) catch |e| {
+                        logError("Failed to set drawing object", e, @errorReturnTrace());
+                    };
+                },
+                .set_brush => |id| {
+                    app.setDrawingObjectBrush(id) catch |e| {
+                        logError("Failed to set drawing object", e, @errorReturnTrace());
                     };
                 },
             }
@@ -703,6 +760,9 @@ pub fn main() !void {
                 .create_composition => {
                     _ = try app.addComposition();
                 },
+                .create_drawing => {
+                    _ = try app.addDrawing();
+                },
             }
         }
 
@@ -719,7 +779,7 @@ pub fn main() !void {
                     last_mouse = p;
                 },
                 .mouse_up => if (glfw_mouse) app.setMouseUp(),
-                .mouse_down => if (glfw_mouse) app.setMouseDown(),
+                .mouse_down => if (glfw_mouse) try app.setMouseDown(),
                 .middle_up => if (glfw_mouse) app.setMiddleUp(),
                 .middle_down => if (glfw_mouse) app.setMiddleDown(),
                 .right_click => if (glfw_mouse) try app.clickRightMouse(),

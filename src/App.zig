@@ -71,14 +71,14 @@ pub fn deinit(self: *App) void {
 }
 
 pub fn save(self: *App, path: []const u8) !void {
-    const object_saves = try self.objects.save(self.alloc);
-    defer self.alloc.free(object_saves);
+    var arena = std.heap.ArenaAllocator.init(self.alloc);
+    defer arena.deinit();
 
-    const shader_saves = try self.shaders.save(self.alloc);
-    defer self.alloc.free(shader_saves);
+    const arena_alloc = arena.allocator();
 
-    const brush_saves = try self.brushes.save(self.alloc);
-    defer self.alloc.free(brush_saves);
+    const object_saves = try self.objects.saveLeaky(arena_alloc);
+    const shader_saves = try self.shaders.save(arena_alloc);
+    const brush_saves = try self.brushes.save(arena_alloc);
 
     const out_f = try std.fs.cwd().createFile(path, .{});
     defer out_f.close();
@@ -125,7 +125,7 @@ pub fn load(self: *App, path: []const u8) !void {
     defer new_objects.deinit(self.alloc);
 
     for (parsed.value.objects) |saved_object| {
-        var object = try Object.load(self.alloc, saved_object, new_shaders, self.renderer.path_program);
+        var object = try Object.load(self.alloc, saved_object, new_shaders, new_brushes, self.renderer.path_program);
         errdefer object.deinit(self.alloc);
 
         try new_objects.append(self.alloc, object);
@@ -135,18 +135,27 @@ pub fn load(self: *App, path: []const u8) !void {
     std.mem.swap(ShaderStorage(ShaderId), &new_shaders, &self.shaders);
     std.mem.swap(ShaderStorage(BrushId), &new_brushes, &self.brushes);
     std.mem.swap(Objects, &new_objects, &self.objects);
+    errdefer {
+        // If regeneration fails, we shouldn't accept the load
+        std.mem.swap(ShaderStorage(ShaderId), &new_shaders, &self.shaders);
+        std.mem.swap(ShaderStorage(BrushId), &new_brushes, &self.brushes);
+        std.mem.swap(Objects, &new_objects, &self.objects);
+    }
 
     // Loaded masks do not generate textures
     try self.regenerateAllMasks();
+    // Loaded drawings do not generate distance fields
+    try self.regenerateDistanceFields();
 
     var id_it = self.objects.idIter();
     if (id_it.next()) |id| {
+        // Select the first object to create a sane initial input state
         self.input_state.selectObject(id, &self.objects);
     }
 }
 
 pub fn render(self: *App) !void {
-    try self.renderer.render(self.alloc, &self.objects, self.shaders, self.input_state.selected_object, self.view_state.objectToClipTransform(self.selectedDims()), self.view_state.window_width, self.view_state.window_height);
+    try self.renderer.render(self.alloc, &self.objects, self.shaders, self.brushes, self.input_state.selected_object, self.view_state.objectToClipTransform(self.selectedDims()), self.view_state.window_width, self.view_state.window_height);
 }
 
 pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {
@@ -154,8 +163,9 @@ pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {
     try self.handleInputAction(action);
 }
 
-pub fn setMouseDown(self: *App) void {
-    self.input_state.setMouseDown(&self.objects);
+pub fn setMouseDown(self: *App) !void {
+    const action = self.input_state.setMouseDown(&self.objects);
+    try self.handleInputAction(action);
 }
 
 pub fn setMouseUp(self: *App) void {
@@ -301,6 +311,46 @@ pub fn setShaderDependency(self: *App, idx: usize, val: Renderer.UniformValue) !
     try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
 }
 
+pub fn setBrushDependency(self: *App, idx: usize, val: Renderer.UniformValue) !void {
+    const drawing_data = self.selectedObject().asDrawing() orelse return error.SelectedItemNotDrawing;
+    if (idx >= drawing_data.bindings.len) {
+        return error.InvalidShaderIdx;
+    }
+
+    const prev_val = drawing_data.bindings[idx];
+
+    try drawing_data.setUniform(idx, val);
+    errdefer drawing_data.bindings[idx] = prev_val;
+
+    try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
+}
+
+pub fn setDrawingObjectBrush(self: *App, id: BrushId) !void {
+    const drawing_data = self.selectedObject().asDrawing() orelse return error.SelectedItemNotDrawing;
+    try drawing_data.updateBrush(self.alloc, id, self.brushes);
+}
+
+pub fn addDrawing(self: *App) !ObjectId {
+    const id = self.objects.nextId();
+
+    const name = try self.alloc.dupe(u8, "drawing");
+    errdefer self.alloc.free(name);
+
+    var brush_iter = self.brushes.idIter();
+    const first_brush = brush_iter.next() orelse return error.NoBrushes;
+    try self.objects.append(self.alloc, .{
+        .name = name,
+        .data = .{ .drawing = try obj_mod.DrawingObject.init(
+            self.alloc,
+            self.input_state.selected_object,
+            first_brush,
+            self.brushes,
+        ) },
+    });
+
+    return id;
+}
+
 pub fn setShaderPrimaryInput(self: *App, idx: usize) !void {
     const shader_data = self.selectedObject().asShader() orelse return error.SelectedItemNotShader;
     if (idx >= shader_data.bindings.len) {
@@ -308,6 +358,15 @@ pub fn setShaderPrimaryInput(self: *App, idx: usize) !void {
     }
 
     shader_data.primary_input_idx = idx;
+}
+
+pub fn updateDrawingDisplayObj(self: *App, id: ObjectId) !void {
+    const drawing_data = self.selectedObject().asDrawing() orelse return error.SelectedItemNotDrawing;
+    const previous_id = drawing_data.display_object;
+    drawing_data.display_object = id;
+    errdefer drawing_data.display_object = previous_id;
+
+    try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
 }
 
 pub fn loadImage(self: *App, path: [:0]const u8) !ObjectId {
@@ -351,6 +410,10 @@ pub fn loadBrush(self: *App, path: [:0]const u8) !BrushId {
 
 pub fn addShaderFromFragmentSource(self: *App, name: []const u8, fs_source: [:0]const u8) !ShaderId {
     return try self.shaders.addShader(self.alloc, name, fs_source);
+}
+
+pub fn addBrushFromFragmnetSource(self: *App, name: []const u8, fs_source: [:0]const u8) !BrushId {
+    return try self.brushes.addShader(self.alloc, name, fs_source);
 }
 
 pub fn addShaderObject(self: *App, name: []const u8, shader_id: ShaderId) !ObjectId {
@@ -571,6 +634,9 @@ const InputState = struct {
     data: union(enum) {
         composition: CompositionInputState,
         path: ?obj_mod.PathIdx,
+        drawing: struct {
+            mouse_down: bool,
+        },
         none,
     } = .none,
 
@@ -598,6 +664,8 @@ const InputState = struct {
             idx: obj_mod.PathIdx,
             amount: Vec2,
         },
+        add_draw_stroke: Vec2,
+        add_stroke_sample: Vec2,
         save,
         pan: Vec2,
     };
@@ -607,19 +675,20 @@ const InputState = struct {
         switch (obj.data) {
             .composition => self.data = .{ .composition = .none },
             .path => self.data = .{ .path = null },
+            .drawing => self.data = .{ .drawing = .{ .mouse_down = false } },
             else => self.data = .none,
         }
         self.selected_object = id;
     }
 
     // FIXME: Objects should be const
-    fn setMouseDown(self: *InputState, objects: *obj_mod.Objects) void {
+    fn setMouseDown(self: *InputState, objects: *obj_mod.Objects) ?InputAction {
         switch (self.data) {
             .composition => |*action| {
                 action.* = self.makeCompositionInputState(objects, .move);
             },
             .path => |*selected_obj| {
-                const path = objects.get(self.selected_object).asPath() orelse return; // FIXME assert?
+                const path = objects.get(self.selected_object).asPath() orelse return null; // FIXME assert?
                 var closest_point: usize = 0;
                 var min_dist = std.math.inf(f32);
 
@@ -635,14 +704,22 @@ const InputState = struct {
                     selected_obj.* = .{ .value = closest_point };
                 }
             },
+            .drawing => |*d| {
+                d.mouse_down = true;
+                return .{
+                    .add_draw_stroke = self.mouse_pos,
+                };
+            },
             .none => {},
         }
+        return null;
     }
 
     fn setMouseUp(self: *InputState) void {
         switch (self.data) {
             .composition => |*action| action.* = .none,
             .path => |*selected_path_item| selected_path_item.* = null,
+            .drawing => |*d| d.mouse_down = false,
             .none => {},
         }
     }
@@ -719,6 +796,11 @@ const InputState = struct {
                         .idx = idx,
                         .amount = new_pos - self.mouse_pos,
                     } };
+                }
+            },
+            .drawing => |*d| {
+                if (d.mouse_down) {
+                    return InputAction{ .add_stroke_sample = new_pos };
                 }
             },
             else => {},
@@ -866,6 +948,18 @@ fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
                 try self.regeneratePathMasks(self.input_state.selected_object);
             }
         },
+        .add_draw_stroke => |pos| {
+            const selected_object = self.selectedObject();
+            if (selected_object.asDrawing()) |d| {
+                try d.addStroke(self.alloc, pos, &self.objects, self.renderer.distance_field_generator);
+            }
+        },
+        .add_stroke_sample => |pos| {
+            const selected_object = self.selectedObject();
+            if (selected_object.asDrawing()) |d| {
+                try d.addSample(self.alloc, pos, &self.objects, self.renderer.distance_field_generator);
+            }
+        },
         .save => {
             try self.save("save.json");
         },
@@ -901,6 +995,15 @@ fn regenerateAllMasks(self: *App) !void {
     var it = MaskIterator{ .it = self.objects.idIter(), .objects = &self.objects };
     while (it.next()) |mask| {
         try self.regenerateMask(mask);
+    }
+}
+
+fn regenerateDistanceFields(self: *App) !void {
+    var obj_it = self.objects.idIter();
+    while (obj_it.next()) |obj_id| {
+        const obj = self.objects.get(obj_id);
+        const drawing_obj = obj.asDrawing() orelse continue;
+        try drawing_obj.generateDistanceField(self.alloc, &self.objects, self.renderer.distance_field_generator);
     }
 }
 

@@ -75,7 +75,7 @@ pub fn writeDummyImage(alloc: Allocator, path: [:0]const u8) !void {
 pub fn inputOnCanvas(app: *App) !void {
     // Try dragging some stuff around
     try app.setMousePos(300, 300);
-    app.setMouseDown();
+    try app.setMouseDown();
     try app.render();
 
     try app.setMousePos(100, 100);
@@ -120,7 +120,7 @@ pub fn inputOnCanvas(app: *App) !void {
         try app.render();
 
         // Submit the transformation
-        app.setMouseDown();
+        try app.setMouseDown();
         app.setMouseUp();
     }
 }
@@ -136,6 +136,29 @@ const swap_colors_frag =
     \\    fragment = vec4(tmp.y, tmp.x, tmp.z, tmp.w);
     \\}
 ;
+
+const default_brush =
+    \\#version 330 core
+    \\
+    \\in vec2 uv;
+    \\out vec4 fragment;
+    \\
+    \\uniform sampler2D distance_field;
+    \\uniform float width = 0.02;
+    \\uniform vec3 color = vec3(1.0, 0.0, 0.0);
+    \\uniform float alpha_falloff_multiplier = 5;
+    \\
+    \\void main()
+    \\{
+    \\    float distance = texture(distance_field, vec2(uv.x, uv.y)).r;
+    \\    float alpha = 1.0 - clamp((distance - width) * alpha_falloff_multiplier * 10, 0.0, 1.0);
+    \\    if (alpha <= 0.0) {
+    \\        discard;
+    \\    }
+    \\    fragment = vec4(color, alpha);
+    \\}
+;
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
@@ -163,6 +186,7 @@ pub fn main() !void {
     try writeDummyImage(alloc, dummy_path);
 
     const swap_colors_id = try app.addShaderFromFragmentSource("swap colors", swap_colors_frag);
+    _ = try app.addBrushFromFragmnetSource("default brush", default_brush);
 
     for (0..2) |_| {
         const composition_idx = try app.addComposition();
@@ -171,7 +195,6 @@ pub fn main() !void {
 
         var buf: [1024]u8 = undefined;
         const swapped_name = try std.fmt.bufPrint(&buf, "{s}_swapped", .{dummy_path});
-
         const shader_id = try app.addShaderObject(
             swapped_name,
             swap_colors_id,
@@ -194,6 +217,8 @@ pub fn main() !void {
         app.setSelectedObject(path_id);
         try app.updatePathDisplayObj(id);
     }
+
+    _ = try app.addDrawing();
 
     var it = app.objects.idIter();
     while (it.next()) |i| {
