@@ -177,7 +177,7 @@ fn renderObjectToTexture(self: *Renderer, alloc: Allocator, objects: *Objects, s
 }
 
 pub const Texture = struct {
-    pub const invalid = Texture{ .inner = std.math.maxInt(gl.GLuint) };
+    pub const invalid = Texture{ .inner = 0 };
 
     inner: gl.GLuint,
 
