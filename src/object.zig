@@ -55,7 +55,7 @@ pub const Object = struct {
         };
     }
 
-    pub fn load(alloc: Allocator, save_obj: SaveObject, shaders: ShaderStorage, path_vpos_loc: gl.GLint) !Object {
+    pub fn load(alloc: Allocator, save_obj: SaveObject, shaders: ShaderStorage, path_render_program: Renderer.PathRenderProgram) !Object {
         const data: Data = switch (save_obj.data) {
             .filesystem => |s| blk: {
                 break :blk .{
@@ -89,7 +89,7 @@ pub const Object = struct {
             },
             .path => |p| blk: {
                 break :blk .{
-                    .path = try PathObject.init(alloc, p.points, .{ .value = p.display_object }, path_vpos_loc),
+                    .path = try PathObject.init(alloc, p.points, .{ .value = p.display_object }, path_render_program.makeBuffer()),
                 };
             },
             .generated_mask => |source| .{
@@ -360,57 +360,38 @@ pub const PathObject = struct {
     points: std.ArrayListUnmanaged(Vec2) = .{},
     display_object: ObjectId,
 
-    selected_point: ?usize = null,
-    vertex_array: gl.GLuint,
-    vertex_buffer: gl.GLuint,
+    render_buffer: Renderer.PathRenderBuffer,
 
-    pub fn init(alloc: Allocator, initial_points: []const Vec2, display_object: ObjectId, vpos_location: gl.GLint) !PathObject {
+    pub fn init(alloc: Allocator, initial_points: []const Vec2, display_object: ObjectId, render_buffer: Renderer.PathRenderBuffer) !PathObject {
+        errdefer render_buffer.deinit();
+
         var points = try std.ArrayListUnmanaged(Vec2).initCapacity(alloc, initial_points.len);
         errdefer points.deinit(alloc);
 
         try points.appendSlice(alloc, initial_points);
 
-        var vertex_buffer: gl.GLuint = 0;
-        gl.glGenBuffers(1, &vertex_buffer);
-        errdefer gl.glDeleteBuffers(1, &vertex_buffer);
+        render_buffer.setData(points.items);
 
-        setBufferData(vertex_buffer, points.items);
-
-        var vertex_array: gl.GLuint = 0;
-        gl.glGenVertexArrays(1, &vertex_array);
-        errdefer gl.glDeleteVertexArrays(1, &vertex_array);
-
-        gl.glBindVertexArray(vertex_array);
-
-        gl.glEnableVertexAttribArray(@intCast(vpos_location));
-        gl.glVertexAttribPointer(@intCast(vpos_location), 2, gl.GL_FLOAT, gl.GL_FALSE, 4 * 2, null);
         return .{
             .points = points,
             .display_object = display_object,
-            .vertex_array = vertex_array,
-            .vertex_buffer = vertex_buffer,
+            .render_buffer = render_buffer,
         };
-    }
-
-    fn setBufferData(vertex_buffer: gl.GLuint, points: []const Vec2) void {
-        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, vertex_buffer);
-        gl.glBufferData(gl.GL_ARRAY_BUFFER, @intCast(points.len * 8), points.ptr, gl.GL_DYNAMIC_DRAW);
     }
 
     pub fn addPoint(self: *PathObject, alloc: Allocator, pos: Vec2) !void {
         try self.points.append(alloc, pos);
-        setBufferData(self.vertex_buffer, self.points.items);
+        self.render_buffer.setData(self.points.items);
     }
 
     pub fn movePoint(self: *PathObject, idx: PathIdx, movement: Vec2) void {
         self.points.items[idx.value] += movement;
-        gl.glNamedBufferSubData(self.vertex_buffer, @intCast(idx.value * 8), 8, &self.points.items[idx.value]);
+        self.render_buffer.updatePoint(idx.value, self.points.items[idx.value]);
     }
 
     pub fn deinit(self: *PathObject, alloc: Allocator) void {
         self.points.deinit(alloc);
-        gl.glDeleteBuffers(1, &self.vertex_buffer);
-        gl.glDeleteVertexArrays(1, &self.vertex_array);
+        self.render_buffer.deinit();
     }
 };
 

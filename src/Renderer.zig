@@ -122,7 +122,7 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
             const display_object = objects.get(p.display_object);
             try self.renderObjectWithTransform(alloc, objects, shaders, display_object.*, transform, texture_cache);
 
-            self.path_program.render(p.vertex_array, transform, p.selected_point, p.points.items.len);
+            self.path_program.render(p.render_buffer, transform, p.points.items.len);
         },
         .generated_mask => |m| {
             const object_dims = object.dims(objects);
@@ -481,16 +481,54 @@ const TextureCache = struct {
     }
 };
 
-const PathRenderProgram = struct {
+pub const PathRenderBuffer = struct {
+    vertex_array: gl.GLuint,
+    vertex_buffer: gl.GLuint,
+
+    fn init(vpos_location: gl.GLuint) PathRenderBuffer {
+        var vertex_buffer: gl.GLuint = 0;
+        gl.glCreateBuffers(1, &vertex_buffer);
+        errdefer gl.glDeleteBuffers(1, &vertex_buffer);
+
+        var vertex_array: gl.GLuint = 0;
+        gl.glCreateVertexArrays(1, &vertex_array);
+        errdefer gl.glDeleteVertexArrays(1, &vertex_array);
+
+        gl.glVertexArrayVertexBuffer(vertex_array, 0, vertex_buffer, 0, 8);
+
+        gl.glEnableVertexArrayAttrib(vertex_array, vpos_location);
+        gl.glVertexArrayAttribFormat(vertex_array, vpos_location, 2, gl.GL_FLOAT, gl.GL_FALSE, 0);
+        gl.glVertexArrayAttribBinding(vertex_array, 0, 0);
+        return .{
+            .vertex_array = vertex_array,
+            .vertex_buffer = vertex_buffer,
+        };
+    }
+
+    pub fn deinit(self: PathRenderBuffer) void {
+        gl.glDeleteBuffers(1, &self.vertex_buffer);
+        gl.glDeleteVertexArrays(1, &self.vertex_array);
+    }
+
+    pub fn setData(self: PathRenderBuffer, points: []const lin.Vec2) void {
+        gl.glNamedBufferData(self.vertex_buffer, @intCast(points.len * 8), points.ptr, gl.GL_DYNAMIC_DRAW);
+    }
+
+    pub fn updatePoint(self: PathRenderBuffer, idx: usize, point: lin.Vec2) void {
+        gl.glNamedBufferSubData(self.vertex_buffer, @intCast(idx * 8), 8, &point);
+    }
+};
+
+pub const PathRenderProgram = struct {
     program: gl.GLuint,
-    vpos_location: gl.GLint,
+    vpos_location: gl.GLuint,
     transform_location: gl.GLint,
 
     fn init() !PathRenderProgram {
         const program = try compileLinkProgram(path_vertex_shader, path_fragment_shader);
         errdefer gl.glDeleteProgram(program);
 
-        const vpos_location = gl.glGetAttribLocation(program, "vPos");
+        const vpos_location: gl.GLuint = @intCast(gl.glGetAttribLocation(program, "vPos"));
         const transform_location = gl.glGetUniformLocation(program, "transform");
 
         return .{
@@ -504,9 +542,13 @@ const PathRenderProgram = struct {
         gl.glDeleteProgram(self.program);
     }
 
-    fn render(self: PathRenderProgram, vertex_array: gl.GLuint, transform: Transform, selected_point: ?usize, num_points: usize) void {
+    pub fn makeBuffer(self: PathRenderProgram) PathRenderBuffer {
+        return PathRenderBuffer.init(self.vpos_location);
+    }
+
+    fn render(self: PathRenderProgram, render_buffer: PathRenderBuffer, transform: Transform, num_points: usize) void {
         gl.glUseProgram(self.program);
-        gl.glBindVertexArray(vertex_array);
+        gl.glBindVertexArray(render_buffer.vertex_array);
         gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &transform.inner.data);
 
         gl.glLineWidth(8);
@@ -514,11 +556,6 @@ const PathRenderProgram = struct {
 
         gl.glDrawArrays(gl.GL_LINE_LOOP, 0, @intCast(num_points));
         gl.glDrawArrays(gl.GL_POINTS, 0, @intCast(num_points));
-
-        if (selected_point) |p| {
-            gl.glPointSize(50.0);
-            gl.glDrawArrays(gl.GL_POINTS, @intCast(p), 1);
-        }
     }
 };
 

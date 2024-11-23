@@ -103,7 +103,7 @@ pub fn load(self: *App, path: []const u8) !void {
     defer new_objects.deinit(self.alloc);
 
     for (parsed.value.objects) |saved_object| {
-        var object = try Object.load(self.alloc, saved_object, new_shaders, self.renderer.path_program.vpos_location);
+        var object = try Object.load(self.alloc, saved_object, new_shaders, self.renderer.path_program);
         errdefer object.deinit(self.alloc);
 
         try new_objects.append(self.alloc, object);
@@ -182,7 +182,7 @@ pub fn createPath(self: *App) !ObjectId {
         self.alloc,
         initial_positions,
         self.input_state.selected_object,
-        self.renderer.path_program.vpos_location,
+        self.renderer.path_program.makeBuffer(),
     );
     try self.objects.append(self.alloc, .{
         .name = try self.alloc.dupe(u8, "new path"),
