@@ -418,11 +418,14 @@ const ProgramUniformIt = struct {
 
 pub const FramebufferRenderContext = struct {
     fbo: gl.GLuint,
+    prev_fbo: gl.GLint,
 
     pub fn init(render_texture: Texture) FramebufferRenderContext {
         var fbo: gl.GLuint = undefined;
         gl.glGenFramebuffers(1, &fbo);
 
+        var prev_id: gl.GLint = 0;
+        gl.glGetIntegerv(gl.GL_DRAW_FRAMEBUFFER_BINDING, &prev_id);
         gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, fbo);
         gl.glFramebufferTexture2D(
             gl.GL_FRAMEBUFFER,
@@ -434,11 +437,12 @@ pub const FramebufferRenderContext = struct {
 
         return .{
             .fbo = fbo,
+            .prev_fbo = prev_id,
         };
     }
 
     pub fn reset(self: FramebufferRenderContext) void {
-        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0);
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, @intCast(self.prev_fbo));
         gl.glDeleteFramebuffers(1, &self.fbo);
     }
 };
