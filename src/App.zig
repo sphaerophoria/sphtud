@@ -245,6 +245,33 @@ pub fn updateSelectedObjectName(self: *App, name: []const u8) !void {
     try selected_object.updateName(self.alloc, name);
 }
 
+pub fn deleteSelectedObject(self: *App) !void {
+    if (self.objects.isDependedUpon(self.input_state.selected_object)) {
+        return error.DeletionCausesInvalidState;
+    }
+
+    var object_ids = self.objects.idIter();
+
+    var prev: ?ObjectId = null;
+
+    while (object_ids.next()) |id| {
+        if (id.value == self.input_state.selected_object.value) {
+            break;
+        }
+        prev = id;
+    }
+
+    const next: ?ObjectId = object_ids.next();
+
+    self.objects.remove(self.alloc, self.input_state.selected_object);
+
+    if (next) |v| {
+        self.input_state.selectObject(v, &self.objects);
+    } else if (prev) |v| {
+        self.input_state.selectObject(v, &self.objects);
+    }
+}
+
 pub fn addToComposition(self: *App, id: obj_mod.ObjectId) !obj_mod.CompositionIdx {
     const selected_object = self.objects.get(self.input_state.selected_object);
 

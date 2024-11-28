@@ -842,10 +842,37 @@ pub const Objects = struct {
         return object_saves;
     }
 
+    pub fn remove(self: *Objects, alloc: Allocator, id: ObjectId) void {
+        var item = self.inner.fetchOrderedRemove(id) orelse return;
+        item.value.deinit(alloc);
+    }
+
     pub fn append(self: *Objects, alloc: Allocator, object: Object) !void {
         const id = ObjectId{ .value = self.next_id };
         self.next_id += 1;
         try self.inner.put(alloc, id, object);
+    }
+
+    pub fn isDependedUpon(self: *Objects, id: ObjectId) bool {
+        if (self.inner.count() == 1) {
+            // App expects that there is always at least one object available
+            return true;
+        }
+
+        var id_iter = self.idIter();
+        while (id_iter.next()) |other_id| {
+            if (other_id.value == id.value) continue;
+
+            const other_obj = self.get(other_id);
+            var deps = other_obj.dependencies();
+            while (deps.next()) |dep_id| {
+                if (dep_id.value == id.value) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     fn freeObjectList(alloc: Allocator, objects: *ObjectStorage) void {

@@ -238,6 +238,7 @@ const Imgui = struct {
         set_shader_primary_input: usize,
         update_drawing_display_obj: obj_mod.ObjectId,
         set_brush: BrushId,
+        delete_selected,
     };
 
     fn renderObjectProperties(self: *Imgui, selected_object_id: obj_mod.ObjectId, objects: *obj_mod.Objects, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId)) !?PropertyAction {
@@ -258,6 +259,27 @@ const Imgui = struct {
             ret = .{
                 .update_object_name = self.object_properties_name_buf[0..end],
             };
+        }
+
+        const is_depended_upon = objects.isDependedUpon(selected_object_id);
+        if (is_depended_upon) {
+            const deactivate_color = c.ImVec4{
+                .x = 0.4,
+                .y = 0.4,
+                .z = 0.4,
+                .w = 1.0,
+            };
+
+            c.igPushStyleColor_Vec4(c.ImGuiCol_Button, deactivate_color);
+            c.igPushStyleColor_Vec4(c.ImGuiCol_ButtonHovered, deactivate_color);
+            c.igPushStyleColor_Vec4(c.ImGuiCol_ButtonActive, deactivate_color);
+
+            _ = c.igButton("Delete", null_size);
+            c.igPopStyleColor(3);
+        } else {
+            if (c.igButton("Delete", null_size)) {
+                ret = .delete_selected;
+            }
         }
 
         switch (selected_object.data) {
@@ -788,6 +810,11 @@ pub fn main() !void {
                 .set_brush => |id| {
                     app.setDrawingObjectBrush(id) catch |e| {
                         logError("Failed to set drawing object", e, @errorReturnTrace());
+                    };
+                },
+                .delete_selected => {
+                    app.deleteSelectedObject() catch |e| {
+                        logError("Failed to delete selected object", e, @errorReturnTrace());
                     };
                 },
             }
