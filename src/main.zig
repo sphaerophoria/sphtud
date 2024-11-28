@@ -8,6 +8,7 @@ const shader_storage = @import("shader_storage.zig");
 const Renderer = @import("Renderer.zig");
 const ShaderStorage = shader_storage.ShaderStorage;
 const ShaderId = shader_storage.ShaderId;
+const BrushId = shader_storage.BrushId;
 const c = @cImport({
     @cInclude("GLFW/glfw3.h");
     @cDefine("CIMGUI_DEFINE_ENUMS_AND_STRUCTS", "");
@@ -492,7 +493,22 @@ const Args = struct {
 
     const Action = union(enum) {
         load: []const u8,
-        new: [][:0]const u8,
+        new: struct {
+            brushes: []const [:0]const u8,
+            shaders: []const [:0]const u8,
+            images: []const [:0]const u8,
+        },
+    };
+
+    const ParseState = enum {
+        unknown,
+        brushes,
+        shaders,
+        images,
+
+        fn parse(arg: []const u8) ParseState {
+            return std.meta.stringToEnum(ParseState, arg[2..]) orelse return .unknown;
+        }
     };
 
     fn parse(alloc: Allocator) !Args {
@@ -516,14 +532,43 @@ const Args = struct {
         var images = std.ArrayList([:0]const u8).init(alloc);
         defer images.deinit();
 
-        try images.append(first_arg);
+        var shaders = std.ArrayList([:0]const u8).init(alloc);
+        defer shaders.deinit();
 
+        var brushes = std.ArrayList([:0]const u8).init(alloc);
+        defer brushes.deinit();
+
+        var parse_state = ParseState.parse(first_arg);
         while (it.next()) |arg| {
-            try images.append(arg);
+            if (std.mem.startsWith(u8, arg, "--")) {
+                const new_state = ParseState.parse(arg);
+                if (new_state == .unknown) {
+                    std.log.err("Unknown switch {s}", .{arg});
+                    help(process_name);
+                }
+                parse_state = new_state;
+                continue;
+            }
+
+            switch (parse_state) {
+                .unknown => {
+                    std.log.err("Please specify one of --load, --images, --shaders, --brushes", .{});
+                    help(process_name);
+                },
+                .images => try images.append(arg),
+                .brushes => try brushes.append(arg),
+                .shaders => try shaders.append(arg),
+            }
         }
 
         return .{
-            .action = .{ .new = try images.toOwnedSlice() },
+            .action = .{
+                .new = .{
+                    .images = try images.toOwnedSlice(),
+                    .shaders = try shaders.toOwnedSlice(),
+                    .brushes = try brushes.toOwnedSlice(),
+                },
+            },
             .it = it,
         };
     }
@@ -531,8 +576,10 @@ const Args = struct {
     fn deinit(self: *Args, alloc: Allocator) void {
         switch (self.action) {
             .load => {},
-            .new => |images| {
-                alloc.free(images);
+            .new => |items| {
+                alloc.free(items.images);
+                alloc.free(items.brushes);
+                alloc.free(items.shaders);
             },
         }
 
@@ -546,7 +593,7 @@ const Args = struct {
             \\USAGE:
             \\{s} --load <save.json>
             \\OR
-            \\{s} <image.png> <image2.png> ...
+            \\{s} --images <image.png> <image2.png> --shaders <shader1.glsl> ... --brushes <brush1.glsl> <brush2.glsl>...
             \\
         , .{ process_name, process_name }) catch {};
         std.process.exit(1);
@@ -580,13 +627,15 @@ pub fn main() !void {
         .load => |s| {
             try app.load(s);
         },
-        .new => |paths| {
-            for (paths) |path| {
-                if (std.mem.endsWith(u8, path, ".glsl")) {
-                    _ = try app.loadShader(path);
-                } else {
-                    _ = try app.loadImage(path);
-                }
+        .new => |items| {
+            for (items.images) |path| {
+                _ = try app.loadImage(path);
+            }
+            for (items.shaders) |path| {
+                _ = try app.loadShader(path);
+            }
+            for (items.brushes) |path| {
+                _ = try app.loadBrush(path);
             }
         },
     }

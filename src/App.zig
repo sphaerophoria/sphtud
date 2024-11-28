@@ -20,12 +20,14 @@ const PixelDims = obj_mod.PixelDims;
 
 const ShaderStorage = shader_storage.ShaderStorage;
 const ShaderId = shader_storage.ShaderId;
+const BrushId = shader_storage.BrushId;
 
 const App = @This();
 
 alloc: Allocator,
 objects: Objects = .{},
 shaders: ShaderStorage(ShaderId),
+brushes: ShaderStorage(BrushId),
 renderer: Renderer,
 view_state: ViewState,
 input_state: InputState = .{},
@@ -44,10 +46,14 @@ pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
 
     const mul_fragment_shader_id = try shaders.addShader(alloc, "mask_mul", Renderer.mul_fragment_shader);
 
+    var brushes = ShaderStorage(BrushId){};
+    errdefer brushes.deinit(alloc);
+
     return .{
         .alloc = alloc,
         .objects = objects,
         .shaders = shaders,
+        .brushes = brushes,
         .renderer = renderer,
         .view_state = .{
             .window_width = window_width,
@@ -61,6 +67,7 @@ pub fn deinit(self: *App) void {
     self.objects.deinit(self.alloc);
     self.renderer.deinit(self.alloc);
     self.shaders.deinit(self.alloc);
+    self.brushes.deinit(self.alloc);
 }
 
 pub fn save(self: *App, path: []const u8) !void {
@@ -70,6 +77,9 @@ pub fn save(self: *App, path: []const u8) !void {
     const shader_saves = try self.shaders.save(self.alloc);
     defer self.alloc.free(shader_saves);
 
+    const brush_saves = try self.brushes.save(self.alloc);
+    defer self.alloc.free(brush_saves);
+
     const out_f = try std.fs.cwd().createFile(path, .{});
     defer out_f.close();
 
@@ -77,6 +87,7 @@ pub fn save(self: *App, path: []const u8) !void {
         SaveData{
             .objects = object_saves,
             .shaders = shader_saves,
+            .brushes = brush_saves,
         },
         .{ .whitespace = .indent_2 },
         out_f.writer(),
@@ -101,6 +112,14 @@ pub fn load(self: *App, path: []const u8) !void {
         _ = try new_shaders.addShader(self.alloc, saved_shader.name, saved_shader.fs_source);
     }
 
+    var new_brushes = ShaderStorage(BrushId){};
+    // Note that shaders gets swapped in and is freed by this defer
+    defer new_brushes.deinit(self.alloc);
+
+    for (parsed.value.brushes) |saved_brush| {
+        _ = try new_brushes.addShader(self.alloc, saved_brush.name, saved_brush.fs_source);
+    }
+
     var new_objects = try Objects.initCapacity(self.alloc, parsed.value.objects.len);
     // Note that objects gets swapped in and is freed by this defer
     defer new_objects.deinit(self.alloc);
@@ -114,6 +133,7 @@ pub fn load(self: *App, path: []const u8) !void {
 
     // Swap objects so the old ones get deinited
     std.mem.swap(ShaderStorage(ShaderId), &new_shaders, &self.shaders);
+    std.mem.swap(ShaderStorage(BrushId), &new_brushes, &self.brushes);
     std.mem.swap(Objects, &new_objects, &self.objects);
 
     // Loaded masks do not generate textures
@@ -317,6 +337,16 @@ pub fn loadShader(self: *App, path: [:0]const u8) !ShaderId {
     defer self.alloc.free(fragment_source);
 
     return self.addShaderFromFragmentSource(path, fragment_source);
+}
+
+pub fn loadBrush(self: *App, path: [:0]const u8) !BrushId {
+    const f = try std.fs.cwd().openFile(path, .{});
+    defer f.close();
+
+    const fragment_source = try f.readToEndAllocOptions(self.alloc, 1 << 20, null, 4, 0);
+    defer self.alloc.free(fragment_source);
+
+    return self.brushes.addShader(self.alloc, path, fragment_source);
 }
 
 pub fn addShaderFromFragmentSource(self: *App, name: []const u8, fs_source: [:0]const u8) !ShaderId {
@@ -883,6 +913,7 @@ fn getCompositionObj(self: *App) ?*obj_mod.CompositionObject {
 
 pub const SaveData = struct {
     shaders: []shader_storage.Save,
+    brushes: []shader_storage.Save,
     objects: []obj_mod.SaveObject,
 };
 
