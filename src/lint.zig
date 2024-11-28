@@ -73,6 +73,11 @@ pub fn writeDummyImage(alloc: Allocator, path: [:0]const u8) !void {
 }
 
 pub fn inputOnCanvas(app: *App) !void {
+    const selected_object = app.objects.get(app.input_state.selected_object);
+    var new_name_buf: [1024]u8 = undefined;
+    const new_name = try std.fmt.bufPrint(&new_name_buf, "{s}1", .{selected_object.name});
+    try app.updateSelectedObjectName(new_name);
+
     // Try dragging some stuff around
     try app.setMousePos(300, 300);
     try app.setMouseDown();

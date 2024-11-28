@@ -168,9 +168,11 @@ const Glfw = struct {
 const Imgui = struct {
     const null_size = c.ImVec2{ .x = 0, .y = 0 };
 
+    object_properties_name_buf: [1024]u8 = undefined,
+
     const UpdatedObjectSelection = usize;
 
-    fn init(glfw: *Glfw) !void {
+    fn init(glfw: *Glfw) !Imgui {
         _ = c.igCreateContext(null);
         errdefer c.igDestroyContext(null);
 
@@ -183,6 +185,8 @@ const Imgui = struct {
             return error.InitImGuiOgl;
         }
         errdefer c.ImGui_ImplOpenGL3_Shutdown();
+
+        return .{};
     }
 
     fn deinit() void {
@@ -225,6 +229,7 @@ const Imgui = struct {
     };
 
     const PropertyAction = union(enum) {
+        update_object_name: []const u8,
         delete_from_composition: obj_mod.CompositionIdx,
         add_to_composition: obj_mod.ObjectId,
         update_path_display_obj: obj_mod.ObjectId,
@@ -235,13 +240,26 @@ const Imgui = struct {
         set_brush: BrushId,
     };
 
-    fn renderObjectProperties(selected_object_id: obj_mod.ObjectId, objects: *obj_mod.Objects, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId)) !?PropertyAction {
+    fn renderObjectProperties(self: *Imgui, selected_object_id: obj_mod.ObjectId, objects: *obj_mod.Objects, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId)) !?PropertyAction {
         const selected_object = objects.get(selected_object_id);
         if (!c.igBegin("Object properties", null, 0)) {
             return null;
         }
 
         var ret: ?PropertyAction = null;
+
+        @memcpy(self.object_properties_name_buf[0..selected_object.name.len], selected_object.name);
+        self.object_properties_name_buf[selected_object.name.len] = 0;
+        if (c.igInputText("Name", &self.object_properties_name_buf, self.object_properties_name_buf.len, 0, null, null)) blk: {
+            const end = std.mem.indexOfScalar(u8, &self.object_properties_name_buf, 0) orelse {
+                break :blk;
+            };
+
+            ret = .{
+                .update_object_name = self.object_properties_name_buf[0..end],
+            };
+        }
+
         switch (selected_object.data) {
             .filesystem => |f| blk: {
                 const table_ret = c.igBeginTable("table", 2, 0, null_size, 0);
@@ -682,7 +700,7 @@ pub fn main() !void {
     try glfw.initPinned(window_width, window_height);
     defer glfw.deinit();
 
-    try Imgui.init(&glfw);
+    var imgui = try Imgui.init(&glfw);
     defer Imgui.deinit();
 
     var app = try App.init(alloc, window_width, window_height);
@@ -725,8 +743,13 @@ pub fn main() !void {
             app.setSelectedObject(idx);
         }
 
-        if (try Imgui.renderObjectProperties(app.input_state.selected_object, &app.objects, app.shaders, app.brushes)) |action| {
+        if (try imgui.renderObjectProperties(app.input_state.selected_object, &app.objects, app.shaders, app.brushes)) |action| {
             switch (action) {
+                .update_object_name => |name| {
+                    app.updateSelectedObjectName(name) catch |e| {
+                        logError("Failed to delete item from composition", e, @errorReturnTrace());
+                    };
+                },
                 .delete_from_composition => |id| {
                     app.deleteFromComposition(id) catch |e| {
                         logError("Failed to delete item from composition", e, @errorReturnTrace());

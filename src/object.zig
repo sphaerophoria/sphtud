@@ -41,6 +41,12 @@ pub const Object = struct {
         }
     }
 
+    pub fn updateName(self: *Object, alloc: Allocator, name: []const u8) !void {
+        const duped_name = try alloc.dupe(u8, name);
+        alloc.free(self.name);
+        self.name = duped_name;
+    }
+
     pub fn saveLeaky(self: Object, alloc: Allocator) !SaveObject {
         const data: SaveObject.Data = switch (self.data) {
             .filesystem => |s| .{ .filesystem = s.source },

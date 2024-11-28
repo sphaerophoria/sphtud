@@ -247,6 +247,11 @@ pub fn createPath(self: *App) !ObjectId {
     return path_id;
 }
 
+pub fn updateSelectedObjectName(self: *App, name: []const u8) !void {
+    const selected_object = self.selectedObject();
+    try selected_object.updateName(self.alloc, name);
+}
+
 pub fn addToComposition(self: *App, id: obj_mod.ObjectId) !obj_mod.CompositionIdx {
     const selected_object = self.objects.get(self.input_state.selected_object);
 
