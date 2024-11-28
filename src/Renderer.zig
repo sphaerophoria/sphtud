@@ -75,7 +75,7 @@ pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: Sha
     const object_dims = active_object.dims(objects);
 
     const toplevel_aspect = coords.calcAspect(object_dims[0], object_dims[1]);
-    self.background_program.render(&.{}, transform, toplevel_aspect);
+    self.background_program.render(&.{}, &.{.{ .idx = .aspect, .val = .{ .float = toplevel_aspect } }}, transform);
 
     try self.renderObjectWithTransform(alloc, objects, shaders, active_object.*, transform, &texture_cache);
 }
@@ -107,7 +107,9 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
             }
         },
         .filesystem => |f| {
-            self.program.render(&.{.{ .image = f.texture.inner }}, transform, coords.calcAspect(f.width, f.height));
+            self.program.render(&.{.{ .image = f.texture.inner }}, &.{
+                .{ .idx = .aspect, .val = .{ .float = coords.calcAspect(f.width, f.height) } },
+            }, transform);
         },
         .shader => |s| {
             var sources = std.ArrayList(ResolvedUniformValue).init(alloc);
@@ -136,7 +138,7 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
             }
 
             const object_dims = object.dims(objects);
-            shaders.get(s.program).program.render(sources.items, transform, coords.calcAspect(object_dims[0], object_dims[1]));
+            shaders.get(s.program).program.render(sources.items, &.{.{ .idx = .aspect, .val = .{ .float = coords.calcAspect(object_dims[0], object_dims[1]) } }}, transform);
         },
         .path => |p| {
             const display_object = objects.get(p.display_object);
@@ -146,7 +148,7 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
         },
         .generated_mask => |m| {
             const object_dims = object.dims(objects);
-            self.program.render(&.{.{ .image = m.texture.inner }}, transform, coords.calcAspect(object_dims[0], object_dims[1]));
+            self.program.render(&.{.{ .image = m.texture.inner }}, &.{.{ .idx = .aspect, .val = .{ .float = coords.calcAspect(object_dims[0], object_dims[1]) } }}, transform);
         },
     }
 }
@@ -230,6 +232,11 @@ const ResolvedUniformValue = union(UniformType) {
     int: i32,
 };
 
+const ReservedUniformValue = struct {
+    idx: PlaneRenderProgram.ReservedIndex,
+    val: ResolvedUniformValue,
+};
+
 pub const UniformValue = union(UniformType) {
     image: ?ObjectId,
     float: f32,
@@ -258,11 +265,19 @@ pub const Uniform = struct {
 pub const PlaneRenderProgram = struct {
     program: gl.GLuint,
     transform_location: gl.GLint,
-    aspect_location: gl.GLint,
     vertex_buffer: gl.GLuint,
     vertex_array: gl.GLuint,
 
     uniforms: []Uniform,
+    reserved_uniforms: []?Uniform,
+
+    const ReservedIndex = enum {
+        aspect,
+
+        fn asIndex(self: ReservedIndex) usize {
+            return @intFromEnum(self);
+        }
+    };
 
     pub fn init(alloc: Allocator, vs: [:0]const u8, fs: [:0]const u8) !PlaneRenderProgram {
         const program = try compileLinkProgram(vs, fs);
@@ -271,22 +286,10 @@ pub const PlaneRenderProgram = struct {
         const vpos_location = gl.glGetAttribLocation(program, "vPos");
         const vuv_location = gl.glGetAttribLocation(program, "vUv");
         const transform_location = gl.glGetUniformLocation(program, "transform");
-        const aspect_location = gl.glGetUniformLocation(program, "aspect");
 
-        var uniforms = std.ArrayList(Uniform).init(alloc);
-        defer {
-            for (uniforms.items) |item| {
-                item.deinit(alloc);
-            }
-            uniforms.deinit();
-        }
-
-        var uniform_it = try ProgramUniformIt.init(program);
-        while (uniform_it.next()) |uniform| {
-            const cloned = try uniform.clone(alloc);
-            errdefer cloned.deinit(alloc);
-            try uniforms.append(cloned);
-        }
+        const uniforms = try getUniformList(alloc, program, std.meta.fieldNames(ReservedIndex));
+        errdefer freeUniformList(alloc, uniforms.other);
+        errdefer freeOptionalUniformList(alloc, uniforms.reserved);
 
         var vertex_buffer: gl.GLuint = 0;
         gl.glGenBuffers(1, &vertex_buffer);
@@ -309,11 +312,11 @@ pub const PlaneRenderProgram = struct {
 
         return .{
             .program = program,
-            .aspect_location = aspect_location,
+            .transform_location = transform_location,
             .vertex_buffer = vertex_buffer,
             .vertex_array = vertex_array,
-            .transform_location = transform_location,
-            .uniforms = try uniforms.toOwnedSlice(),
+            .uniforms = uniforms.other,
+            .reserved_uniforms = uniforms.reserved,
         };
     }
 
@@ -322,48 +325,74 @@ pub const PlaneRenderProgram = struct {
         gl.glDeleteVertexArrays(1, &self.vertex_array);
         gl.glDeleteProgram(self.program);
 
-        for (self.uniforms) |uniform| {
-            uniform.deinit(alloc);
-        }
-        alloc.free(self.uniforms);
+        freeUniformList(alloc, self.uniforms);
+        freeOptionalUniformList(alloc, self.reserved_uniforms);
     }
 
-    pub fn render(self: PlaneRenderProgram, uniforms: []const ResolvedUniformValue, transform: lin.Transform, aspect: f32) void {
+    pub fn render(self: PlaneRenderProgram, uniforms: []const ResolvedUniformValue, reserved_uniforms: []const ReservedUniformValue, transform: lin.Transform) void {
         gl.glUseProgram(self.program);
         gl.glBindVertexArray(self.vertex_array);
         gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &transform.inner.data);
-        gl.glUniform1f(self.aspect_location, aspect);
 
+        var texture_unit_alloc = TextureUnitAlloc{};
         for (self.uniforms, 0..) |uniform, i| {
             if (i >= uniforms.len) continue;
             const val = uniforms[i];
-            if (std.meta.activeTag(uniform.default) != std.meta.activeTag(val)) {
-                std.log.err("Uniform type mismatch", .{});
-                continue;
-            }
+            applyUniformAtLocation(uniform.loc, std.meta.activeTag(uniform.default), val, &texture_unit_alloc);
+        }
 
-            switch (val) {
-                .image => |t| {
-                    const texture_unit = gl.GL_TEXTURE0 + i;
-                    gl.glActiveTexture(@intCast(texture_unit));
-                    gl.glBindTexture(gl.GL_TEXTURE_2D, t);
-                    gl.glUniform1i(uniform.loc, @intCast(i));
-                },
-                .float => |f| {
-                    gl.glUniform1f(uniform.loc, f);
-                },
-                .float3 => |f| {
-                    gl.glUniform3f(uniform.loc, f[0], f[1], f[2]);
-                },
-                .int => |v| {
-                    gl.glUniform1i(uniform.loc, v);
-                },
+        for (reserved_uniforms) |reserved| {
+            const uniform_opt = self.reserved_uniforms[reserved.idx.asIndex()];
+            if (uniform_opt) |uniform| {
+                applyUniformAtLocation(uniform.loc, std.meta.activeTag(uniform.default), reserved.val, &texture_unit_alloc);
             }
         }
 
         gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4);
     }
 };
+
+const TextureUnitAlloc = struct {
+    idx: usize = 0,
+
+    const Output = struct {
+        active_texture: gl.GLenum,
+        uniform_idx: gl.GLint,
+    };
+
+    fn next(self: *TextureUnitAlloc) Output {
+        defer self.idx += 1;
+        return .{
+            .active_texture = @intCast(gl.GL_TEXTURE0 + self.idx),
+            .uniform_idx = @intCast(self.idx),
+        };
+    }
+};
+
+fn applyUniformAtLocation(loc: gl.GLint, expected_type: UniformType, val: ResolvedUniformValue, texture_unit_alloc: *TextureUnitAlloc) void {
+    if (expected_type != std.meta.activeTag(val)) {
+        std.log.err("Uniform type mismatch", .{});
+        return;
+    }
+
+    switch (val) {
+        .image => |t| {
+            const texture_unit = texture_unit_alloc.next();
+            gl.glActiveTexture(texture_unit.active_texture);
+            gl.glBindTexture(gl.GL_TEXTURE_2D, t);
+            gl.glUniform1i(loc, texture_unit.uniform_idx);
+        },
+        .float => |f| {
+            gl.glUniform1f(loc, f);
+        },
+        .float3 => |f| {
+            gl.glUniform3f(loc, f[0], f[1], f[2]);
+        },
+        .int => |v| {
+            gl.glUniform1i(loc, v);
+        },
+    }
+}
 
 const ProgramUniformIt = struct {
     num_uniforms: usize,
@@ -435,6 +464,68 @@ const ProgramUniformIt = struct {
         return null;
     }
 };
+
+const UniformListsOutput = struct {
+    other: []Uniform,
+    reserved: []?Uniform,
+};
+
+fn getUniformList(alloc: Allocator, program: gl.GLuint, reserved_items: []const []const u8) !UniformListsOutput {
+    var uniforms = std.ArrayList(Uniform).init(alloc);
+    defer {
+        for (uniforms.items) |item| {
+            item.deinit(alloc);
+        }
+        uniforms.deinit();
+    }
+
+    var reserved_uniforms = try alloc.alloc(?Uniform, reserved_items.len);
+    errdefer freeOptionalUniformList(alloc, reserved_uniforms);
+    @memset(reserved_uniforms, null);
+
+    var uniform_it = try ProgramUniformIt.init(program);
+    while (uniform_it.next()) |uniform| {
+        if (isReservedItem(uniform.name, reserved_items)) |idx| {
+            reserved_uniforms[idx] = try uniform.clone(alloc);
+            continue;
+        }
+
+        const cloned = try uniform.clone(alloc);
+        errdefer cloned.deinit(alloc);
+        try uniforms.append(cloned);
+    }
+
+    return .{
+        .other = try uniforms.toOwnedSlice(),
+        .reserved = reserved_uniforms,
+    };
+}
+
+fn freeUniformList(alloc: Allocator, uniforms: []const Uniform) void {
+    for (uniforms) |item| {
+        item.deinit(alloc);
+    }
+    alloc.free(uniforms);
+}
+
+fn freeOptionalUniformList(alloc: Allocator, uniforms: []const ?Uniform) void {
+    for (uniforms) |opt| {
+        if (opt) |item| {
+            item.deinit(alloc);
+        }
+    }
+    alloc.free(uniforms);
+}
+
+fn isReservedItem(val: []const u8, skipped_items: []const []const u8) ?usize {
+    for (skipped_items, 0..) |item, idx| {
+        if (std.mem.eql(u8, val, item)) {
+            return idx;
+        }
+    }
+
+    return null;
+}
 
 pub const FramebufferRenderContext = struct {
     fbo: gl.GLuint,

@@ -362,7 +362,7 @@ pub fn main() !void {
         }
         const aspect_corrected = transform.then(coords.aspectRatioCorrectedFill(image_width, image_height, width, height));
 
-        program.render(&.{.{ .image = texture.inner }}, aspect_corrected, image_width / image_height);
+        program.render(&.{.{ .image = texture.inner }}, &.{.{ .idx = .aspect, .val = .{ .float = image_width / image_height } }}, aspect_corrected);
 
         try gui.renderUi();
         try gui.renderTransform(transform);
