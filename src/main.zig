@@ -449,6 +449,17 @@ const Imgui = struct {
                     };
                 }
             },
+            .float2 => |f| {
+                var val = f;
+                if (c.igDragFloat2(name, &val, 0.01, -std.math.inf(f32), std.math.inf(f32), "%.03f", 0)) {
+                    ret = .{
+                        .set_shader_binding_value = .{
+                            .idx = idx,
+                            .val = .{ .float2 = val },
+                        },
+                    };
+                }
+            },
             .float3 => |f| {
                 var val = f;
                 if (c.igColorEdit3(name, &val, c.ImGuiColorEditFlags_Float | c.ImGuiColorEditFlags_HDR)) {

@@ -128,6 +128,9 @@ fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Object
                     .float => |f| {
                         try sources.append(.{ .float = f });
                     },
+                    .float2 => |f| {
+                        try sources.append(.{ .float2 = f });
+                    },
                     .float3 => |f| {
                         try sources.append(.{ .float3 = f });
                     },
@@ -211,6 +214,7 @@ pub const Texture = struct {
 pub const UniformType = enum {
     image,
     float,
+    float2,
     float3,
     int,
 
@@ -218,6 +222,7 @@ pub const UniformType = enum {
         switch (typ) {
             gl.GL_SAMPLER_2D => return .image,
             gl.GL_FLOAT => return .float,
+            gl.GL_FLOAT_VEC2 => return .float2,
             gl.GL_FLOAT_VEC3 => return .float3,
             gl.GL_INT => return .int,
             else => return null,
@@ -228,6 +233,7 @@ pub const UniformType = enum {
 const ResolvedUniformValue = union(UniformType) {
     image: gl.GLuint,
     float: f32,
+    float2: [2]f32,
     float3: [3]f32,
     int: i32,
 };
@@ -240,6 +246,7 @@ const ReservedUniformValue = struct {
 pub const UniformValue = union(UniformType) {
     image: ?ObjectId,
     float: f32,
+    float2: [2]f32,
     float3: [3]f32,
     int: i32,
 };
@@ -385,6 +392,9 @@ fn applyUniformAtLocation(loc: gl.GLint, expected_type: UniformType, val: Resolv
         .float => |f| {
             gl.glUniform1f(loc, f);
         },
+        .float2 => |f| {
+            gl.glUniform2f(loc, f[0], f[1]);
+        },
         .float3 => |f| {
             gl.glUniform3f(loc, f[0], f[1], f[2]);
         },
@@ -440,6 +450,11 @@ const ProgramUniformIt = struct {
                     var default: f32 = 0.0;
                     gl.glGetUniformfv(self.program, @intCast(self.idx), &default);
                     break :blk .{ .float = default };
+                },
+                .float2 => blk: {
+                    var default: [2]f32 = .{ 0.0, 0.0 };
+                    gl.glGetUniformfv(self.program, @intCast(self.idx), &default);
+                    break :blk .{ .float2 = default };
                 },
                 .float3 => blk: {
                     var default: [3]f32 = .{ 0.0, 0.0, 0.0 };
