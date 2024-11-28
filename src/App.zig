@@ -120,16 +120,9 @@ pub fn load(self: *App, path: []const u8) !void {
         _ = try new_brushes.addShader(self.alloc, saved_brush.name, saved_brush.fs_source);
     }
 
-    var new_objects = try Objects.initCapacity(self.alloc, parsed.value.objects.len);
+    var new_objects = try Objects.load(self.alloc, parsed.value.objects, new_shaders, new_brushes, self.renderer.path_program);
     // Note that objects gets swapped in and is freed by this defer
     defer new_objects.deinit(self.alloc);
-
-    for (parsed.value.objects) |saved_object| {
-        var object = try Object.load(self.alloc, saved_object, new_shaders, new_brushes, self.renderer.path_program);
-        errdefer object.deinit(self.alloc);
-
-        try new_objects.append(self.alloc, object);
-    }
 
     // Swap objects so the old ones get deinited
     std.mem.swap(ShaderStorage(ShaderId), &new_shaders, &self.shaders);

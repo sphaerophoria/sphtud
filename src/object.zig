@@ -47,7 +47,7 @@ pub const Object = struct {
         self.name = duped_name;
     }
 
-    pub fn saveLeaky(self: Object, alloc: Allocator) !SaveObject {
+    pub fn saveLeaky(self: Object, alloc: Allocator, id: usize) !SaveObject {
         const data: SaveObject.Data = switch (self.data) {
             .filesystem => |s| .{ .filesystem = s.source },
             .composition => |c| .{ .composition = c.objects.items },
@@ -66,6 +66,7 @@ pub const Object = struct {
 
         return .{
             .name = self.name,
+            .id = id,
             .data = data,
         };
     }
@@ -748,6 +749,7 @@ pub const DrawingObject = struct {
 };
 
 pub const SaveObject = struct {
+    id: usize,
     name: []const u8,
     data: Data,
 
@@ -773,57 +775,84 @@ pub const ObjectId = struct {
 };
 
 pub const Objects = struct {
-    inner: std.ArrayListUnmanaged(Object) = .{},
+    // FIXME: Maybe we just do hole tracking ourselves and us the object as the
+    // index. Internal impl just linearly scans for matching hash anyways, so
+    // why use it
+    const ObjectStorage = std.AutoArrayHashMapUnmanaged(ObjectId, Object);
+    inner: ObjectStorage = .{},
+    next_id: usize = 0,
 
-    pub fn initCapacity(alloc: Allocator, capacity: usize) !Objects {
+    pub fn load(alloc: Allocator, data: []SaveObject, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), path_render_program: Renderer.PathRenderProgram) !Objects {
+        var objects = ObjectStorage{};
+        errdefer freeObjectList(alloc, &objects);
+
+        try objects.ensureTotalCapacity(alloc, @intCast(data.len));
+
+        var max_id: usize = 0;
+        for (data) |saved_object| {
+            const object = try Object.load(alloc, saved_object, shaders, brushes, path_render_program);
+            try objects.put(alloc, .{ .value = saved_object.id }, object);
+            max_id = @max(max_id, saved_object.id);
+        }
+
         return Objects{
-            .inner = try std.ArrayListUnmanaged(Object).initCapacity(alloc, capacity),
+            .inner = objects,
+            .next_id = max_id + 1,
         };
     }
 
     pub fn deinit(self: *Objects, alloc: Allocator) void {
-        for (self.inner.items) |*object| {
-            object.deinit(alloc);
-        }
-        self.inner.deinit(alloc);
+        freeObjectList(alloc, &self.inner);
     }
 
     pub fn get(self: *Objects, id: ObjectId) *Object {
-        return &self.inner.items[id.value];
+        return self.inner.getPtr(id) orelse @panic("Invalid object ID");
     }
 
     pub fn nextId(self: Objects) ObjectId {
-        return .{ .value = self.inner.items.len };
+        return .{ .value = self.next_id };
     }
 
     pub const IdIter = struct {
-        val: usize = 0,
-        max: usize,
+        it: []ObjectId,
+        idx: usize = 0,
 
         pub fn next(self: *IdIter) ?ObjectId {
-            if (self.val >= self.max) return null;
-            defer self.val += 1;
-            return .{ .value = self.val };
+            if (self.idx >= self.it.len) return null;
+            defer self.idx += 1;
+            return self.it[self.idx];
         }
     };
 
     pub fn idIter(self: Objects) IdIter {
-        return .{ .max = self.inner.items.len };
+        return .{ .it = self.inner.keys() };
     }
 
     pub fn saveLeaky(self: Objects, alloc: Allocator) ![]SaveObject {
-        const object_saves = try alloc.alloc(SaveObject, self.inner.items.len);
+        const object_saves = try alloc.alloc(SaveObject, self.inner.count());
         errdefer alloc.free(object_saves);
 
-        for (0..self.inner.items.len) |i| {
-            object_saves[i] = try self.inner.items[i].saveLeaky(alloc);
+        var it = self.inner.iterator();
+        var i: usize = 0;
+        while (it.next()) |item| {
+            defer i += 1;
+            object_saves[i] = try item.value_ptr.saveLeaky(alloc, item.key_ptr.value);
         }
 
         return object_saves;
     }
 
     pub fn append(self: *Objects, alloc: Allocator, object: Object) !void {
-        try self.inner.append(alloc, object);
+        const id = ObjectId{ .value = self.next_id };
+        self.next_id += 1;
+        try self.inner.put(alloc, id, object);
+    }
+
+    fn freeObjectList(alloc: Allocator, objects: *ObjectStorage) void {
+        for (objects.values()) |*object| {
+            object.deinit(alloc);
+        }
+        objects.deinit(alloc);
     }
 };
 
