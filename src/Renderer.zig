@@ -21,9 +21,26 @@ path_program: PathRenderProgram,
 
 const Renderer = @This();
 
+fn glDebugCallback(source: gl.GLenum, typ: gl.GLenum, id: gl.GLuint, severity: gl.GLenum, length: gl.GLsizei, msg: [*c]const gl.GLchar, ctx: ?*const anyopaque) callconv(.C) void {
+    _ = source;
+    _ = typ;
+    _ = id;
+    _ = ctx;
+    _ = length;
+
+    const enable_debug_logs = false;
+    switch (severity) {
+        gl.GL_DEBUG_SEVERITY_HIGH => std.log.err("{s}", .{msg}),
+        gl.GL_DEBUG_SEVERITY_MEDIUM => std.log.warn("{s}", .{msg}),
+        else => if (enable_debug_logs) std.log.debug("{s}", .{msg}),
+    }
+}
+
 pub fn init(alloc: Allocator) !Renderer {
     gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA);
     gl.glEnable(gl.GL_BLEND);
+
+    gl.glDebugMessageCallback(glDebugCallback, null);
 
     const plane_program = try PlaneRenderProgram.init(alloc, plane_vertex_shader, plane_fragment_shader);
     errdefer plane_program.deinit(alloc);
