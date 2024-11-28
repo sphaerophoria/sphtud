@@ -653,6 +653,18 @@ const Args = struct {
     }
 };
 
+const background_fragment_shader =
+    \\#version 330
+    \\
+    \\out vec4 fragment;
+    \\uniform vec3 color = vec3(1.0, 1.0, 1.0);
+    \\
+    \\void main()
+    \\{
+    \\    fragment = vec4(color, 1.0);
+    \\}
+;
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -676,6 +688,8 @@ pub fn main() !void {
     var app = try App.init(alloc, window_width, window_height);
     defer app.deinit();
 
+    const background_shader_id = try app.addShaderFromFragmentSource("constant color", background_fragment_shader);
+
     switch (args.action) {
         .load => |s| {
             try app.load(s);
@@ -684,11 +698,19 @@ pub fn main() !void {
             for (items.images) |path| {
                 _ = try app.loadImage(path);
             }
+
             for (items.shaders) |path| {
                 _ = try app.loadShader(path);
             }
+
             for (items.brushes) |path| {
                 _ = try app.loadBrush(path);
+            }
+
+            if (items.images.len == 0) {
+                _ = try app.addShaderObject("background", background_shader_id);
+                const drawing = try app.addDrawing();
+                app.setSelectedObject(drawing);
             }
         },
     }

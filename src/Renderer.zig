@@ -362,8 +362,10 @@ pub const PlaneRenderProgram = struct {
         gl.glEnableVertexAttribArray(@intCast(vpos_location));
         gl.glVertexAttribPointer(@intCast(vpos_location), 2, gl.GL_FLOAT, gl.GL_FALSE, 4 * 4, null);
 
-        gl.glEnableVertexAttribArray(@intCast(vuv_location));
-        gl.glVertexAttribPointer(@intCast(vuv_location), 2, gl.GL_FLOAT, gl.GL_FALSE, 4 * 4, @ptrFromInt(8));
+        if (vuv_location >= 0) {
+            gl.glEnableVertexAttribArray(@intCast(vuv_location));
+            gl.glVertexAttribPointer(@intCast(vuv_location), 2, gl.GL_FLOAT, gl.GL_FALSE, 4 * 4, @ptrFromInt(8));
+        }
 
         return .{
             .program = program,
