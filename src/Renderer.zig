@@ -3,7 +3,10 @@ const Allocator = std.mem.Allocator;
 const lin = @import("lin.zig");
 const obj_mod = @import("object.zig");
 const coords = @import("coords.zig");
-const ShaderStorage = @import("ShaderStorage.zig");
+const shader_storage = @import("shader_storage.zig");
+
+const ShaderStorage = shader_storage.ShaderStorage;
+const ShaderId = shader_storage.ShaderId;
 
 const Objects = obj_mod.Objects;
 const Object = obj_mod.Object;
@@ -44,7 +47,7 @@ pub fn deinit(self: *Renderer, alloc: Allocator) void {
     self.path_program.deinit();
 }
 
-pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage, selected_object: ObjectId, transform: Transform, window_width: usize, window_height: usize) !void {
+pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage(ShaderId), selected_object: ObjectId, transform: Transform, window_width: usize, window_height: usize) !void {
     gl.glViewport(0, 0, @intCast(window_width), @intCast(window_height));
     gl.glClear(gl.GL_COLOR_BUFFER_BIT);
 
@@ -60,7 +63,7 @@ pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: Sha
     try self.renderObjectWithTransform(alloc, objects, shaders, active_object.*, transform, &texture_cache);
 }
 
-fn renderedTexture(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage, texture_cache: *TextureCache, id: ObjectId) !Texture {
+fn renderedTexture(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage(ShaderId), texture_cache: *TextureCache, id: ObjectId) !Texture {
     if (texture_cache.get(id)) |t| {
         return t;
     }
@@ -70,7 +73,7 @@ fn renderedTexture(self: *Renderer, alloc: Allocator, objects: *Objects, shaders
     return texture;
 }
 
-fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage, object: Object, transform: Transform, texture_cache: *TextureCache) !void {
+fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage(ShaderId), object: Object, transform: Transform, texture_cache: *TextureCache) !void {
     switch (object.data) {
         .composition => |c| {
             const composition_object_dims = object.dims(objects);
@@ -156,7 +159,7 @@ const TemporaryViewport = struct {
     }
 };
 
-fn renderObjectToTexture(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage, input: Object, texture_cache: *TextureCache) anyerror!Texture {
+fn renderObjectToTexture(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage(ShaderId), input: Object, texture_cache: *TextureCache) anyerror!Texture {
     const dep_width, const dep_height = input.dims(objects);
 
     const texture = makeTextureOfSize(@intCast(dep_width), @intCast(dep_height));

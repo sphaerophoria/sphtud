@@ -7,7 +7,7 @@ const obj_mod = @import("object.zig");
 const StbImage = @import("StbImage.zig");
 const coords = @import("coords.zig");
 const dependency_loop = @import("dependency_loop.zig");
-const ShaderStorage = @import("ShaderStorage.zig");
+const shader_storage = @import("shader_storage.zig");
 
 const Object = obj_mod.Object;
 const ObjectId = obj_mod.ObjectId;
@@ -18,16 +18,19 @@ const Vec3 = lin.Vec3;
 const Transform = lin.Transform;
 const PixelDims = obj_mod.PixelDims;
 
+const ShaderStorage = shader_storage.ShaderStorage;
+const ShaderId = shader_storage.ShaderId;
+
 const App = @This();
 
 alloc: Allocator,
 objects: Objects = .{},
-shaders: ShaderStorage,
+shaders: ShaderStorage(ShaderId),
 renderer: Renderer,
 view_state: ViewState,
 input_state: InputState = .{},
 
-mul_fragment_shader: ShaderStorage.ShaderId,
+mul_fragment_shader: ShaderId,
 
 pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
     var objects = Objects{};
@@ -36,7 +39,7 @@ pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
     var renderer = try Renderer.init(alloc);
     errdefer renderer.deinit(alloc);
 
-    var shaders = ShaderStorage{};
+    var shaders = ShaderStorage(ShaderId){};
     errdefer shaders.deinit(alloc);
 
     const mul_fragment_shader_id = try shaders.addShader(alloc, "mask_mul", Renderer.mul_fragment_shader);
@@ -90,7 +93,7 @@ pub fn load(self: *App, path: []const u8) !void {
     const parsed = try std.json.parseFromTokenSource(SaveData, self.alloc, &json_reader, .{});
     defer parsed.deinit();
 
-    var new_shaders = ShaderStorage{};
+    var new_shaders = ShaderStorage(ShaderId){};
     // Note that shaders gets swapped in and is freed by this defer
     defer new_shaders.deinit(self.alloc);
 
@@ -110,7 +113,7 @@ pub fn load(self: *App, path: []const u8) !void {
     }
 
     // Swap objects so the old ones get deinited
-    std.mem.swap(ShaderStorage, &new_shaders, &self.shaders);
+    std.mem.swap(ShaderStorage(ShaderId), &new_shaders, &self.shaders);
     std.mem.swap(Objects, &new_objects, &self.objects);
 
     // Loaded masks do not generate textures
@@ -306,7 +309,7 @@ pub fn loadImage(self: *App, path: [:0]const u8) !ObjectId {
     return id;
 }
 
-pub fn loadShader(self: *App, path: [:0]const u8) !ShaderStorage.ShaderId {
+pub fn loadShader(self: *App, path: [:0]const u8) !ShaderId {
     const f = try std.fs.cwd().openFile(path, .{});
     defer f.close();
 
@@ -316,11 +319,11 @@ pub fn loadShader(self: *App, path: [:0]const u8) !ShaderStorage.ShaderId {
     return self.addShaderFromFragmentSource(path, fragment_source);
 }
 
-pub fn addShaderFromFragmentSource(self: *App, name: []const u8, fs_source: [:0]const u8) !ShaderStorage.ShaderId {
+pub fn addShaderFromFragmentSource(self: *App, name: []const u8, fs_source: [:0]const u8) !ShaderId {
     return try self.shaders.addShader(self.alloc, name, fs_source);
 }
 
-pub fn addShaderObject(self: *App, name: []const u8, shader_id: ShaderStorage.ShaderId) !ObjectId {
+pub fn addShaderObject(self: *App, name: []const u8, shader_id: ShaderId) !ObjectId {
     const object_id = self.objects.nextId();
 
     const duped_name = try self.alloc.dupe(u8, name);
@@ -879,7 +882,7 @@ fn getCompositionObj(self: *App) ?*obj_mod.CompositionObject {
 }
 
 pub const SaveData = struct {
-    shaders: []ShaderStorage.Save,
+    shaders: []shader_storage.Save,
     objects: []obj_mod.SaveObject,
 };
 

@@ -4,8 +4,11 @@ const gl = @import("gl.zig");
 const lin = @import("lin.zig");
 const Renderer = @import("Renderer.zig");
 const StbImage = @import("StbImage.zig");
-const ShaderStorage = @import("ShaderStorage.zig");
+const shader_storage = @import("shader_storage.zig");
 const coords = @import("coords.zig");
+
+const ShaderStorage = shader_storage.ShaderStorage;
+const ShaderId = shader_storage.ShaderId;
 
 const Transform = lin.Transform;
 const Vec3 = lin.Vec3;
@@ -55,7 +58,7 @@ pub const Object = struct {
         };
     }
 
-    pub fn load(alloc: Allocator, save_obj: SaveObject, shaders: ShaderStorage, path_render_program: Renderer.PathRenderProgram) !Object {
+    pub fn load(alloc: Allocator, save_obj: SaveObject, shaders: ShaderStorage(ShaderId), path_render_program: Renderer.PathRenderProgram) !Object {
         const data: Data = switch (save_obj.data) {
             .filesystem => |s| blk: {
                 break :blk .{
@@ -274,10 +277,10 @@ pub const CompositionObject = struct {
 
 pub const ShaderObject = struct {
     primary_input_idx: usize,
-    program: ShaderStorage.ShaderId,
+    program: ShaderId,
     bindings: []Renderer.UniformValue,
 
-    pub fn init(alloc: Allocator, id: ShaderStorage.ShaderId, shaders: ShaderStorage, primary_input_idx: usize) !ShaderObject {
+    pub fn init(alloc: Allocator, id: ShaderId, shaders: ShaderStorage(ShaderId), primary_input_idx: usize) !ShaderObject {
         const program = shaders.get(id).program;
 
         const bindings = try alloc.alloc(Renderer.UniformValue, program.uniforms.len);

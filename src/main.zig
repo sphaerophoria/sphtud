@@ -4,8 +4,10 @@ const gl = @import("gl.zig");
 const App = @import("App.zig");
 const obj_mod = @import("object.zig");
 const lin = @import("lin.zig");
-const ShaderStorage = @import("ShaderStorage.zig");
+const shader_storage = @import("shader_storage.zig");
 const Renderer = @import("Renderer.zig");
+const ShaderStorage = shader_storage.ShaderStorage;
+const ShaderId = shader_storage.ShaderId;
 const c = @cImport({
     @cInclude("GLFW/glfw3.h");
     @cDefine("CIMGUI_DEFINE_ENUMS_AND_STRUCTS", "");
@@ -227,7 +229,7 @@ const Imgui = struct {
         set_shader_primary_input: usize,
     };
 
-    fn renderObjectProperties(selected_object_id: obj_mod.ObjectId, objects: *obj_mod.Objects, shaders: ShaderStorage) !?PropertyAction {
+    fn renderObjectProperties(selected_object_id: obj_mod.ObjectId, objects: *obj_mod.Objects, shaders: ShaderStorage(ShaderId)) !?PropertyAction {
         const selected_object = objects.get(selected_object_id);
         if (!c.igBegin("Object properties", null, 0)) {
             return null;
@@ -343,12 +345,12 @@ const Imgui = struct {
     }
 
     const AddObjectAction = union(enum) {
-        shader_object: ShaderStorage.ShaderId,
+        shader_object: ShaderId,
         create_path,
         create_composition,
     };
 
-    fn renderAddObjectView(shaders: ShaderStorage) !?AddObjectAction {
+    fn renderAddObjectView(shaders: ShaderStorage(ShaderId)) !?AddObjectAction {
         if (!c.igBegin("Create an object", null, 0)) {
             return null;
         }
