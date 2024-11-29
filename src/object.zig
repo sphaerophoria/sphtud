@@ -168,9 +168,8 @@ pub const Object = struct {
 
                 return dims(source.*, object_list);
             },
-            .composition => {
-                // FIXME: Customize composition size
-                return .{ 1920, 1080 };
+            .composition => |c| {
+                return c.dims;
             },
             .drawing => |d| {
                 const display_object = object_list.get(d.display_object);
@@ -310,6 +309,7 @@ pub const CompositionObject = struct {
     };
 
     objects: std.ArrayListUnmanaged(ComposedObject) = .{},
+    dims: PixelDims = .{ 1920, 1080 },
 
     pub fn setTransform(self: *CompositionObject, idx: CompositionIdx, transform: Transform) void {
         const obj = &self.objects.items[idx.value];

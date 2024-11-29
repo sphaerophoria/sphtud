@@ -231,6 +231,7 @@ const Imgui = struct {
     const PropertyAction = union(enum) {
         update_object_name: []const u8,
         delete_from_composition: obj_mod.CompositionIdx,
+        update_dims: [2]usize,
         add_to_composition: obj_mod.ObjectId,
         update_path_display_obj: obj_mod.ObjectId,
         set_shader_binding_value: ShaderUniformModification,
@@ -314,20 +315,16 @@ const Imgui = struct {
             },
             .composition => |*comp| blk: {
                 c.igText("Composition");
-                const table_ret = c.igBeginTable("table", 2, 0, null_size, 0);
-                if (!table_ret) break :blk;
 
                 const dims = selected_object.dims(objects);
+                // FIXME: intCast could crash
+                var c_dims: [2]c_int = .{ @intCast(dims[0]), @intCast(dims[1]) };
 
-                c.igTableNextRow(0, 0);
-                if (c.igTableNextColumn()) c.igText("Width");
-                if (c.igTableNextColumn()) c.igText("%lu", dims[0]);
-
-                c.igTableNextRow(0, 0);
-                if (c.igTableNextColumn()) c.igText("Height");
-                if (c.igTableNextColumn()) c.igText("%lu", dims[1]);
-
-                c.igEndTable();
+                if (c.igDragInt2("Resolution", &c_dims, 1, 1, std.math.maxInt(c_int), "%d", 0)) resolution: {
+                    if (c_dims[0] < 0 or c_dims[1] < 0) break :resolution;
+                    const new_dims: [2]usize = .{ @intCast(c_dims[0]), @intCast(c_dims[1]) };
+                    ret = .{ .update_dims = new_dims };
+                }
 
                 for (comp.objects.items, 0..) |child, idx| {
                     const child_obj = objects.get(child.id);
@@ -815,6 +812,11 @@ pub fn main() !void {
                 .delete_selected => {
                     app.deleteSelectedObject() catch |e| {
                         logError("Failed to delete selected object", e, @errorReturnTrace());
+                    };
+                },
+                .update_dims => |d| {
+                    app.updateSelectedDims(d) catch |e| {
+                        logError("Failed to update selected object dimensions", e, @errorReturnTrace());
                     };
                 },
             }

@@ -272,6 +272,16 @@ pub fn deleteSelectedObject(self: *App) !void {
     }
 }
 
+pub fn updateSelectedDims(self: *App, dims: PixelDims) !void {
+    const obj = self.selectedObject();
+    switch (obj.data) {
+        .composition => |*c| {
+            c.dims = dims;
+        },
+        else => return error.CannotUpdateDims,
+    }
+}
+
 pub fn addToComposition(self: *App, id: obj_mod.ObjectId) !obj_mod.CompositionIdx {
     const selected_object = self.objects.get(self.input_state.selected_object);
 
