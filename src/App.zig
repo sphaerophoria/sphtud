@@ -5,6 +5,8 @@ const gl = @import("gl.zig");
 const Renderer = @import("Renderer.zig");
 const obj_mod = @import("object.zig");
 const StbImage = @import("StbImage.zig");
+const ttf_mod = @import("ttf.zig");
+const FontStorage = @import("FontStorage.zig");
 const coords = @import("coords.zig");
 const dependency_loop = @import("dependency_loop.zig");
 const shader_storage = @import("shader_storage.zig");
@@ -31,6 +33,7 @@ alloc: Allocator,
 objects: Objects = .{},
 shaders: ShaderStorage(ShaderId),
 brushes: ShaderStorage(BrushId),
+fonts: FontStorage,
 renderer: Renderer,
 view_state: ViewState,
 input_state: InputState = .{},
@@ -54,6 +57,9 @@ pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
     var brushes = ShaderStorage(BrushId){};
     errdefer brushes.deinit(alloc);
 
+    var fonts = FontStorage{};
+    errdefer fonts.deinit(alloc);
+
     const io_thread = try alloc.create(IoThread);
     io_thread.* = .{};
 
@@ -68,6 +74,7 @@ pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
         .objects = objects,
         .shaders = shaders,
         .brushes = brushes,
+        .fonts = fonts,
         .renderer = renderer,
         .view_state = .{
             .window_width = window_width,
@@ -88,6 +95,7 @@ pub fn deinit(self: *App) void {
     self.renderer.deinit(self.alloc);
     self.shaders.deinit(self.alloc);
     self.brushes.deinit(self.alloc);
+    self.fonts.deinit(self.alloc);
 }
 
 pub fn save(self: *App, path: []const u8) !void {
@@ -99,12 +107,14 @@ pub fn save(self: *App, path: []const u8) !void {
     const object_saves = try self.objects.saveLeaky(arena_alloc);
     const shader_saves = try self.shaders.save(arena_alloc);
     const brush_saves = try self.brushes.save(arena_alloc);
+    const font_saves = try self.fonts.saveLeaky(arena_alloc);
 
     const out_f = try std.fs.cwd().createFile(path, .{});
     defer out_f.close();
 
     try std.json.stringify(
         SaveData{
+            .fonts = font_saves,
             .objects = object_saves,
             .shaders = shader_saves,
             .brushes = brush_saves,
@@ -166,7 +176,15 @@ pub fn load(self: *App, path: []const u8) !void {
         _ = try new_brushes.addShader(self.alloc, saved_brush.name, saved_brush.fs_source);
     }
 
-    var new_objects = try Objects.load(self.alloc, parsed.value.objects, new_shaders, new_brushes, self.renderer.path_program);
+    var new_fonts = FontStorage{};
+    // Note that shaders gets swapped in and is freed by this defer
+    defer new_fonts.deinit(self.alloc);
+
+    for (parsed.value.fonts) |p| {
+        _ = try loadFontIntoStorage(self.alloc, p, &new_fonts);
+    }
+
+    var new_objects = try Objects.load(self.alloc, parsed.value.objects, new_shaders, new_brushes, self.renderer.path_program, self.renderer.default_buffer);
     // Note that objects gets swapped in and is freed by this defer
     defer new_objects.deinit(self.alloc);
 
@@ -174,17 +192,20 @@ pub fn load(self: *App, path: []const u8) !void {
     std.mem.swap(ShaderStorage(ShaderId), &new_shaders, &self.shaders);
     std.mem.swap(ShaderStorage(BrushId), &new_brushes, &self.brushes);
     std.mem.swap(Objects, &new_objects, &self.objects);
+    std.mem.swap(FontStorage, &new_fonts, &self.fonts);
     errdefer {
         // If regeneration fails, we shouldn't accept the load
         std.mem.swap(ShaderStorage(ShaderId), &new_shaders, &self.shaders);
         std.mem.swap(ShaderStorage(BrushId), &new_brushes, &self.brushes);
         std.mem.swap(Objects, &new_objects, &self.objects);
+        std.mem.swap(FontStorage, &new_fonts, &self.fonts);
     }
 
     // Loaded masks do not generate textures
     try self.regenerateAllMasks();
     // Loaded drawings do not generate distance fields
     try self.regenerateDistanceFields();
+    try self.regenerateAllTextObjects();
 
     var id_it = self.objects.idIter();
     if (id_it.next()) |id| {
@@ -297,6 +318,21 @@ pub fn createPath(self: *App) !ObjectId {
 pub fn updateSelectedObjectName(self: *App, name: []const u8) !void {
     const selected_object = self.selectedObject();
     try selected_object.updateName(self.alloc, name);
+}
+
+pub fn updateTextObjectContent(self: *App, text: []const u8) !void {
+    const text_obj = self.selectedObject().asText() orelse return error.NotText;
+    try text_obj.update(self.alloc, text, self.fonts, self.renderer.distance_field_generator);
+}
+
+pub fn updateFontId(self: *App, id: FontStorage.FontId) !void {
+    const text_obj = self.selectedObject().asText() orelse return error.NotText;
+    try text_obj.updateFont(self.alloc, id, self.fonts, self.renderer.distance_field_generator);
+}
+
+pub fn updateFontSize(self: *App, size: f32) !void {
+    const text_obj = self.selectedObject().asText() orelse return error.NotText;
+    try text_obj.updateFontSize(self.alloc, size, self.fonts, self.renderer.distance_field_generator);
 }
 
 pub fn deleteSelectedObject(self: *App) !void {
@@ -440,6 +476,25 @@ pub fn addDrawing(self: *App) !ObjectId {
     return id;
 }
 
+pub fn addText(self: *App) !ObjectId {
+    const id = self.objects.nextId();
+
+    const name = try self.alloc.dupe(u8, "text");
+    errdefer self.alloc.free(name);
+
+    var font_id_it = self.fonts.idIter();
+    const font_id = font_id_it.next() orelse return error.NoFonts;
+
+    try self.objects.append(self.alloc, .{
+        .name = name,
+        .data = .{
+            .text = try obj_mod.TextObject.init(self.alloc, font_id, self.renderer.program.makeDefaultBuffer()),
+        },
+    });
+
+    return id;
+}
+
 pub fn setShaderPrimaryInput(self: *App, idx: usize) !void {
     const shader_data = self.selectedObject().asShader() orelse return error.SelectedItemNotShader;
     if (idx >= shader_data.bindings.len) {
@@ -495,6 +550,26 @@ pub fn loadBrush(self: *App, path: [:0]const u8) !BrushId {
     defer self.alloc.free(fragment_source);
 
     return self.brushes.addShader(self.alloc, path, fragment_source);
+}
+
+pub fn loadFont(self: *App, path: [:0]const u8) !FontStorage.FontId {
+    return loadFontIntoStorage(self.alloc, path, &self.fonts);
+}
+
+fn loadFontIntoStorage(alloc: Allocator, path: []const u8, fonts: *FontStorage) !FontStorage.FontId {
+    const f = try std.fs.cwd().openFile(path, .{});
+    defer f.close();
+
+    const ttf_data = try f.readToEndAlloc(alloc, 1 << 20);
+    errdefer alloc.free(ttf_data);
+
+    const path_duped = try alloc.dupeZ(u8, path);
+    errdefer alloc.free(path_duped);
+
+    var ttf = try ttf_mod.Ttf.init(alloc, ttf_data);
+    errdefer ttf.deinit(alloc);
+
+    return try fonts.append(alloc, ttf_data, path_duped, ttf);
 }
 
 pub fn addShaderFromFragmentSource(self: *App, name: []const u8, fs_source: [:0]const u8) !ShaderId {
@@ -1104,6 +1179,15 @@ fn regenerateDistanceFields(self: *App) !void {
     }
 }
 
+fn regenerateAllTextObjects(self: *App) !void {
+    var obj_it = self.objects.idIter();
+    while (obj_it.next()) |obj_id| {
+        const obj = self.objects.get(obj_id);
+        const text_obj = obj.asText() orelse continue;
+        try text_obj.regenerate(self.alloc, self.fonts, self.renderer.distance_field_generator);
+    }
+}
+
 fn getCompositionObj(self: *App) ?*obj_mod.CompositionObject {
     switch (self.objects.get(self.input_state.selected_object).data) {
         .composition => |*c| return c,
@@ -1112,6 +1196,7 @@ fn getCompositionObj(self: *App) ?*obj_mod.CompositionObject {
 }
 
 pub const SaveData = struct {
+    fonts: []FontStorage.Save,
     shaders: []shader_storage.Save,
     brushes: []shader_storage.Save,
     objects: []obj_mod.SaveObject,

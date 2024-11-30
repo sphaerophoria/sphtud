@@ -8,6 +8,7 @@ const shader_storage = @import("shader_storage.zig");
 const Renderer = @import("Renderer.zig");
 const ShaderStorage = shader_storage.ShaderStorage;
 const ShaderId = shader_storage.ShaderId;
+const FontStorage = @import("FontStorage.zig");
 const BrushId = shader_storage.BrushId;
 const c = @cImport({
     @cInclude("GLFW/glfw3.h");
@@ -169,6 +170,7 @@ const Imgui = struct {
     const null_size = c.ImVec2{ .x = 0, .y = 0 };
 
     object_properties_name_buf: [1024]u8 = undefined,
+    text_object_content: [50]u8 = undefined,
 
     const UpdatedObjectSelection = usize;
 
@@ -239,10 +241,20 @@ const Imgui = struct {
         set_shader_primary_input: usize,
         update_drawing_display_obj: obj_mod.ObjectId,
         set_brush: BrushId,
+        update_text_content: []const u8,
+        update_font: FontStorage.FontId,
+        update_font_size: f32,
         delete_selected,
     };
 
-    fn renderObjectProperties(self: *Imgui, selected_object_id: obj_mod.ObjectId, objects: *obj_mod.Objects, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId)) !?PropertyAction {
+    fn renderObjectProperties(
+        self: *Imgui,
+        selected_object_id: obj_mod.ObjectId,
+        objects: *obj_mod.Objects,
+        shaders: ShaderStorage(ShaderId),
+        brushes: ShaderStorage(BrushId),
+        fonts: FontStorage,
+    ) !?PropertyAction {
         const selected_object = objects.get(selected_object_id);
         if (!c.igBegin("Object properties", null, 0)) {
             return null;
@@ -424,6 +436,43 @@ const Imgui = struct {
                     }
                 }
             },
+            .text => |t| {
+                const len = @min(t.current_text.len, self.text_object_content.len - 1);
+                self.text_object_content[len] = 0;
+                @memcpy(self.text_object_content[0..len], t.current_text[0..len]);
+                if (c.igInputText("Text", &self.text_object_content, self.text_object_content.len, 0, null, null)) blk: {
+                    const end = std.mem.indexOfScalar(u8, &self.text_object_content, 0) orelse {
+                        break :blk;
+                    };
+
+                    ret = .{
+                        .update_text_content = self.text_object_content[0..end],
+                    };
+                }
+
+                const selected_font = fonts.get(t.font);
+
+                if (c.igBeginCombo("Font", selected_font.path.ptr, 0)) {
+                    var font_id_iter = fonts.idIter();
+                    while (font_id_iter.next()) |font_id| {
+                        const font_data = fonts.get(font_id);
+                        const clicked = c.igSelectable_Bool(
+                            font_data.path.ptr,
+                            false,
+                            0,
+                            null_size,
+                        );
+                        if (clicked) {
+                            ret = .{ .update_font = font_id };
+                        }
+                    }
+                    c.igEndCombo();
+                }
+                var point_size = t.renderer.point_size;
+                if (c.igDragFloat("Font size", &point_size, 1, 6, std.math.inf(f32), "%.03f", 0)) {
+                    ret = .{ .update_font_size = point_size };
+                }
+            },
         }
         c.igEnd();
 
@@ -435,6 +484,7 @@ const Imgui = struct {
         create_path,
         create_composition,
         create_drawing,
+        create_text,
     };
 
     fn renderAddObjectView(shaders: ShaderStorage(ShaderId)) !?AddObjectAction {
@@ -469,6 +519,10 @@ const Imgui = struct {
 
         if (c.igButton("Create drawing", null_size)) {
             ret = .create_drawing;
+        }
+
+        if (c.igButton("Create text", null_size)) {
+            ret = .create_text;
         }
 
         c.igEnd();
@@ -587,6 +641,7 @@ const Args = struct {
             brushes: []const [:0]const u8,
             shaders: []const [:0]const u8,
             images: []const [:0]const u8,
+            fonts: []const [:0]const u8,
         },
     };
 
@@ -595,6 +650,7 @@ const Args = struct {
         brushes,
         shaders,
         images,
+        fonts,
 
         fn parse(arg: []const u8) ParseState {
             return std.meta.stringToEnum(ParseState, arg[2..]) orelse return .unknown;
@@ -628,6 +684,9 @@ const Args = struct {
         var brushes = std.ArrayList([:0]const u8).init(alloc);
         defer brushes.deinit();
 
+        var fonts = std.ArrayList([:0]const u8).init(alloc);
+        defer fonts.deinit();
+
         var parse_state = ParseState.parse(first_arg);
         while (it.next()) |arg| {
             if (std.mem.startsWith(u8, arg, "--")) {
@@ -648,6 +707,7 @@ const Args = struct {
                 .images => try images.append(arg),
                 .brushes => try brushes.append(arg),
                 .shaders => try shaders.append(arg),
+                .fonts => try fonts.append(arg),
             }
         }
 
@@ -657,6 +717,7 @@ const Args = struct {
                     .images = try images.toOwnedSlice(),
                     .shaders = try shaders.toOwnedSlice(),
                     .brushes = try brushes.toOwnedSlice(),
+                    .fonts = try fonts.toOwnedSlice(),
                 },
             },
             .it = it,
@@ -670,6 +731,7 @@ const Args = struct {
                 alloc.free(items.images);
                 alloc.free(items.brushes);
                 alloc.free(items.shaders);
+                alloc.free(items.fonts);
             },
         }
 
@@ -683,7 +745,7 @@ const Args = struct {
             \\USAGE:
             \\{s} --load <save.json>
             \\OR
-            \\{s} --images <image.png> <image2.png> --shaders <shader1.glsl> ... --brushes <brush1.glsl> <brush2.glsl>...
+            \\{s} --images <image.png> <image2.png> --shaders <shader1.glsl> ... --brushes <brush1.glsl> <brush2.glsl>... --fonts <font1.ttf> <font2.ttf>...
             \\
         , .{ process_name, process_name }) catch {};
         std.process.exit(1);
@@ -744,6 +806,10 @@ pub fn main() !void {
                 _ = try app.loadBrush(path);
             }
 
+            for (items.fonts) |path| {
+                _ = try app.loadFont(path);
+            }
+
             if (items.images.len == 0) {
                 _ = try app.addShaderObject("background", background_shader_id);
                 const drawing = try app.addDrawing();
@@ -762,11 +828,11 @@ pub fn main() !void {
             app.setSelectedObject(idx);
         }
 
-        if (try imgui.renderObjectProperties(app.input_state.selected_object, &app.objects, app.shaders, app.brushes)) |action| {
+        if (try imgui.renderObjectProperties(app.input_state.selected_object, &app.objects, app.shaders, app.brushes, app.fonts)) |action| {
             switch (action) {
                 .update_object_name => |name| {
                     app.updateSelectedObjectName(name) catch |e| {
-                        logError("Failed to delete item from composition", e, @errorReturnTrace());
+                        logError("Failed to update selected object name", e, @errorReturnTrace());
                     };
                 },
                 .delete_from_composition => |id| {
@@ -819,6 +885,21 @@ pub fn main() !void {
                         logError("Failed to update selected object dimensions", e, @errorReturnTrace());
                     };
                 },
+                .update_text_content => |text| {
+                    app.updateTextObjectContent(text) catch |e| {
+                        logError("Failed to update text object content", e, @errorReturnTrace());
+                    };
+                },
+                .update_font => |id| {
+                    app.updateFontId(id) catch |e| {
+                        logError("Failed to update font", e, @errorReturnTrace());
+                    };
+                },
+                .update_font_size => |s| {
+                    app.updateFontSize(s) catch |e| {
+                        logError("Failed to update font scale", e, @errorReturnTrace());
+                    };
+                },
             }
         }
 
@@ -836,6 +917,11 @@ pub fn main() !void {
                 },
                 .create_drawing => {
                     _ = try app.addDrawing();
+                },
+                .create_text => {
+                    _ = app.addText() catch |e| {
+                        logError("Failed to create text object", e, @errorReturnTrace());
+                    };
                 },
             }
         }

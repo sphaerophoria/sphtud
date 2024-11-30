@@ -5,6 +5,7 @@ const obj_mod = @import("object.zig");
 const coords = @import("coords.zig");
 const geometry = @import("geometry.zig");
 const shader_storage = @import("shader_storage.zig");
+const TextRenderer = @import("TextRenderer.zig");
 
 const ShaderStorage = shader_storage.ShaderStorage;
 const ShaderId = shader_storage.ShaderId;
@@ -198,16 +199,21 @@ pub const FrameRenderer = struct {
                     }, transform);
                 }
             },
+            .text => |t| {
+                if (t.buffer) |b| {
+                    try t.renderer.render(b, transform);
+                }
+            },
         }
     }
 
     pub fn renderObjectToTexture(self: *FrameRenderer, input: Object) anyerror!Texture {
         const dep_width, const dep_height = input.dims(self.objects);
 
-        const texture = makeTextureOfSize(@intCast(dep_width), @intCast(dep_height));
+        const texture = makeTextureOfSize(@intCast(dep_width), @intCast(dep_height), .rgbaf32);
         errdefer texture.deinit();
 
-        const render_context = FramebufferRenderContext.init(texture, null);
+        const render_context = try FramebufferRenderContext.init(texture, null);
         defer render_context.reset();
 
         // Output texture size is not the same as input size
@@ -261,10 +267,10 @@ pub fn makeFrameRenderer(self: *Renderer, alloc: Allocator, objects: *Objects, s
     };
 }
 
-const TemporaryViewport = struct {
+pub const TemporaryViewport = struct {
     previous_viewport_args: [4]gl.GLint,
 
-    fn init() TemporaryViewport {
+    pub fn init() TemporaryViewport {
         var current_viewport = [1]gl.GLint{0} ** 4;
         gl.glGetIntegerv(gl.GL_VIEWPORT, &current_viewport);
         return .{
@@ -272,11 +278,15 @@ const TemporaryViewport = struct {
         };
     }
 
-    fn setViewport(_: TemporaryViewport, width: gl.GLint, height: gl.GLint) void {
+    pub fn setViewport(_: TemporaryViewport, width: gl.GLint, height: gl.GLint) void {
         gl.glViewport(0, 0, @intCast(width), @intCast(height));
     }
 
-    fn reset(self: TemporaryViewport) void {
+    pub fn setViewportOffset(_: TemporaryViewport, left: gl.GLint, bottom: gl.GLint, width: gl.GLint, height: gl.GLint) void {
+        gl.glViewport(left, bottom, @intCast(width), @intCast(height));
+    }
+
+    pub fn reset(self: TemporaryViewport) void {
         gl.glViewport(
             self.previous_viewport_args[0],
             self.previous_viewport_args[1],
@@ -358,7 +368,7 @@ pub const DefaultPlaneReservedIndex = enum {
     aspect,
     input_image,
 
-    fn asIndex(self: DefaultPlaneReservedIndex) usize {
+    pub fn asIndex(self: DefaultPlaneReservedIndex) usize {
         return @intFromEnum(self);
     }
 };
@@ -683,7 +693,7 @@ pub const FramebufferRenderContext = struct {
     fbo: gl.GLuint,
     prev_fbo: gl.GLint,
 
-    pub fn init(render_texture: Texture, depth_texture: ?Texture) FramebufferRenderContext {
+    pub fn init(render_texture: Texture, depth_texture: ?Texture) !FramebufferRenderContext {
         var fbo: gl.GLuint = undefined;
         gl.glGenFramebuffers(1, &fbo);
 
@@ -708,7 +718,9 @@ pub const FramebufferRenderContext = struct {
             );
         }
 
-        std.debug.assert(gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER) == gl.GL_FRAMEBUFFER_COMPLETE);
+        if (gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER) != gl.GL_FRAMEBUFFER_COMPLETE) {
+            return error.IncompleteFramebuffer;
+        }
 
         return .{
             .fbo = fbo,
@@ -847,15 +859,19 @@ pub const DistanceFieldGenerator = struct {
     cone_buf: InstancedRenderBuffer,
     tent_buf: InstancedRenderBuffer,
     df_scale_loc: gl.GLint,
+    sign_loc: gl.GLint,
+    sign_valid_loc: gl.GLint,
 
     const num_cone_points = 20;
     const depth_radius = 2 * std.math.sqrt2;
 
-    fn init() !DistanceFieldGenerator {
+    pub fn init() !DistanceFieldGenerator {
         const program = try compileLinkProgram(distance_field_vertex_shader, distance_field_fragment_shader);
         errdefer gl.glDeleteProgram(program);
 
         const df_scale_loc = gl.glGetUniformLocation(program, "scale");
+        const sign_loc = gl.glGetUniformLocation(program, "sign");
+        const sign_valid_loc = gl.glGetUniformLocation(program, "sign_valid");
 
         const vpos_loc = gl.glGetAttribLocation(program, "vPos");
         const cone_offs_loc = gl.glGetAttribLocation(program, "vOffs");
@@ -870,17 +886,19 @@ pub const DistanceFieldGenerator = struct {
             .df_scale_loc = df_scale_loc,
             .cone_buf = cone_buf,
             .tent_buf = tent_buf,
+            .sign_loc = sign_loc,
+            .sign_valid_loc = sign_valid_loc,
         };
     }
 
-    fn deinit(self: DistanceFieldGenerator) void {
+    pub fn deinit(self: DistanceFieldGenerator) void {
         self.cone_buf.deinit();
         self.tent_buf.deinit();
         gl.glDeleteProgram(self.program);
     }
 
-    pub fn generateDistanceField(self: DistanceFieldGenerator, alloc: Allocator, point_it: anytype, width: u31, height: u31) !Texture {
-        const color_texture = makeTextureOfSize(width, height);
+    pub fn generateDistanceField(self: DistanceFieldGenerator, alloc: Allocator, point_it: anytype, sign_texture: Texture, width: u31, height: u31) !Texture {
+        const color_texture = makeTextureOfSize(width, height, .rf32);
         errdefer color_texture.deinit();
 
         const depth_texture = makeTextureCommon();
@@ -893,7 +911,7 @@ pub const DistanceFieldGenerator = struct {
         defer gl.glDisable(gl.GL_DEPTH_TEST);
 
         {
-            const fb = FramebufferRenderContext.init(color_texture, depth_texture);
+            const fb = try FramebufferRenderContext.init(color_texture, depth_texture);
             defer fb.reset();
 
             // Output texture size is not the same as input size
@@ -909,6 +927,11 @@ pub const DistanceFieldGenerator = struct {
 
             gl.glUseProgram(self.program);
             gl.glUniform2f(self.df_scale_loc, aspect_correction[0], aspect_correction[1]);
+
+            gl.glActiveTexture(gl.GL_TEXTURE0);
+            gl.glBindTexture(gl.GL_TEXTURE_2D, sign_texture.inner);
+            gl.glUniform1i(self.sign_loc, 0);
+            gl.glUniform1i(self.sign_valid_loc, @intFromBool(sign_texture.inner != Texture.invalid.inner));
 
             const lens = try self.updateBuffers(alloc, point_it, aspect_correction);
 
@@ -1222,12 +1245,24 @@ pub fn makeTextureFromRgba(data: []const u8, width: usize) Texture {
     return texture;
 }
 
-pub fn makeTextureOfSize(width: u31, height: u31) Texture {
+const TextureFormat = enum {
+    rgbaf32,
+    rf32,
+
+    fn toOpenGLType(self: TextureFormat) gl.GLint {
+        return switch (self) {
+            .rgbaf32 => gl.GL_RGBA32F,
+            .rf32 => gl.GL_R32F,
+        };
+    }
+};
+
+pub fn makeTextureOfSize(width: u31, height: u31, storage_format: TextureFormat) Texture {
     const texture = makeTextureCommon();
     gl.glTexImage2D(
         gl.GL_TEXTURE_2D,
         0,
-        gl.GL_RGBA32F,
+        storage_format.toOpenGLType(),
         width,
         height,
         0,
@@ -1344,6 +1379,7 @@ const distance_field_vertex_shader =
     \\in float stretch;
     \\in float rotation;
     \\out float depth;
+    \\out vec2 uv;
     \\uniform vec2 scale = vec2(1.0, 1.0);
     \\void main()
     \\{
@@ -1351,17 +1387,21 @@ const distance_field_vertex_shader =
     \\    vec2 pos = vOffs + rot_mat * vec2(vPos.x * stretch, vPos.y);
     \\    gl_Position = vec4(pos * scale, vPos.z, 1.0);
     \\    depth = vPos.z;
+    \\    uv = gl_Position.xy / 2.0 + 0.5;
     \\}
 ;
 
 const distance_field_fragment_shader =
     \\#version 330 core
     \\out vec4 fragment;
+    \\in vec2 uv;
+    \\uniform sampler2D sign;
+    \\uniform int sign_valid;
     \\in float depth;
     \\void main()
     \\{
-    \\    // I still struggle with OpenGL coordinate systems...
-    \\    // Visualizing texture output in blender seemed pretty parabolic
-    \\    fragment = vec4(sqrt(depth), sqrt(depth), sqrt(depth), 1.0);
+    \\    float sign_val = texture(sign, uv).r;
+    \\    float sign_mul = (sign_valid != 0 && sign_val < 0.5) ? -1.0 : 1.0;
+    \\    fragment = vec4(sqrt(depth) * sign_mul, sqrt(depth) * sign_mul, sqrt(depth) * sign_mul, 1.0);
     \\}
 ;

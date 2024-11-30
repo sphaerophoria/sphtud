@@ -4,8 +4,12 @@ const gl = @import("gl.zig");
 const lin = @import("lin.zig");
 const Renderer = @import("Renderer.zig");
 const StbImage = @import("StbImage.zig");
+const FontStorage = @import("FontStorage.zig");
 const shader_storage = @import("shader_storage.zig");
+const GlyphAtlas = @import("GlyphAtlas.zig");
+const TextRenderer = @import("TextRenderer.zig");
 const coords = @import("coords.zig");
+const ttf_mod = @import("ttf.zig");
 
 const ShaderStorage = shader_storage.ShaderStorage;
 const ShaderId = shader_storage.ShaderId;
@@ -27,6 +31,7 @@ pub const Object = struct {
         path: PathObject,
         generated_mask: GeneratedMaskObject,
         drawing: DrawingObject,
+        text: TextObject,
     };
 
     pub fn deinit(self: *Object, alloc: Allocator) void {
@@ -38,6 +43,7 @@ pub const Object = struct {
             .path => |*p| p.deinit(alloc),
             .generated_mask => |*g| g.deinit(),
             .drawing => |*d| d.deinit(alloc),
+            .text => |*t| t.deinit(alloc),
         }
     }
 
@@ -62,6 +68,12 @@ pub const Object = struct {
             .drawing => |d| .{
                 .drawing = try d.saveLeaky(alloc),
             },
+            .text => |t| .{
+                .text = .{
+                    .font_id = t.font.value,
+                    .current_text = t.current_text,
+                },
+            },
         };
 
         return .{
@@ -71,7 +83,7 @@ pub const Object = struct {
         };
     }
 
-    pub fn load(alloc: Allocator, save_obj: SaveObject, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), path_render_program: Renderer.PathRenderProgram) !Object {
+    pub fn load(alloc: Allocator, save_obj: SaveObject, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), path_render_program: Renderer.PathRenderProgram, plane_buffer: Renderer.PlaneRenderProgram.Buffer) !Object {
         const data: Data = switch (save_obj.data) {
             .filesystem => |s| blk: {
                 break :blk .{
@@ -138,6 +150,13 @@ pub const Object = struct {
                     .drawing = drawing_object,
                 };
             },
+            .text => |t| blk: {
+                var text_object = try TextObject.init(alloc, .{ .value = t.font_id }, plane_buffer);
+                errdefer text_object.deinit(alloc);
+
+                text_object.current_text = try alloc.dupe(u8, t.current_text);
+                break :blk .{ .text = text_object };
+            },
         };
 
         return .{
@@ -174,6 +193,9 @@ pub const Object = struct {
             .drawing => |d| {
                 const display_object = object_list.get(d.display_object);
                 return dims(display_object.*, object_list);
+            },
+            .text => |t| {
+                return t.getSizePx();
             },
         }
     }
@@ -225,6 +247,9 @@ pub const Object = struct {
                     defer self.idx += 1;
                     return d.display_object;
                 },
+                .text => {
+                    return null;
+                },
             }
         }
     };
@@ -243,6 +268,7 @@ pub const Object = struct {
             .shader => true,
             .composition => true,
             .drawing => true,
+            .text => true,
         };
     }
 
@@ -270,6 +296,13 @@ pub const Object = struct {
     pub fn asShader(self: *Object) ?*ShaderObject {
         switch (self.data) {
             .shader => |*s| return s,
+            else => return null,
+        }
+    }
+
+    pub fn asText(self: *Object) ?*TextObject {
+        switch (self.data) {
+            .text => |*t| return t,
             else => return null,
         }
     }
@@ -694,6 +727,7 @@ pub const DrawingObject = struct {
         const new_distance_field = try distance_field_renderer.generateDistanceField(
             alloc,
             &vertex_array_it,
+            Renderer.Texture.invalid,
             @intCast(dims[0]),
             @intCast(dims[1]),
         );
@@ -748,6 +782,100 @@ pub const DrawingObject = struct {
     }
 };
 
+pub const TextObject = struct {
+    font: FontStorage.FontId,
+    current_text: []const u8,
+
+    renderer: TextRenderer,
+    layout: ?TextRenderer.TextLayout = null,
+    buffer: ?TextRenderer.Buffer = null,
+
+    const default_point_size = 64.0;
+
+    pub fn init(alloc: Allocator, font_id: FontStorage.FontId, plane_buffer: Renderer.PlaneRenderProgram.Buffer) !TextObject {
+        errdefer plane_buffer.deinit();
+
+        const renderer = try TextRenderer.init(alloc, default_point_size);
+
+        return .{
+            .font = font_id,
+            .renderer = renderer,
+            .current_text = &.{},
+        };
+    }
+
+    pub fn deinit(self: *TextObject, alloc: Allocator) void {
+        alloc.free(self.current_text);
+        self.renderer.deinit(alloc);
+        if (self.buffer) |b| b.deinit();
+        if (self.layout) |l| l.deinit(alloc);
+    }
+
+    pub fn update(self: *TextObject, alloc: Allocator, text: []const u8, fonts: FontStorage, distance_field_renderer: Renderer.DistanceFieldGenerator) !void {
+        var new_text = try alloc.dupe(u8, text);
+        defer alloc.free(new_text);
+        std.mem.swap([]const u8, &self.current_text, &new_text);
+        // Put it back
+        errdefer std.mem.swap([]const u8, &self.current_text, &new_text);
+
+        try self.regenerate(alloc, fonts, distance_field_renderer);
+    }
+
+    pub fn updateFont(self: *TextObject, alloc: Allocator, font_id: FontStorage.FontId, fonts: FontStorage, distance_field_renderer: Renderer.DistanceFieldGenerator) !void {
+        const old_font = self.font;
+        self.font = font_id;
+        errdefer {
+            self.font = old_font;
+        }
+
+        var old_renderer = self.renderer;
+        defer old_renderer.deinit(alloc);
+        self.renderer = try TextRenderer.init(alloc, old_renderer.point_size);
+        errdefer std.mem.swap(TextRenderer, &old_renderer, &self.renderer);
+
+        try self.regenerate(alloc, fonts, distance_field_renderer);
+    }
+
+    pub fn updateFontSize(self: *TextObject, alloc: Allocator, size: f32, fonts: FontStorage, distance_field_renderer: Renderer.DistanceFieldGenerator) !void {
+        var old_renderer = self.renderer;
+        defer old_renderer.deinit(alloc);
+        self.renderer = try TextRenderer.init(alloc, size);
+        errdefer std.mem.swap(TextRenderer, &old_renderer, &self.renderer);
+
+        try self.regenerate(alloc, fonts, distance_field_renderer);
+    }
+
+    pub fn regenerate(self: *TextObject, alloc: Allocator, fonts: FontStorage, distance_field_renderer: Renderer.DistanceFieldGenerator) !void {
+        if (self.current_text.len < 1) {
+            if (self.buffer) |b| b.deinit();
+            if (self.layout) |l| l.deinit(alloc);
+
+            self.buffer = null;
+            self.layout = null;
+            return;
+        }
+
+        const ttf = &fonts.get(self.font).ttf;
+        const layout = try self.renderer.layoutText(alloc, self.current_text, ttf.*);
+        errdefer layout.deinit(alloc);
+
+        const buffer = try self.renderer.makeTextBuffer(alloc, layout, ttf.*, distance_field_renderer);
+
+        if (self.buffer) |b| b.deinit();
+        if (self.layout) |l| l.deinit(alloc);
+
+        self.buffer = buffer;
+        self.layout = layout;
+    }
+
+    fn getSizePx(self: TextObject) PixelDims {
+        const layout = self.layout orelse return .{ 100, 100 };
+        return .{
+            layout.width_px, layout.height_px,
+        };
+    }
+};
+
 pub const SaveObject = struct {
     id: usize,
     name: []const u8,
@@ -767,6 +895,10 @@ pub const SaveObject = struct {
         },
         generated_mask: usize,
         drawing: DrawingObject.Save,
+        text: struct {
+            font_id: usize,
+            current_text: []const u8,
+        },
     };
 };
 
@@ -782,7 +914,7 @@ pub const Objects = struct {
     inner: ObjectStorage = .{},
     next_id: usize = 0,
 
-    pub fn load(alloc: Allocator, data: []SaveObject, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), path_render_program: Renderer.PathRenderProgram) !Objects {
+    pub fn load(alloc: Allocator, data: []SaveObject, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), path_render_program: Renderer.PathRenderProgram, plane_buffer: Renderer.PlaneRenderProgram.Buffer) !Objects {
         var objects = ObjectStorage{};
         errdefer freeObjectList(alloc, &objects);
 
@@ -790,7 +922,7 @@ pub const Objects = struct {
 
         var max_id: usize = 0;
         for (data) |saved_object| {
-            const object = try Object.load(alloc, saved_object, shaders, brushes, path_render_program);
+            const object = try Object.load(alloc, saved_object, shaders, brushes, path_render_program, plane_buffer);
             try objects.put(alloc, .{ .value = saved_object.id }, object);
             max_id = @max(max_id, saved_object.id);
         }

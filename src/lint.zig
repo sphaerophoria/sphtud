@@ -164,6 +164,13 @@ const default_brush =
     \\}
 ;
 
+fn loadFonts(app: *App) !void {
+    const font_paths = [_][:0]const u8{ "res/ttf/Hack-Regular.ttf", "res/ttf/NotoSans-Regular.ttf" };
+    for (&font_paths) |p| {
+        _ = try app.loadFont(p);
+    }
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
@@ -223,7 +230,20 @@ pub fn main() !void {
         try app.updatePathDisplayObj(id);
     }
 
+    try loadFonts(&app);
+
     _ = try app.addDrawing();
+
+    var font_ids = app.fonts.idIter();
+    _ = font_ids.next(); // Discard first id, it will be used by default
+    const second_font_id = font_ids.next() orelse return error.NotEnoughFonts;
+
+    const text_id = try app.addText();
+    app.setSelectedObject(text_id);
+
+    try app.updateTextObjectContent("hello world");
+    try app.updateFontId(second_font_id);
+    try app.updateFontSize(10.0);
 
     var it = app.objects.idIter();
     while (it.next()) |i| {
