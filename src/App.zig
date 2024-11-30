@@ -8,6 +8,9 @@ const StbImage = @import("StbImage.zig");
 const coords = @import("coords.zig");
 const dependency_loop = @import("dependency_loop.zig");
 const shader_storage = @import("shader_storage.zig");
+const stbiw = @cImport({
+    @cInclude("stb_image_write.h");
+});
 
 const Object = obj_mod.Object;
 const ObjectId = obj_mod.ObjectId;
@@ -31,6 +34,8 @@ brushes: ShaderStorage(BrushId),
 renderer: Renderer,
 view_state: ViewState,
 input_state: InputState = .{},
+io_thread: *IoThread,
+io_thread_handle: std.Thread,
 
 mul_fragment_shader: ShaderId,
 
@@ -49,6 +54,15 @@ pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
     var brushes = ShaderStorage(BrushId){};
     errdefer brushes.deinit(alloc);
 
+    const io_thread = try alloc.create(IoThread);
+    io_thread.* = .{};
+
+    const io_thread_handle = try std.Thread.spawn(.{}, IoThread.run, .{io_thread});
+    errdefer {
+        io_thread.shutdown();
+        io_thread_handle.join();
+    }
+
     return .{
         .alloc = alloc,
         .objects = objects,
@@ -60,10 +74,16 @@ pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
             .window_height = window_height,
         },
         .mul_fragment_shader = mul_fragment_shader_id,
+        .io_thread = io_thread,
+        .io_thread_handle = io_thread_handle,
     };
 }
 
 pub fn deinit(self: *App) void {
+    self.io_thread.shutdown();
+    self.io_thread_handle.join();
+    self.alloc.destroy(self.io_thread);
+
     self.objects.deinit(self.alloc);
     self.renderer.deinit(self.alloc);
     self.shaders.deinit(self.alloc);
@@ -92,6 +112,32 @@ pub fn save(self: *App, path: []const u8) !void {
         .{ .whitespace = .indent_2 },
         out_f.writer(),
     );
+}
+
+pub fn exportImage(self: *App, path: [:0]const u8) !void {
+    const dims = self.selectedDims();
+
+    var fr = self.renderer.makeFrameRenderer(self.alloc, &self.objects, &self.shaders, &self.brushes);
+    defer fr.deinit();
+
+    const texture = try fr.renderObjectToTexture(self.selectedObject().*);
+
+    const out_buf = try self.alloc.alloc(u8, dims[0] * dims[1] * 4);
+    errdefer self.alloc.free(out_buf);
+
+    gl.glGetTextureImage(texture.inner, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, @intCast(out_buf.len), out_buf.ptr);
+
+    const duped_path = try self.alloc.dupeZ(u8, path);
+    errdefer self.alloc.free(duped_path);
+
+    self.io_thread.requestSave(.{
+        .alloc = self.alloc,
+        .data = out_buf,
+        .width = @intCast(dims[0]),
+        .height = @intCast(dims[1]),
+        .stride = @intCast(dims[0] * 4),
+        .path = duped_path,
+    });
 }
 
 pub fn load(self: *App, path: []const u8) !void {
@@ -709,6 +755,7 @@ const InputState = struct {
         },
         add_draw_stroke: Vec2,
         add_stroke_sample: Vec2,
+        export_image,
         save,
         pan: Vec2,
     };
@@ -914,6 +961,10 @@ const InputState = struct {
             return .save;
         }
 
+        if (key == 'E' and ctrl) {
+            return .export_image;
+        }
+
         return null;
     }
 
@@ -1006,6 +1057,9 @@ fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
         .save => {
             try self.save("save.json");
         },
+        .export_image => {
+            try self.exportImage("image.png");
+        },
         .pan => |amount| {
             self.view_state.pan(amount);
         },
@@ -1061,6 +1115,88 @@ pub const SaveData = struct {
     shaders: []shader_storage.Save,
     brushes: []shader_storage.Save,
     objects: []obj_mod.SaveObject,
+};
+
+const SaveRequest = struct {
+    alloc: Allocator,
+    data: []const u8,
+    width: c_int,
+    height: c_int,
+    stride: c_int,
+    path: [:0]const u8,
+
+    fn deinit(self: SaveRequest) void {
+        self.alloc.free(self.data);
+        self.alloc.free(self.path);
+    }
+};
+
+const IoThread = struct {
+    mutex: std.Thread.Mutex = .{},
+    cv: std.Thread.Condition = .{},
+    protected: Data = .{},
+
+    const Data = struct {
+        save_request: ?SaveRequest = null,
+        shutdown: bool = false,
+    };
+
+    fn run(self: *IoThread) void {
+        while (true) {
+            const data = self.getData();
+            if (data.shutdown) {
+                break;
+            }
+            if (data.save_request) |*req| {
+                defer req.deinit();
+                stbiw.stbi_flip_vertically_on_write(1);
+                _ = stbiw.stbi_write_png(
+                    req.path.ptr,
+                    req.width,
+                    req.height,
+                    4,
+                    req.data.ptr,
+                    req.stride,
+                );
+            }
+        }
+    }
+
+    fn shutdown(self: *IoThread) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        self.protected.shutdown = true;
+        self.cv.signal();
+    }
+
+    fn requestSave(self: *IoThread, req: SaveRequest) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.protected.save_request) |*v| {
+            v.deinit();
+        }
+        self.protected.save_request = req;
+        self.cv.signal();
+    }
+
+    fn getData(self: *IoThread) Data {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        while (true) {
+            var data: Data = .{
+                .save_request = null,
+                .shutdown = self.protected.shutdown,
+            };
+            std.mem.swap(Data, &self.protected, &data);
+            if (data.save_request != null or data.shutdown) {
+                return data;
+            }
+            self.cv.wait(&self.mutex);
+        }
+    }
 };
 
 test {

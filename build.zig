@@ -4,6 +4,9 @@ fn addAppDependencies(b: *std.Build, exe: *std.Build.Step.Compile) void {
     exe.addCSourceFile(.{
         .file = b.path("src/stb_image.c"),
     });
+    exe.addCSourceFile(.{
+        .file = b.path("src/stb_image_write.c"),
+    });
     exe.linkSystemLibrary("GL");
     exe.addIncludePath(b.path("src"));
     exe.linkLibC();
@@ -65,9 +68,6 @@ pub fn build(b: *std.Build) !void {
         .optimize = opt,
     });
     lint_exe.linkSystemLibrary("EGL");
-    lint_exe.addCSourceFile(.{
-        .file = b.path("src/stb_image_write.c"),
-    });
 
     addAppDependencies(b, lint_exe);
     b.installArtifact(lint_exe);

@@ -180,7 +180,7 @@ pub const FrameRenderer = struct {
         }
     }
 
-    fn renderObjectToTexture(self: *FrameRenderer, input: Object) anyerror!Texture {
+    pub fn renderObjectToTexture(self: *FrameRenderer, input: Object) anyerror!Texture {
         const dep_width, const dep_height = input.dims(self.objects);
 
         const texture = makeTextureOfSize(@intCast(dep_width), @intCast(dep_height));
@@ -1071,6 +1071,7 @@ pub const DistanceFieldGenerator = struct {
 
         self.cone_buf.setOffsetData(cone_offsets.items);
         self.tent_buf.setTentTransformData(tent_transforms.items);
+
         return .{
             .cones = cone_offsets.items.len,
             .tents = tent_transforms.items.len,
