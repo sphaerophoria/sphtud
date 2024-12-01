@@ -148,7 +148,15 @@ pub fn load(self: *App, path: []const u8) !void {
 }
 
 pub fn render(self: *App) !void {
-    try self.renderer.render(self.alloc, &self.objects, self.shaders, self.brushes, self.input_state.selected_object, self.view_state.objectToClipTransform(self.selectedDims()), self.view_state.window_width, self.view_state.window_height);
+    var frame_renderer = self.renderer.makeFrameRenderer(
+        self.alloc,
+        &self.objects,
+        &self.shaders,
+        &self.brushes,
+    );
+    defer frame_renderer.deinit();
+
+    try frame_renderer.render(self.input_state.selected_object, self.view_state.objectToClipTransform(self.selectedDims()), self.view_state.window_width, self.view_state.window_height);
 }
 
 pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {

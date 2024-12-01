@@ -72,135 +72,172 @@ pub fn deinit(self: *Renderer, alloc: Allocator) void {
     self.distance_field_generator.deinit();
 }
 
-pub fn render(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), selected_object: ObjectId, transform: Transform, window_width: usize, window_height: usize) !void {
-    gl.glViewport(0, 0, @intCast(window_width), @intCast(window_height));
-    gl.glClear(gl.GL_COLOR_BUFFER_BIT);
-
-    var texture_cache: TextureCache = TextureCache.init(alloc, objects);
-    defer texture_cache.deinit();
-
-    const active_object = objects.get(selected_object);
-    const object_dims = active_object.dims(objects);
-
-    const toplevel_aspect = coords.calcAspect(object_dims[0], object_dims[1]);
-    self.background_program.render(&.{}, &.{.{ .idx = .aspect, .val = .{ .float = toplevel_aspect } }}, transform);
-
-    try self.renderObjectWithTransform(alloc, objects, shaders, brushes, active_object.*, transform, &texture_cache);
-}
-
-fn renderedTexture(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), texture_cache: *TextureCache, id: ObjectId) !Texture {
-    if (texture_cache.get(id)) |t| {
-        return t;
-    }
-
-    const texture = try self.renderObjectToTexture(alloc, objects, shaders, brushes, objects.get(id).*, texture_cache);
-    try texture_cache.put(id, texture);
-    return texture;
-}
-
-fn renderObjectWithTransform(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), object: Object, transform: Transform, texture_cache: *TextureCache) !void {
-    switch (object.data) {
-        .composition => |c| {
-            const composition_object_dims = object.dims(objects);
-            const composition_object_aspect = coords.calcAspect(composition_object_dims[0], composition_object_dims[1]);
-
-            for (c.objects.items) |composition_object| {
-                const next_object = objects.get(composition_object.id);
-
-                const compsoed_to_composition = composition_object.composedToCompositionTransform(objects, composition_object_aspect);
-                const next_transform = compsoed_to_composition
-                    .then(transform);
-
-                try self.renderObjectWithTransform(alloc, objects, shaders, brushes, next_object.*, next_transform, texture_cache);
-            }
-        },
-        .filesystem => |f| {
-            self.program.render(&.{.{ .image = f.texture.inner }}, &.{
-                .{ .idx = .aspect, .val = .{ .float = coords.calcAspect(f.width, f.height) } },
-            }, transform);
-        },
-        .shader => |s| {
-            var sources = std.ArrayList(ResolvedUniformValue).init(alloc);
-            defer sources.deinit();
-
-            for (s.bindings) |binding| {
-                try sources.append(try self.resolveUniform(alloc, binding, objects, shaders, brushes, texture_cache));
-            }
-
-            const object_dims = object.dims(objects);
-            shaders.get(s.program).program.render(sources.items, &.{.{ .idx = .aspect, .val = .{ .float = coords.calcAspect(object_dims[0], object_dims[1]) } }}, transform);
-        },
-        .path => |p| {
-            const display_object = objects.get(p.display_object);
-            try self.renderObjectWithTransform(alloc, objects, shaders, brushes, display_object.*, transform, texture_cache);
-
-            self.path_program.render(p.render_buffer, transform, p.points.items.len);
-        },
-        .generated_mask => |m| {
-            const object_dims = object.dims(objects);
-            self.program.render(&.{.{ .image = m.texture.inner }}, &.{.{ .idx = .aspect, .val = .{ .float = coords.calcAspect(object_dims[0], object_dims[1]) } }}, transform);
-        },
-        .drawing => |d| {
-            const display_object = objects.get(d.display_object);
-            const dims = display_object.dims(objects);
-            try self.renderObjectWithTransform(alloc, objects, shaders, brushes, display_object.*, transform, texture_cache);
-
-            var sources = std.ArrayList(ResolvedUniformValue).init(alloc);
-            defer sources.deinit();
-
-            for (d.bindings) |binding| {
-                try sources.append(try self.resolveUniform(alloc, binding, objects, shaders, brushes, texture_cache));
-            }
-
-            const brush = brushes.get(d.brush);
-
-            if (d.hasPoints()) {
-                brush.program.render(sources.items, &.{
-                    .{
-                        .idx = .aspect,
-                        .val = .{ .float = coords.calcAspect(dims[0], dims[1]) },
-                    },
-                    .{
-                        .idx = .distance_field,
-                        .val = .{ .image = d.distance_field.inner },
-                    },
-                }, transform);
-            }
-        },
-    }
-}
-
-fn resolveUniform(
-    self: *Renderer,
+pub const FrameRenderer = struct {
     alloc: Allocator,
-    uniform: UniformValue,
+    renderer: *Renderer,
     objects: *Objects,
-    shaders: ShaderStorage(ShaderId),
-    brushes: ShaderStorage(BrushId),
-    texture_cache: *TextureCache,
-) !ResolvedUniformValue {
-    switch (uniform) {
-        .image => |opt_id| {
-            const texture = if (opt_id) |o|
-                try self.renderedTexture(alloc, objects, shaders, brushes, texture_cache, o)
-            else
-                Texture.invalid;
+    shaders: *const ShaderStorage(ShaderId),
+    brushes: *const ShaderStorage(BrushId),
+    texture_cache: TextureCache,
 
-            return .{ .image = texture.inner };
-        },
-        .float => |f| {
-            return .{ .float = f };
-        },
-        .float2 => |f| {
-            return .{ .float2 = f };
-        },
-        .float3 => |f| {
-            return .{ .float3 = f };
-        },
-        .int => |i| {
-            return .{ .int = i };
-        },
+    pub fn deinit(self: *FrameRenderer) void {
+        self.texture_cache.deinit();
     }
+
+    pub fn render(self: *FrameRenderer, selected_object: ObjectId, transform: Transform, window_width: usize, window_height: usize) !void {
+        gl.glViewport(0, 0, @intCast(window_width), @intCast(window_height));
+        gl.glClearColor(0.0, 0.0, 0.0, 1.0);
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT);
+
+        const active_object = self.objects.get(selected_object);
+        const object_dims = active_object.dims(self.objects);
+
+        const toplevel_aspect = coords.calcAspect(object_dims[0], object_dims[1]);
+        self.renderer.background_program.render(&.{}, &.{.{ .idx = .aspect, .val = .{ .float = toplevel_aspect } }}, transform);
+
+        try self.renderObjectWithTransform(active_object.*, transform);
+    }
+
+    fn renderedTexture(self: *FrameRenderer, id: ObjectId) !Texture {
+        if (self.texture_cache.get(id)) |t| {
+            return t;
+        }
+
+        const texture = try self.renderObjectToTexture(self.objects.get(id).*);
+        try self.texture_cache.put(id, texture);
+        return texture;
+    }
+
+    fn renderObjectWithTransform(self: *FrameRenderer, object: Object, transform: Transform) !void {
+        switch (object.data) {
+            .composition => |c| {
+                const composition_object_dims = object.dims(self.objects);
+                const composition_object_aspect = coords.calcAspect(composition_object_dims[0], composition_object_dims[1]);
+
+                for (c.objects.items) |composition_object| {
+                    const next_object = self.objects.get(composition_object.id);
+
+                    const compsoed_to_composition = composition_object.composedToCompositionTransform(self.objects, composition_object_aspect);
+                    const next_transform = compsoed_to_composition
+                        .then(transform);
+
+                    try self.renderObjectWithTransform(next_object.*, next_transform);
+                }
+            },
+            .filesystem => |f| {
+                self.renderer.program.render(&.{.{ .image = f.texture.inner }}, &.{
+                    .{ .idx = .aspect, .val = .{ .float = coords.calcAspect(f.width, f.height) } },
+                }, transform);
+            },
+            .shader => |s| {
+                var sources = std.ArrayList(ResolvedUniformValue).init(self.alloc);
+                defer sources.deinit();
+
+                for (s.bindings) |binding| {
+                    try sources.append(try self.resolveUniform(binding));
+                }
+
+                const object_dims = object.dims(self.objects);
+                self.shaders.get(s.program).program.render(sources.items, &.{.{ .idx = .aspect, .val = .{ .float = coords.calcAspect(object_dims[0], object_dims[1]) } }}, transform);
+            },
+            .path => |p| {
+                const display_object = self.objects.get(p.display_object);
+                try self.renderObjectWithTransform(display_object.*, transform);
+
+                self.renderer.path_program.render(p.render_buffer, transform, p.points.items.len);
+            },
+            .generated_mask => |m| {
+                const object_dims = object.dims(self.objects);
+                self.renderer.program.render(&.{.{ .image = m.texture.inner }}, &.{.{ .idx = .aspect, .val = .{ .float = coords.calcAspect(object_dims[0], object_dims[1]) } }}, transform);
+            },
+            .drawing => |d| {
+                const display_object = self.objects.get(d.display_object);
+                const dims = display_object.dims(self.objects);
+                try self.renderObjectWithTransform(display_object.*, transform);
+
+                var sources = std.ArrayList(ResolvedUniformValue).init(self.alloc);
+                defer sources.deinit();
+
+                for (d.bindings) |binding| {
+                    try sources.append(try self.resolveUniform(binding));
+                }
+
+                const brush = self.brushes.get(d.brush);
+
+                if (d.hasPoints()) {
+                    brush.program.render(sources.items, &.{
+                        .{
+                            .idx = .aspect,
+                            .val = .{ .float = coords.calcAspect(dims[0], dims[1]) },
+                        },
+                        .{
+                            .idx = .distance_field,
+                            .val = .{ .image = d.distance_field.inner },
+                        },
+                    }, transform);
+                }
+            },
+        }
+    }
+
+    fn renderObjectToTexture(self: *FrameRenderer, input: Object) anyerror!Texture {
+        const dep_width, const dep_height = input.dims(self.objects);
+
+        const texture = makeTextureOfSize(@intCast(dep_width), @intCast(dep_height));
+        errdefer texture.deinit();
+
+        const render_context = FramebufferRenderContext.init(texture, null);
+        defer render_context.reset();
+
+        // Output texture size is not the same as input size
+        // Set viewport to full texture output size, restore original after
+        const temp_viewport = TemporaryViewport.init();
+        defer temp_viewport.reset();
+
+        temp_viewport.setViewport(@intCast(dep_width), @intCast(dep_height));
+
+        try self.renderObjectWithTransform(input, Transform.identity);
+        return texture;
+    }
+
+    fn resolveUniform(
+        self: *FrameRenderer,
+        uniform: UniformValue,
+    ) !ResolvedUniformValue {
+        switch (uniform) {
+            .image => |opt_id| {
+                const texture = if (opt_id) |o|
+                    try self.renderedTexture(o)
+                else
+                    Texture.invalid;
+
+                return .{ .image = texture.inner };
+            },
+            .float => |f| {
+                return .{ .float = f };
+            },
+            .float2 => |f| {
+                return .{ .float2 = f };
+            },
+            .float3 => |f| {
+                return .{ .float3 = f };
+            },
+            .int => |i| {
+                return .{ .int = i };
+            },
+        }
+    }
+};
+
+pub fn makeFrameRenderer(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: *const ShaderStorage(ShaderId), brushes: *const ShaderStorage(BrushId)) FrameRenderer {
+    return .{
+        .alloc = alloc,
+        .renderer = self,
+        .objects = objects,
+        .shaders = shaders,
+        .brushes = brushes,
+        .texture_cache = TextureCache.init(alloc, objects),
+    };
 }
 
 const TemporaryViewport = struct {
@@ -227,26 +264,6 @@ const TemporaryViewport = struct {
         );
     }
 };
-
-fn renderObjectToTexture(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), input: Object, texture_cache: *TextureCache) anyerror!Texture {
-    const dep_width, const dep_height = input.dims(objects);
-
-    const texture = makeTextureOfSize(@intCast(dep_width), @intCast(dep_height));
-    errdefer texture.deinit();
-
-    const render_context = FramebufferRenderContext.init(texture, null);
-    defer render_context.reset();
-
-    // Output texture size is not the same as input size
-    // Set viewport to full texture output size, restore original after
-    const temp_viewport = TemporaryViewport.init();
-    defer temp_viewport.reset();
-
-    temp_viewport.setViewport(@intCast(dep_width), @intCast(dep_height));
-
-    try self.renderObjectWithTransform(alloc, objects, shaders, brushes, input, Transform.identity, texture_cache);
-    return texture;
-}
 
 pub const Texture = struct {
     pub const invalid = Texture{ .inner = 0 };
