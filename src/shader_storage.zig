@@ -65,7 +65,14 @@ pub fn ShaderStorage(comptime Id: type) type {
             const name_duped = try alloc.dupe(u8, name);
             errdefer alloc.free(name_duped);
 
-            const program = try Renderer.PlaneRenderProgram.init(alloc, Renderer.plane_vertex_shader, fs_source);
+            const ReservedIdType: ?type = if (Id == ShaderId)
+                Renderer.CustomShaderReservedIndex
+            else if (Id == BrushId)
+                Renderer.BrushReservedIndex
+            else
+                null;
+
+            const program = try Renderer.PlaneRenderProgram.init(alloc, Renderer.plane_vertex_shader, fs_source, ReservedIdType);
             errdefer program.deinit(alloc);
 
             const duped_fs_source = try alloc.dupeZ(u8, fs_source);

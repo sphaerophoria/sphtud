@@ -50,17 +50,6 @@ pub fn build(b: *std.Build) !void {
     addGuiDependencies(b, exe);
     b.installArtifact(exe);
 
-    const transform_viz = b.addExecutable(.{
-        .name = "transform-viz",
-        .root_source_file = b.path("src/tranform-viz.zig"),
-        .target = target,
-        .optimize = opt,
-    });
-
-    addAppDependencies(b, transform_viz);
-    addGuiDependencies(b, transform_viz);
-    b.installArtifact(transform_viz);
-
     const lint_exe = b.addExecutable(.{
         .name = "lint",
         .root_source_file = b.path("src/lint.zig"),

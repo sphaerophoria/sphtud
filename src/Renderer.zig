@@ -45,10 +45,10 @@ pub fn init(alloc: Allocator) !Renderer {
 
     gl.glDebugMessageCallback(glDebugCallback, null);
 
-    const plane_program = try PlaneRenderProgram.init(alloc, plane_vertex_shader, plane_fragment_shader);
+    const plane_program = try PlaneRenderProgram.init(alloc, plane_vertex_shader, plane_fragment_shader, DefaultPlaneReservedIndex);
     errdefer plane_program.deinit(alloc);
 
-    const background_program = try PlaneRenderProgram.init(alloc, plane_vertex_shader, checkerboard_fragment_shader);
+    const background_program = try PlaneRenderProgram.init(alloc, plane_vertex_shader, checkerboard_fragment_shader, DefaultPlaneReservedIndex);
     errdefer background_program.deinit(alloc);
 
     const path_program = try PathRenderProgram.init();
@@ -93,7 +93,7 @@ pub const FrameRenderer = struct {
         const object_dims = active_object.dims(self.objects);
 
         const toplevel_aspect = coords.calcAspect(object_dims[0], object_dims[1]);
-        self.renderer.background_program.render(&.{}, &.{.{ .idx = .aspect, .val = .{ .float = toplevel_aspect } }}, transform);
+        self.renderer.background_program.render(&.{}, &.{.{ .idx = DefaultPlaneReservedIndex.aspect.asIndex(), .val = .{ .float = toplevel_aspect } }}, transform);
 
         try self.renderObjectWithTransform(active_object.*, transform);
     }
@@ -125,8 +125,15 @@ pub const FrameRenderer = struct {
                 }
             },
             .filesystem => |f| {
-                self.renderer.program.render(&.{.{ .image = f.texture.inner }}, &.{
-                    .{ .idx = .aspect, .val = .{ .float = coords.calcAspect(f.width, f.height) } },
+                self.renderer.program.render(&.{}, &.{
+                    .{
+                        .idx = DefaultPlaneReservedIndex.input_image.asIndex(),
+                        .val = .{ .image = f.texture.inner },
+                    },
+                    .{
+                        .idx = DefaultPlaneReservedIndex.aspect.asIndex(),
+                        .val = .{ .float = coords.calcAspect(f.width, f.height) },
+                    },
                 }, transform);
             },
             .shader => |s| {
@@ -138,7 +145,10 @@ pub const FrameRenderer = struct {
                 }
 
                 const object_dims = object.dims(self.objects);
-                self.shaders.get(s.program).program.render(sources.items, &.{.{ .idx = .aspect, .val = .{ .float = coords.calcAspect(object_dims[0], object_dims[1]) } }}, transform);
+                self.shaders.get(s.program).program.render(sources.items, &.{.{
+                    .idx = CustomShaderReservedIndex.aspect.asIndex(),
+                    .val = .{ .float = coords.calcAspect(object_dims[0], object_dims[1]) },
+                }}, transform);
             },
             .path => |p| {
                 const display_object = self.objects.get(p.display_object);
@@ -148,7 +158,10 @@ pub const FrameRenderer = struct {
             },
             .generated_mask => |m| {
                 const object_dims = object.dims(self.objects);
-                self.renderer.program.render(&.{.{ .image = m.texture.inner }}, &.{.{ .idx = .aspect, .val = .{ .float = coords.calcAspect(object_dims[0], object_dims[1]) } }}, transform);
+                self.renderer.program.render(&.{.{ .image = m.texture.inner }}, &.{.{
+                    .idx = DefaultPlaneReservedIndex.aspect.asIndex(),
+                    .val = .{ .float = coords.calcAspect(object_dims[0], object_dims[1]) },
+                }}, transform);
             },
             .drawing => |d| {
                 const display_object = self.objects.get(d.display_object);
@@ -167,11 +180,11 @@ pub const FrameRenderer = struct {
                 if (d.hasPoints()) {
                     brush.program.render(sources.items, &.{
                         .{
-                            .idx = .aspect,
+                            .idx = BrushReservedIndex.aspect.asIndex(),
                             .val = .{ .float = coords.calcAspect(dims[0], dims[1]) },
                         },
                         .{
-                            .idx = .distance_field,
+                            .idx = BrushReservedIndex.distance_field.asIndex(),
                             .val = .{ .image = d.distance_field.inner },
                         },
                     }, transform);
@@ -303,7 +316,7 @@ const ResolvedUniformValue = union(UniformType) {
 };
 
 const ReservedUniformValue = struct {
-    idx: PlaneRenderProgram.ReservedIndex,
+    idx: usize,
     val: ResolvedUniformValue,
 };
 
@@ -333,6 +346,32 @@ pub const Uniform = struct {
     }
 };
 
+pub const DefaultPlaneReservedIndex = enum {
+    aspect,
+    input_image,
+
+    fn asIndex(self: DefaultPlaneReservedIndex) usize {
+        return @intFromEnum(self);
+    }
+};
+
+pub const CustomShaderReservedIndex = enum {
+    aspect,
+
+    fn asIndex(self: CustomShaderReservedIndex) usize {
+        return @intFromEnum(self);
+    }
+};
+
+pub const BrushReservedIndex = enum {
+    aspect,
+    distance_field,
+
+    fn asIndex(self: BrushReservedIndex) usize {
+        return @intFromEnum(self);
+    }
+};
+
 pub const PlaneRenderProgram = struct {
     program: gl.GLuint,
     transform_location: gl.GLint,
@@ -342,16 +381,7 @@ pub const PlaneRenderProgram = struct {
     uniforms: []Uniform,
     reserved_uniforms: []?Uniform,
 
-    const ReservedIndex = enum {
-        aspect,
-        distance_field,
-
-        fn asIndex(self: ReservedIndex) usize {
-            return @intFromEnum(self);
-        }
-    };
-
-    pub fn init(alloc: Allocator, vs: [:0]const u8, fs: [:0]const u8) !PlaneRenderProgram {
+    pub fn init(alloc: Allocator, vs: [:0]const u8, fs: [:0]const u8, comptime IndexType: ?type) !PlaneRenderProgram {
         const program = try compileLinkProgram(vs, fs);
         errdefer gl.glDeleteProgram(program);
 
@@ -359,7 +389,8 @@ pub const PlaneRenderProgram = struct {
         const vuv_location = gl.glGetAttribLocation(program, "vUv");
         const transform_location = gl.glGetUniformLocation(program, "transform");
 
-        const uniforms = try getUniformList(alloc, program, std.meta.fieldNames(ReservedIndex));
+        const reserved_names = if (IndexType) |T| std.meta.fieldNames(T) else &.{};
+        const uniforms = try getUniformList(alloc, program, reserved_names);
         errdefer freeUniformList(alloc, uniforms.other);
         errdefer freeOptionalUniformList(alloc, uniforms.reserved);
 
@@ -416,7 +447,7 @@ pub const PlaneRenderProgram = struct {
         }
 
         for (reserved_uniforms) |reserved| {
-            const uniform_opt = self.reserved_uniforms[reserved.idx.asIndex()];
+            const uniform_opt = self.reserved_uniforms[reserved.idx];
             if (uniform_opt) |uniform| {
                 applyUniformAtLocation(uniform.loc, std.meta.activeTag(uniform.default), reserved.val, &texture_unit_alloc);
             }
