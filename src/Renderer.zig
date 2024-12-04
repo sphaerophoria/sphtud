@@ -18,6 +18,7 @@ const Transform = lin.Transform;
 const gl = @import("gl.zig");
 
 program: PlaneRenderProgram,
+default_buffer: PlaneRenderProgram.Buffer,
 background_program: PlaneRenderProgram,
 path_program: PathRenderProgram,
 distance_field_generator: DistanceFieldGenerator,
@@ -59,6 +60,7 @@ pub fn init(alloc: Allocator) !Renderer {
 
     return .{
         .program = plane_program,
+        .default_buffer = plane_program.makeDefaultBuffer(),
         .background_program = background_program,
         .path_program = path_program,
         .distance_field_generator = distance_field_generator,
@@ -93,7 +95,13 @@ pub const FrameRenderer = struct {
         const object_dims = active_object.dims(self.objects);
 
         const toplevel_aspect = coords.calcAspect(object_dims[0], object_dims[1]);
-        self.renderer.background_program.render(&.{}, &.{.{ .idx = DefaultPlaneReservedIndex.aspect.asIndex(), .val = .{ .float = toplevel_aspect } }}, transform);
+
+        self.renderer.background_program.render(
+            self.renderer.default_buffer,
+            &.{},
+            &.{.{ .idx = DefaultPlaneReservedIndex.aspect.asIndex(), .val = .{ .float = toplevel_aspect } }},
+            transform,
+        );
 
         try self.renderObjectWithTransform(active_object.*, transform);
     }
@@ -125,7 +133,7 @@ pub const FrameRenderer = struct {
                 }
             },
             .filesystem => |f| {
-                self.renderer.program.render(&.{}, &.{
+                self.renderer.program.render(self.renderer.default_buffer, &.{}, &.{
                     .{
                         .idx = DefaultPlaneReservedIndex.input_image.asIndex(),
                         .val = .{ .image = f.texture.inner },
@@ -145,7 +153,7 @@ pub const FrameRenderer = struct {
                 }
 
                 const object_dims = object.dims(self.objects);
-                self.shaders.get(s.program).program.render(sources.items, &.{.{
+                self.shaders.get(s.program).program.render(self.renderer.default_buffer, sources.items, &.{.{
                     .idx = CustomShaderReservedIndex.aspect.asIndex(),
                     .val = .{ .float = coords.calcAspect(object_dims[0], object_dims[1]) },
                 }}, transform);
@@ -158,7 +166,7 @@ pub const FrameRenderer = struct {
             },
             .generated_mask => |m| {
                 const object_dims = object.dims(self.objects);
-                self.renderer.program.render(&.{.{ .image = m.texture.inner }}, &.{.{
+                self.renderer.program.render(self.renderer.default_buffer, &.{.{ .image = m.texture.inner }}, &.{.{
                     .idx = DefaultPlaneReservedIndex.aspect.asIndex(),
                     .val = .{ .float = coords.calcAspect(object_dims[0], object_dims[1]) },
                 }}, transform);
@@ -178,7 +186,7 @@ pub const FrameRenderer = struct {
                 const brush = self.brushes.get(d.brush);
 
                 if (d.hasPoints()) {
-                    brush.program.render(sources.items, &.{
+                    brush.program.render(self.renderer.default_buffer, sources.items, &.{
                         .{
                             .idx = BrushReservedIndex.aspect.asIndex(),
                             .val = .{ .float = coords.calcAspect(dims[0], dims[1]) },
@@ -375,18 +383,70 @@ pub const BrushReservedIndex = enum {
 pub const PlaneRenderProgram = struct {
     program: gl.GLuint,
     transform_location: gl.GLint,
-    vertex_buffer: gl.GLuint,
-    vertex_array: gl.GLuint,
 
     uniforms: []Uniform,
     reserved_uniforms: []?Uniform,
+
+    pub const Buffer = struct {
+        vertex_buffer: gl.GLuint,
+        vertex_array: gl.GLuint,
+        len: usize,
+
+        pub fn init(program: gl.GLuint) Buffer {
+            const vpos_location = gl.glGetAttribLocation(program, "vPos");
+            const vuv_location = gl.glGetAttribLocation(program, "vUv");
+
+            var vertex_buffer: gl.GLuint = 0;
+            gl.glGenBuffers(1, &vertex_buffer);
+            errdefer gl.glDeleteBuffers(1, &vertex_buffer);
+
+            gl.glBindBuffer(gl.GL_ARRAY_BUFFER, vertex_buffer);
+            gl.glBufferData(gl.GL_ARRAY_BUFFER, plane_vertices.len * 4, plane_vertices.ptr, gl.GL_STATIC_DRAW);
+
+            var vertex_array: gl.GLuint = 0;
+            gl.glGenVertexArrays(1, &vertex_array);
+            errdefer gl.glDeleteVertexArrays(1, &vertex_array);
+
+            gl.glBindVertexArray(vertex_array);
+
+            gl.glEnableVertexAttribArray(@intCast(vpos_location));
+            gl.glVertexAttribPointer(@intCast(vpos_location), 2, gl.GL_FLOAT, gl.GL_FALSE, 4 * 4, null);
+
+            if (vuv_location >= 0) {
+                gl.glEnableVertexAttribArray(@intCast(vuv_location));
+                gl.glVertexAttribPointer(@intCast(vuv_location), 2, gl.GL_FLOAT, gl.GL_FALSE, 4 * 4, @ptrFromInt(8));
+            }
+
+            return .{
+                .vertex_array = vertex_array,
+                .vertex_buffer = vertex_buffer,
+                .len = 6,
+            };
+        }
+
+        pub fn deinit(self: Buffer) void {
+            gl.glDeleteBuffers(1, &self.vertex_buffer);
+            gl.glDeleteVertexArrays(1, &self.vertex_array);
+        }
+
+        pub const BufferPoint = packed struct {
+            clip_x: f32,
+            clip_y: f32,
+            uv_x: f32,
+            uv_y: f32,
+        };
+
+        pub fn updateBuffer(self: *Buffer, points: []const BufferPoint) void {
+            gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_buffer);
+            gl.glBufferData(gl.GL_ARRAY_BUFFER, @intCast(points.len * @bitSizeOf(BufferPoint) / 8), points.ptr, gl.GL_STATIC_DRAW);
+            self.len = points.len;
+        }
+    };
 
     pub fn init(alloc: Allocator, vs: [:0]const u8, fs: [:0]const u8, comptime IndexType: ?type) !PlaneRenderProgram {
         const program = try compileLinkProgram(vs, fs);
         errdefer gl.glDeleteProgram(program);
 
-        const vpos_location = gl.glGetAttribLocation(program, "vPos");
-        const vuv_location = gl.glGetAttribLocation(program, "vUv");
         const transform_location = gl.glGetUniformLocation(program, "transform");
 
         const reserved_names = if (IndexType) |T| std.meta.fieldNames(T) else &.{};
@@ -394,49 +454,28 @@ pub const PlaneRenderProgram = struct {
         errdefer freeUniformList(alloc, uniforms.other);
         errdefer freeOptionalUniformList(alloc, uniforms.reserved);
 
-        var vertex_buffer: gl.GLuint = 0;
-        gl.glGenBuffers(1, &vertex_buffer);
-        errdefer gl.glDeleteBuffers(1, &vertex_buffer);
-
-        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, vertex_buffer);
-        gl.glBufferData(gl.GL_ARRAY_BUFFER, plane_vertices.len * 4, plane_vertices.ptr, gl.GL_STATIC_DRAW);
-
-        var vertex_array: gl.GLuint = 0;
-        gl.glGenVertexArrays(1, &vertex_array);
-        errdefer gl.glDeleteVertexArrays(1, &vertex_array);
-
-        gl.glBindVertexArray(vertex_array);
-
-        gl.glEnableVertexAttribArray(@intCast(vpos_location));
-        gl.glVertexAttribPointer(@intCast(vpos_location), 2, gl.GL_FLOAT, gl.GL_FALSE, 4 * 4, null);
-
-        if (vuv_location >= 0) {
-            gl.glEnableVertexAttribArray(@intCast(vuv_location));
-            gl.glVertexAttribPointer(@intCast(vuv_location), 2, gl.GL_FLOAT, gl.GL_FALSE, 4 * 4, @ptrFromInt(8));
-        }
-
         return .{
             .program = program,
             .transform_location = transform_location,
-            .vertex_buffer = vertex_buffer,
-            .vertex_array = vertex_array,
             .uniforms = uniforms.other,
             .reserved_uniforms = uniforms.reserved,
         };
     }
 
     pub fn deinit(self: PlaneRenderProgram, alloc: Allocator) void {
-        gl.glDeleteBuffers(1, &self.vertex_buffer);
-        gl.glDeleteVertexArrays(1, &self.vertex_array);
         gl.glDeleteProgram(self.program);
 
         freeUniformList(alloc, self.uniforms);
         freeOptionalUniformList(alloc, self.reserved_uniforms);
     }
 
-    pub fn render(self: PlaneRenderProgram, uniforms: []const ResolvedUniformValue, reserved_uniforms: []const ReservedUniformValue, transform: lin.Transform) void {
+    pub fn makeDefaultBuffer(self: PlaneRenderProgram) Buffer {
+        return Buffer.init(self.program);
+    }
+
+    pub fn render(self: PlaneRenderProgram, buffer: Buffer, uniforms: []const ResolvedUniformValue, reserved_uniforms: []const ReservedUniformValue, transform: lin.Transform) void {
         gl.glUseProgram(self.program);
-        gl.glBindVertexArray(self.vertex_array);
+        gl.glBindVertexArray(buffer.vertex_array);
         gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &transform.inner.data);
 
         var texture_unit_alloc = TextureUnitAlloc{};
@@ -453,7 +492,7 @@ pub const PlaneRenderProgram = struct {
             }
         }
 
-        gl.glDrawArrays(gl.GL_TRIANGLE_STRIP, 0, 4);
+        gl.glDrawArrays(gl.GL_TRIANGLES, 0, @intCast(buffer.len));
     }
 };
 
@@ -1218,6 +1257,8 @@ fn makeTextureCommon() Texture {
 
 const plane_vertices: []const f32 = &.{
     -1.0, -1.0, 0.0, 0.0,
+    1.0,  -1.0, 1.0, 0.0,
+    -1.0, 1.0,  0.0, 1.0,
     1.0,  -1.0, 1.0, 0.0,
     -1.0, 1.0,  0.0, 1.0,
     1.0,  1.0,  1.0, 1.0,
