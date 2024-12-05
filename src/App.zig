@@ -267,7 +267,7 @@ pub fn setMousePos(self: *App, xpos: f32, ypos: f32) !void {
     const new_y = self.view_state.windowToClipY(ypos);
     const selected_dims = self.selectedDims();
     const new_pos = self.view_state.clipToObject(Vec2{ new_x, new_y }, selected_dims);
-    const input_action = self.input_state.setMousePos(new_pos);
+    const input_action = self.input_state.setMousePos(new_pos, &self.objects);
 
     try self.handleInputAction(input_action);
 }
@@ -889,7 +889,7 @@ const InputState = struct {
         }
     }
 
-    fn setMousePos(self: *InputState, new_pos: Vec2) ?InputAction {
+    fn setMousePos(self: *InputState, new_pos: Vec2, objects: *Objects) ?InputAction {
         var apply_mouse_pos = true;
         defer if (apply_mouse_pos) {
             self.mouse_pos = new_pos;
@@ -899,16 +899,36 @@ const InputState = struct {
             .composition => |*composition_state| {
                 switch (composition_state.*) {
                     .move => |*params| {
-                        const transformed_start = params.comp_to_object.apply(
-                            Vec3{ params.start_pos[0], params.start_pos[1], 1.0 },
-                        );
-                        const transformed_end = params.comp_to_object.apply(Vec3{ new_pos[0], new_pos[1], 1.0 });
-                        const movement = transformed_end - transformed_start;
+                        const movement = new_pos - params.start_pos;
+
+                        const dims = objects.get(self.selected_object).dims(objects);
+
+                        // Initially it seems like a translation on the object
+                        // transform makes sense, however due to some strange
+                        // coordinate spaces it is not so simple
+                        //
+                        // Mouse coordinates are in the object space of the composition
+                        // A composed object however works in an imaginary NxN
+                        // square in the composition that gets aspect corrected
+                        // at the end. This simplifies rotation logic that
+                        // would otherwise be quite tricky.
+                        //
+                        // Unfortunately this means that we need to apply our
+                        // translation such that after aspect ratio correction
+                        // it will move the right amount
+
+                        const aspect = coords.calcAspect(dims[0], dims[1]);
+                        const scale: Vec2 = if (aspect > 1.0)
+                            .{ aspect, 1.0 }
+                        else
+                            .{ 1.0, 1.0 / aspect };
+
+                        const scaled_movement = movement * scale;
 
                         return InputAction{
                             .set_composition_transform = .{
                                 .idx = params.idx,
-                                .transform = Transform.translate(movement[0], movement[1]).then(params.initial_transform),
+                                .transform = params.initial_transform.then(Transform.translate(scaled_movement[0], scaled_movement[1])),
                             },
                         };
                     },
