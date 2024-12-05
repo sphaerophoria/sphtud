@@ -86,11 +86,15 @@ pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, t
     const new_buffer_data = try alloc.alloc(Renderer.PlaneRenderProgram.Buffer.BufferPoint, text.glyphs.len * num_points_per_plane);
     defer alloc.free(new_buffer_data);
 
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+
     var buffer_idx: usize = 0;
     for (text.glyphs) |glyph| {
+        _ = arena.reset(.retain_capacity);
         defer buffer_idx += num_points_per_plane;
 
-        const uv_loc = try self.glyph_atlas.getGlyphLocation(alloc, glyph.char, self.point_size, ttf, distance_field_generator);
+        const uv_loc = try self.glyph_atlas.getGlyphLocation(alloc, arena.allocator(), glyph.char, self.point_size, ttf, distance_field_generator);
 
         // [0, width] -> [-1, 1]
         const clip_x_start = pixToClip(glyph.pixel_x1, text.width_px);

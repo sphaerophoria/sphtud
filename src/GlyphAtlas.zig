@@ -85,6 +85,7 @@ pub fn deinit(self: *GlyphAtlas, alloc: Allocator) void {
 pub fn getGlyphLocation(
     self: *GlyphAtlas,
     alloc: Allocator,
+    temp_alloc: Allocator,
     char: u8,
     point_size: f32,
     ttf: ttf_mod.Ttf,
@@ -92,17 +93,17 @@ pub fn getGlyphLocation(
 ) !UVBBox {
     const gop = try self.glyph_locations.getOrPut(alloc, char);
     if (!gop.found_existing) {
-        gop.value_ptr.* = try self.addCharToAtlas(alloc, char, point_size, ttf, distance_field_renderer);
+        gop.value_ptr.* = try self.addCharToAtlas(alloc, temp_alloc, char, point_size, ttf, distance_field_renderer);
     }
     return gop.value_ptr.*;
 }
 
-fn addCharToAtlas(self: *GlyphAtlas, alloc: Allocator, char: u8, point_size: f32, ttf: ttf_mod.Ttf, distance_field_renderer: Renderer.DistanceFieldGenerator) !UVBBox {
+fn addCharToAtlas(self: *GlyphAtlas, alloc: Allocator, temp_alloc: Allocator, char: u8, point_size: f32, ttf: ttf_mod.Ttf, distance_field_renderer: Renderer.DistanceFieldGenerator) !UVBBox {
     var glyph = try ttf_mod.glyphForChar(alloc, ttf, char) orelse return UVBBox.empty;
     defer glyph.deinit(alloc);
 
-    var canvas, const bbox = try ttf_mod.renderGlyphAt1PxPerFunit(alloc, glyph);
-    defer canvas.deinit(alloc);
+    var canvas, const bbox = try ttf_mod.renderGlyphAt1PxPerFunit(temp_alloc, glyph);
+    defer canvas.deinit(temp_alloc);
 
     const width = canvas.width;
     const height: usize = @intCast(canvas.calcHeight());
