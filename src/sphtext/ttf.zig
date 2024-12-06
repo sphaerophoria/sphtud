@@ -653,8 +653,8 @@ pub fn pixelSizeFromGlyphHeader(font_size: f32, units_per_em: f32, glyph_header:
     const scale = font_size * dpi / (base_dpi * units_per_em);
 
     return .{
-        @intFromFloat(@floor(width_f * scale)),
-        @intFromFloat(@ceil(height_f * scale)),
+        @intFromFloat(@round(width_f * scale)),
+        @intFromFloat(@round(height_f * scale)),
     };
 }
 

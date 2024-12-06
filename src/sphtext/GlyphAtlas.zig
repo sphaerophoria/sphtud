@@ -69,6 +69,16 @@ pub fn init(alloc: Allocator) !GlyphAtlas {
 
     const texture = sphrender.makeTextureOfSize(tex_width, tex_height, .rf32);
 
+    const render_context = try sphrender.FramebufferRenderContext.init(texture, null);
+    defer render_context.reset();
+    gl.glClearColor(
+        -std.math.inf(f32),
+        -std.math.inf(f32),
+        -std.math.inf(f32),
+        -std.math.inf(f32),
+    );
+    gl.glClear(gl.GL_COLOR_BUFFER_BIT);
+
     return .{
         .program = program,
         .glyph_buffer = program.makeDefaultBuffer(),
@@ -139,8 +149,13 @@ fn addCharToAtlas(self: *GlyphAtlas, alloc: Allocator, temp_alloc: Allocator, ch
 fn allocateGlyphSpace(self: *GlyphAtlas, point_size: f32, units_per_em: f32, glyph_header: ttf_mod.GlyphTable.GlyphCommon) !PixelBBox {
     const pixel_size = ttf_mod.pixelSizeFromGlyphHeader(point_size, units_per_em, glyph_header);
 
+    // As far as I can tell, there are slight inconsistencies between the
+    // approach of sampling the texture atlas with UV coords, and rendering the
+    // image into the atlas with viewport coords. Add a 1 pixel border around
+    // each glyph to avoid interpolating SDFs of an adjacent glyph in the atlas
+    const padding = 1;
     if (self.x_cursor_px + pixel_size[0] > self.tex_width) {
-        self.y_cursor_px += self.row_max_height;
+        self.y_cursor_px += self.row_max_height + padding;
         self.x_cursor_px = 0;
         self.row_max_height = 0;
     }
@@ -150,7 +165,7 @@ fn allocateGlyphSpace(self: *GlyphAtlas, point_size: f32, units_per_em: f32, gly
     }
 
     const x_start = self.x_cursor_px;
-    self.x_cursor_px += pixel_size[0];
+    self.x_cursor_px += pixel_size[0] + padding;
     self.row_max_height = @max(self.row_max_height, pixel_size[1]);
 
     return .{
