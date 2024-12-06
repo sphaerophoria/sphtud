@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ttf_mod = @import("ttf.zig");
+
+const sphtext = @import("sphtext");
+const ttf_mod = sphtext.ttf;
 
 pub const FontId = struct { value: usize };
 const FontStorage = @This();

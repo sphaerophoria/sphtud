@@ -1,18 +1,11 @@
-const lin = @import("lin.zig");
+const sphmath = @import("sphmath");
 
-const Transform = lin.Transform;
-
-pub fn calcAspect(width: usize, height: usize) f32 {
-    const width_f: f32 = @floatFromInt(width);
-    const height_f: f32 = @floatFromInt(height);
-
-    return width_f / height_f;
-}
+const Transform = sphmath.Transform;
 
 pub fn aspectRatioCorrectedFill(inner_w: usize, inner_h: usize, outer_w: usize, outer_h: usize) Transform {
     return aspectsToCorrectedTransform(
-        calcAspect(inner_w, inner_h),
-        calcAspect(outer_w, outer_h),
+        sphmath.calcAspect(inner_w, inner_h),
+        sphmath.calcAspect(outer_w, outer_h),
     );
 }
 

@@ -1,13 +1,13 @@
 const std = @import("std");
-const Renderer = @import("Renderer.zig");
 const Allocator = std.mem.Allocator;
 const GlyphAtlas = @import("GlyphAtlas.zig");
-const lin = @import("lin.zig");
+const sphmath = @import("sphmath");
 const ttf_mod = @import("ttf.zig");
+const sphrender = @import("sphrender");
 
-pub const Buffer = Renderer.PlaneRenderProgram.Buffer;
+pub const Buffer = sphrender.PlaneRenderProgram.Buffer;
 
-program: Renderer.PlaneRenderProgram,
+program: sphrender.PlaneRenderProgram,
 glyph_atlas: GlyphAtlas,
 point_size: f32,
 
@@ -32,7 +32,7 @@ pub const TextLayout = struct {
 };
 
 pub fn init(alloc: Allocator, point_size: f32) !TextRenderer {
-    const program = try Renderer.PlaneRenderProgram.init(alloc, Renderer.plane_vertex_shader, text_fragment_shader, TextReservedIndex);
+    const program = try sphrender.PlaneRenderProgram.init(alloc, sphrender.plane_vertex_shader, text_fragment_shader, TextReservedIndex);
     errdefer program.deinit(alloc);
 
     const glyph_atlas = try GlyphAtlas.init(alloc);
@@ -81,9 +81,9 @@ pub fn layoutText(self: *TextRenderer, alloc: Allocator, text: []const u8, ttf: 
     };
 }
 
-pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, ttf: ttf_mod.Ttf, distance_field_generator: Renderer.DistanceFieldGenerator) !Buffer {
+pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, ttf: ttf_mod.Ttf, distance_field_generator: sphrender.DistanceFieldGenerator) !Buffer {
     const num_points_per_plane = 6;
-    const new_buffer_data = try alloc.alloc(Renderer.PlaneRenderProgram.Buffer.BufferPoint, text.glyphs.len * num_points_per_plane);
+    const new_buffer_data = try alloc.alloc(sphrender.PlaneRenderProgram.Buffer.BufferPoint, text.glyphs.len * num_points_per_plane);
     defer alloc.free(new_buffer_data);
 
     var arena = std.heap.ArenaAllocator.init(alloc);
@@ -102,7 +102,7 @@ pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, t
         const clip_y_top = pixToClip(glyph.pixel_y2, text.height_px);
         const clip_y_bottom = pixToClip(glyph.pixel_y1, text.height_px);
 
-        const BufferPoint = Renderer.PlaneRenderProgram.Buffer.BufferPoint;
+        const BufferPoint = sphrender.PlaneRenderProgram.Buffer.BufferPoint;
 
         const bl = BufferPoint{
             .clip_x = clip_x_start,
@@ -146,7 +146,7 @@ pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, t
     return buf;
 }
 
-pub fn render(self: TextRenderer, buf: Buffer, transform: lin.Transform) !void {
+pub fn render(self: TextRenderer, buf: Buffer, transform: sphmath.Transform) !void {
     self.program.render(buf, &.{}, &.{
         .{
             .idx = TextReservedIndex.input_df.asIndex(),

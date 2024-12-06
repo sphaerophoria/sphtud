@@ -1,11 +1,12 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const lin = @import("lin.zig");
-const gl = @import("gl.zig");
+const sphmath = @import("sphmath");
+const gl = @import("sphrender").gl;
 const Renderer = @import("Renderer.zig");
 const obj_mod = @import("object.zig");
 const StbImage = @import("StbImage.zig");
-const ttf_mod = @import("ttf.zig");
+const sphtext = @import("sphtext");
+const ttf_mod = sphtext.ttf;
 const FontStorage = @import("FontStorage.zig");
 const coords = @import("coords.zig");
 const dependency_loop = @import("dependency_loop.zig");
@@ -18,9 +19,9 @@ const Object = obj_mod.Object;
 const ObjectId = obj_mod.ObjectId;
 const Objects = obj_mod.Objects;
 
-const Vec2 = lin.Vec2;
-const Vec3 = lin.Vec3;
-const Transform = lin.Transform;
+const Vec2 = sphmath.Vec2;
+const Vec3 = sphmath.Vec3;
+const Transform = sphmath.Transform;
 const PixelDims = obj_mod.PixelDims;
 
 const ShaderStorage = shader_storage.ShaderStorage;
@@ -657,7 +658,7 @@ const ViewState = struct {
 
     fn clipToObject(self: *ViewState, val: Vec2, object_dims: PixelDims) Vec2 {
         const transform = self.objectToClipTransform(object_dims).invert();
-        return lin.applyHomogenous(transform.apply(Vec3{ val[0], val[1], 1.0 }));
+        return sphmath.applyHomogenous(transform.apply(Vec3{ val[0], val[1], 1.0 }));
     }
 
     fn objectToClipTransform(self: ViewState, object_dims: PixelDims) Transform {
@@ -702,8 +703,8 @@ const ViewState = struct {
         const tl_obj = Vec3{ -1.0, 1.0, 1.0 };
         const br_obj = Vec3{ 1.0, -1.0, 1.0 };
 
-        const tl_obj_win = lin.applyHomogenous(transform.apply(tl_obj));
-        const br_obj_win = lin.applyHomogenous(transform.apply(br_obj));
+        const tl_obj_win = sphmath.applyHomogenous(transform.apply(tl_obj));
+        const br_obj_win = sphmath.applyHomogenous(transform.apply(br_obj));
 
         // Height is essentially preserved
         try std.testing.expectApproxEqAbs(1.0, tl_obj_win[1], 0.01);
@@ -734,8 +735,8 @@ const ViewState = struct {
         const tl_obj = Vec3{ -1.0, 1.0, 1.0 };
         const br_obj = Vec3{ 1.0, -1.0, 1.0 };
 
-        const tl_obj_win = lin.applyHomogenous(transform.apply(tl_obj));
-        const br_obj_win = lin.applyHomogenous(transform.apply(br_obj));
+        const tl_obj_win = sphmath.applyHomogenous(transform.apply(tl_obj));
+        const br_obj_win = sphmath.applyHomogenous(transform.apply(br_obj));
 
         // Height should essentially be doubled in window space, because the
         // zoom is doubled. We are centered 0.5,0.5 up to the right, so a 2.0
@@ -766,14 +767,14 @@ const TransformAdjustingInputState = struct {
     // Object transform when adjustment started
     initial_transform: Transform,
     // Mouse position in composition space when adjustment started
-    start_pos: lin.Vec2,
+    start_pos: sphmath.Vec2,
     // Which object is being modified
     idx: obj_mod.CompositionIdx,
 
     fn init(mouse_pos: Vec2, composition_id: ObjectId, comp_idx: obj_mod.CompositionIdx, objects: *Objects) TransformAdjustingInputState {
         const composition_obj = objects.get(composition_id);
         const composition_dims = composition_obj.dims(objects);
-        const composition_aspect = coords.calcAspect(composition_dims[0], composition_dims[1]);
+        const composition_aspect = sphmath.calcAspect(composition_dims[0], composition_dims[1]);
 
         const composition_data = if (composition_obj.asComposition()) |comp| comp else unreachable;
 
@@ -793,7 +794,7 @@ const TransformAdjustingInputState = struct {
 const InputState = struct {
     selected_object: ObjectId = .{ .value = 0 },
     // object coords
-    mouse_pos: lin.Vec2 = .{ 0.0, 0.0 },
+    mouse_pos: sphmath.Vec2 = .{ 0.0, 0.0 },
     panning: bool = false,
     data: union(enum) {
         composition: CompositionInputState,
@@ -858,7 +859,7 @@ const InputState = struct {
                 var min_dist = std.math.inf(f32);
 
                 for (path.points.items, 0..) |point, idx| {
-                    const dist = lin.length2(self.mouse_pos - point);
+                    const dist = sphmath.length2(self.mouse_pos - point);
                     if (dist < min_dist) {
                         closest_point = idx;
                         min_dist = dist;
@@ -917,7 +918,7 @@ const InputState = struct {
                         // translation such that after aspect ratio correction
                         // it will move the right amount
 
-                        const aspect = coords.calcAspect(dims[0], dims[1]);
+                        const aspect = sphmath.calcAspect(dims[0], dims[1]);
                         const scale: Vec2 = if (aspect > 1.0)
                             .{ aspect, 1.0 }
                         else
@@ -939,11 +940,11 @@ const InputState = struct {
                         const transformed_end = params.comp_to_object.apply(Vec3{ new_pos[0], new_pos[1], 1.0 });
 
                         const rotate = Transform.rotateAToB(
-                            lin.applyHomogenous(transformed_start),
-                            lin.applyHomogenous(transformed_end),
+                            sphmath.applyHomogenous(transformed_start),
+                            sphmath.applyHomogenous(transformed_end),
                         );
 
-                        const translation_vec = lin.applyHomogenous(params.initial_transform.apply(Vec3{ 0, 0, 1.0 }));
+                        const translation_vec = sphmath.applyHomogenous(params.initial_transform.apply(Vec3{ 0, 0, 1.0 }));
                         const inv_translation = Transform.translate(-translation_vec[0], -translation_vec[1]);
                         const retranslate = Transform.translate(translation_vec[0], translation_vec[1]);
 
@@ -964,7 +965,7 @@ const InputState = struct {
                             Vec3{ params.start_pos[0], params.start_pos[1], 1.0 },
                         );
                         const transformed_end = params.comp_to_object.apply(Vec3{ new_pos[0], new_pos[1], 1.0 });
-                        const scale = lin.applyHomogenous(transformed_end) / lin.applyHomogenous(transformed_start);
+                        const scale = sphmath.applyHomogenous(transformed_end) / sphmath.applyHomogenous(transformed_start);
                         return InputAction{
                             .set_composition_transform = .{
                                 .idx = params.idx,
@@ -1075,12 +1076,12 @@ const InputState = struct {
         var closest_idx: usize = 0;
         var current_dist = std.math.inf(f32);
         const composition_dims = obj.dims(objects);
-        const composition_aspect = coords.calcAspect(composition_dims[0], composition_dims[1]);
+        const composition_aspect = sphmath.calcAspect(composition_dims[0], composition_dims[1]);
 
         for (0..composition_obj.objects.items.len) |idx| {
             const transform = composition_obj.objects.items[idx].composedToCompositionTransform(objects, composition_aspect);
-            const center = lin.applyHomogenous(transform.apply(Vec3{ 0, 0, 1 }));
-            const dist = lin.length2(center - self.mouse_pos);
+            const center = sphmath.applyHomogenous(transform.apply(Vec3{ 0, 0, 1 }));
+            const dist = sphmath.length2(center - self.mouse_pos);
             if (dist < current_dist) {
                 closest_idx = idx;
                 current_dist = dist;

@@ -5,7 +5,7 @@ const egl = @cImport({
     @cInclude("EGL/eglext.h");
 });
 const App = @import("App.zig");
-const lin = @import("lin.zig");
+const sphmath = @import("sphmath");
 const obj_mod = @import("object.zig");
 const stbiw = @cImport({
     @cInclude("stb_image_write.h");

@@ -1,23 +1,24 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const gl = @import("gl.zig");
-const lin = @import("lin.zig");
+const sphmath = @import("sphmath");
 const Renderer = @import("Renderer.zig");
 const StbImage = @import("StbImage.zig");
 const FontStorage = @import("FontStorage.zig");
 const shader_storage = @import("shader_storage.zig");
-const GlyphAtlas = @import("GlyphAtlas.zig");
-const TextRenderer = @import("TextRenderer.zig");
 const coords = @import("coords.zig");
-const ttf_mod = @import("ttf.zig");
+const sphtext = @import("sphtext");
+const GlyphAtlas = sphtext.GlyphAtlas;
+const TextRenderer = sphtext.TextRenderer;
+const ttf_mod = sphtext.ttf;
+const sphrender = @import("sphrender");
 
 const ShaderStorage = shader_storage.ShaderStorage;
 const ShaderId = shader_storage.ShaderId;
 const BrushId = shader_storage.BrushId;
 
-const Transform = lin.Transform;
-const Vec3 = lin.Vec3;
-const Vec2 = lin.Vec2;
+const Transform = sphmath.Transform;
+const Vec3 = sphmath.Vec3;
+const Vec2 = sphmath.Vec2;
 pub const PixelDims = @Vector(2, usize);
 
 pub const Object = struct {
@@ -379,7 +380,7 @@ pub const ShaderObject = struct {
         errdefer alloc.free(bindings);
 
         for (program.uniforms, 0..) |uniform, idx| {
-            bindings[idx] = uniform.default;
+            bindings[idx] = Renderer.UniformValue.fromDefault(uniform.default);
         }
 
         return .{
@@ -429,7 +430,7 @@ pub const FilesystemObject = struct {
         const image = try StbImage.init(path);
         defer image.deinit();
 
-        const texture = Renderer.makeTextureFromRgba(image.data, image.width);
+        const texture = sphrender.makeTextureFromRgba(image.data, image.width);
         errdefer texture.deinit();
 
         const source = try alloc.dupeZ(u8, path);
@@ -535,7 +536,7 @@ pub const GeneratedMaskObject = struct {
             }
         }
 
-        const texture = Renderer.makeTextureFromR(mask, width);
+        const texture = sphrender.makeTextureFromR(mask, width);
         return .{
             .texture = texture,
             .source = source,
@@ -681,7 +682,7 @@ pub const DrawingObject = struct {
         errdefer alloc.free(bindings);
 
         for (0..bindings.len) |i| {
-            bindings[i] = uniforms[i].default;
+            bindings[i] = Renderer.UniformValue.fromDefault(uniforms[i].default);
         }
         return .{
             .display_object = display_object,
@@ -695,7 +696,7 @@ pub const DrawingObject = struct {
         alloc: Allocator,
         pos: Vec2,
         objects: *Objects,
-        distance_field_renderer: Renderer.DistanceFieldGenerator,
+        distance_field_renderer: sphrender.DistanceFieldGenerator,
     ) !void {
         try self.strokes.append(alloc, Stroke{});
         try self.addSample(alloc, pos, objects, distance_field_renderer);
@@ -706,7 +707,7 @@ pub const DrawingObject = struct {
         alloc: Allocator,
         pos: Vec2,
         objects: *Objects,
-        distance_field_renderer: Renderer.DistanceFieldGenerator,
+        distance_field_renderer: sphrender.DistanceFieldGenerator,
     ) !void {
         const last_stroke = &self.strokes.items[self.strokes.items.len - 1];
         try last_stroke.addPoint(alloc, pos);
@@ -718,7 +719,7 @@ pub const DrawingObject = struct {
         self: *DrawingObject,
         alloc: Allocator,
         objects: *Objects,
-        distance_field_renderer: Renderer.DistanceFieldGenerator,
+        distance_field_renderer: sphrender.DistanceFieldGenerator,
     ) !void {
         var vertex_array_it = StrokeVertexArrayIt{ .strokes = self.strokes.items };
 
@@ -753,7 +754,7 @@ pub const DrawingObject = struct {
         defer alloc.free(bindings);
 
         for (0..bindings.len) |i| {
-            bindings[i] = uniforms[i].default;
+            bindings[i] = Renderer.UniformValue.fromDefault(uniforms[i].default);
         }
         self.brush = brush_id;
         std.mem.swap([]Renderer.UniformValue, &bindings, &self.bindings);
@@ -811,7 +812,7 @@ pub const TextObject = struct {
         if (self.layout) |l| l.deinit(alloc);
     }
 
-    pub fn update(self: *TextObject, alloc: Allocator, text: []const u8, fonts: FontStorage, distance_field_renderer: Renderer.DistanceFieldGenerator) !void {
+    pub fn update(self: *TextObject, alloc: Allocator, text: []const u8, fonts: FontStorage, distance_field_renderer: sphrender.DistanceFieldGenerator) !void {
         var new_text = try alloc.dupe(u8, text);
         defer alloc.free(new_text);
         std.mem.swap([]const u8, &self.current_text, &new_text);
@@ -821,7 +822,7 @@ pub const TextObject = struct {
         try self.regenerate(alloc, fonts, distance_field_renderer);
     }
 
-    pub fn updateFont(self: *TextObject, alloc: Allocator, font_id: FontStorage.FontId, fonts: FontStorage, distance_field_renderer: Renderer.DistanceFieldGenerator) !void {
+    pub fn updateFont(self: *TextObject, alloc: Allocator, font_id: FontStorage.FontId, fonts: FontStorage, distance_field_renderer: sphrender.DistanceFieldGenerator) !void {
         const old_font = self.font;
         self.font = font_id;
         errdefer {
@@ -836,7 +837,7 @@ pub const TextObject = struct {
         try self.regenerate(alloc, fonts, distance_field_renderer);
     }
 
-    pub fn updateFontSize(self: *TextObject, alloc: Allocator, size: f32, fonts: FontStorage, distance_field_renderer: Renderer.DistanceFieldGenerator) !void {
+    pub fn updateFontSize(self: *TextObject, alloc: Allocator, size: f32, fonts: FontStorage, distance_field_renderer: sphrender.DistanceFieldGenerator) !void {
         var old_renderer = self.renderer;
         defer old_renderer.deinit(alloc);
         self.renderer = try TextRenderer.init(alloc, size);
@@ -845,7 +846,7 @@ pub const TextObject = struct {
         try self.regenerate(alloc, fonts, distance_field_renderer);
     }
 
-    pub fn regenerate(self: *TextObject, alloc: Allocator, fonts: FontStorage, distance_field_renderer: Renderer.DistanceFieldGenerator) !void {
+    pub fn regenerate(self: *TextObject, alloc: Allocator, fonts: FontStorage, distance_field_renderer: sphrender.DistanceFieldGenerator) !void {
         if (self.current_text.len < 1) {
             if (self.buffer) |b| b.deinit();
             if (self.layout) |l| l.deinit(alloc);

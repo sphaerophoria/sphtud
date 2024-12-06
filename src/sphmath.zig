@@ -203,3 +203,10 @@ pub const Transform = struct {
         } } };
     }
 };
+
+pub fn calcAspect(width: usize, height: usize) f32 {
+    const width_f: f32 = @floatFromInt(width);
+    const height_f: f32 = @floatFromInt(height);
+
+    return width_f / height_f;
+}
