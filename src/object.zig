@@ -872,7 +872,7 @@ pub const TextObject = struct {
     fn getSizePx(self: TextObject) PixelDims {
         const layout = self.layout orelse return .{ 100, 100 };
         return .{
-            layout.width_px, layout.height_px,
+            layout.width(), layout.height(),
         };
     }
 };

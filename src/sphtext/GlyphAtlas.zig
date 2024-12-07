@@ -147,7 +147,8 @@ fn addCharToAtlas(self: *GlyphAtlas, alloc: Allocator, temp_alloc: Allocator, ch
 }
 
 fn allocateGlyphSpace(self: *GlyphAtlas, point_size: f32, units_per_em: f32, glyph_header: ttf_mod.GlyphTable.GlyphCommon) !PixelBBox {
-    const pixel_size = ttf_mod.pixelSizeFromGlyphHeader(point_size, units_per_em, glyph_header);
+    const funit_converter = ttf_mod.FunitToPixelConverter.init(point_size, units_per_em);
+    const pixel_size = funit_converter.pixelBoundsForGlyph(glyph_header);
 
     // As far as I can tell, there are slight inconsistencies between the
     // approach of sampling the texture atlas with UV coords, and rendering the
@@ -170,8 +171,8 @@ fn allocateGlyphSpace(self: *GlyphAtlas, point_size: f32, units_per_em: f32, gly
 
     return .{
         .left = x_start,
-        .right = self.x_cursor_px,
-        .top = self.y_cursor_px + pixel_size[1],
+        .right = self.x_cursor_px - padding,
+        .top = self.y_cursor_px + pixel_size[1] - padding,
         .bottom = self.y_cursor_px,
     };
 }

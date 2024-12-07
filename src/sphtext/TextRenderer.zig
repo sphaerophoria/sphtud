@@ -16,19 +16,29 @@ const TextRenderer = @This();
 pub const TextLayout = struct {
     const GlyphLoc = struct {
         char: u8,
-        pixel_x1: u32,
-        pixel_x2: u32,
-        pixel_y1: u32,
-        pixel_y2: u32,
+        pixel_x1: i32,
+        pixel_x2: i32,
+        pixel_y1: i32,
+        pixel_y2: i32,
     };
 
     pub fn deinit(self: TextLayout, alloc: Allocator) void {
         alloc.free(self.glyphs);
     }
 
+    pub fn width(self: TextLayout) u32 {
+        return @intCast(self.max_x - self.min_x);
+    }
+
+    pub fn height(self: TextLayout) u32 {
+        return @intCast(self.max_y - self.min_y);
+    }
+
     glyphs: []GlyphLoc,
-    width_px: u32,
-    height_px: u32,
+    min_x: i32,
+    max_x: i32,
+    min_y: i32,
+    max_y: i32,
 };
 
 pub fn init(alloc: Allocator, point_size: f32) !TextRenderer {
@@ -51,33 +61,52 @@ pub fn deinit(self: *TextRenderer, alloc: Allocator) void {
 }
 
 pub fn layoutText(self: *TextRenderer, alloc: Allocator, text: []const u8, ttf: ttf_mod.Ttf) !TextLayout {
-    var width: u32 = 0;
-    var height: u32 = 0;
+    var min_x: i32 = 0;
+    var max_x: i32 = 0;
+    var min_y: i32 = 0;
+    var max_y: i32 = 0;
+    var funit_cursor: i64 = 0;
 
     var glyphs = std.ArrayList(TextLayout.GlyphLoc).init(alloc);
     defer glyphs.deinit();
 
+    const funit_converter = ttf_mod.FunitToPixelConverter.init(self.point_size, @floatFromInt(ttf.head.units_per_em));
     for (text) |c| {
-        const header = ttf_mod.glyphHeaderForChar(ttf, c) orelse continue;
+        const metrics = ttf_mod.metricsForChar(ttf, c);
+        defer funit_cursor += metrics.advance_width;
 
-        const pixel_size = ttf_mod.pixelSizeFromGlyphHeader(self.point_size, @floatFromInt(ttf.head.units_per_em), header);
+        const header = ttf_mod.glyphHeaderForChar(ttf, c) orelse continue;
+        const x1 = funit_cursor + metrics.left_side_bearing;
+        const x2 = x1 + header.x_max - header.x_min;
+
+        const x1_px = funit_converter.pixelFromFunit(x1);
+        const y1_px = funit_converter.pixelFromFunit(header.y_min);
+        // Why not just use x2 or header.y_max? We want to make sure no matter
+        // how much the cursor has advanced in funits, we always render the
+        // glyph aligned to the same number of pixels.
+        const x2_px = x1_px + funit_converter.pixelFromFunit(x2 - x1);
+        const y2_px = y1_px + funit_converter.pixelFromFunit(header.y_max - header.y_min);
 
         try glyphs.append(.{
             .char = c,
-            .pixel_x1 = width,
-            .pixel_x2 = width + @as(u32, @intCast(pixel_size[0])),
-            .pixel_y1 = 0,
-            .pixel_y2 = @intCast(pixel_size[1]),
+            .pixel_x1 = x1_px,
+            .pixel_x2 = x2_px,
+            .pixel_y1 = y1_px,
+            .pixel_y2 = y2_px,
         });
 
-        width += @intCast(pixel_size[0]);
-        height = @intCast(@max(height, pixel_size[1]));
+        min_x = @min(min_x, x1_px);
+        max_x = @max(max_x, x2_px);
+        min_y = @min(min_y, y1_px);
+        max_y = @max(max_y, y2_px);
     }
 
     return .{
         .glyphs = try glyphs.toOwnedSlice(),
-        .width_px = width,
-        .height_px = height,
+        .min_x = min_x,
+        .max_x = max_x,
+        .min_y = min_y,
+        .max_y = max_y,
     };
 }
 
@@ -97,10 +126,10 @@ pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, t
         const uv_loc = try self.glyph_atlas.getGlyphLocation(alloc, arena.allocator(), glyph.char, self.point_size, ttf, distance_field_generator);
 
         // [0, width] -> [-1, 1]
-        const clip_x_start = pixToClip(glyph.pixel_x1, text.width_px);
-        const clip_x_end = pixToClip(glyph.pixel_x2, text.width_px);
-        const clip_y_top = pixToClip(glyph.pixel_y2, text.height_px);
-        const clip_y_bottom = pixToClip(glyph.pixel_y1, text.height_px);
+        const clip_x_start = pixToClip(@intCast(glyph.pixel_x1 - text.min_x), text.width());
+        const clip_x_end = pixToClip(@intCast(glyph.pixel_x2 - text.min_x), text.width());
+        const clip_y_top = pixToClip(@intCast(glyph.pixel_y2 - text.min_y), text.height());
+        const clip_y_bottom = pixToClip(@intCast(glyph.pixel_y1 - text.min_y), text.height());
 
         const BufferPoint = sphrender.PlaneRenderProgram.Buffer.BufferPoint;
 
@@ -154,7 +183,7 @@ pub fn render(self: TextRenderer, buf: Buffer, transform: sphmath.Transform) !vo
         },
         .{
             .idx = TextReservedIndex.multiplier.asIndex(),
-            .val = .{ .float = self.point_size / 2.0 },
+            .val = .{ .float = self.point_size * 0.3 },
         },
     }, transform);
 }
@@ -183,10 +212,9 @@ pub const text_fragment_shader =
     \\uniform float multiplier = 100.0;
     \\void main()
     \\{
-    \\    float distance = texture(input_df, vec2(uv.x, uv.y)).r;
+    \\    float distance = texture(input_df, uv).r;
     \\    float N = 1.0 / multiplier;
-    \\    float val = (distance + N) / 2.0 / N;
-    \\    float alpha = clamp(val, 0.0, 1.0);
+    \\    float alpha = smoothstep(-N, N, distance);
     \\    fragment = vec4(1.0, 1.0, 1.0, alpha);
     \\}
 ;

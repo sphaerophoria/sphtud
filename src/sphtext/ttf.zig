@@ -81,6 +81,55 @@ const MaxpTable = packed struct {
     maxComponentDepth: u16,
 };
 
+const HheaTable = packed struct {
+    version: Fixed,
+    ascent: i16,
+    descent: i16,
+    line_gap: i16,
+    advance_width_max: u16,
+    min_left_side_bearing: i16,
+    min_right_side_bearing: i16,
+    x_max_extent: i16,
+    caret_slope_rise: i16,
+    caret_slope_run: i16,
+    caret_offset: i16,
+    reserved1: i16,
+    reserved2: i16,
+    reserved3: i16,
+    reserved4: i16,
+    metric_data_format: i16,
+    num_of_long_hor_metrics: u16,
+};
+
+const HmtxTable = struct {
+    hmtx_bytes: []const u8,
+
+    const LongHorMetric = packed struct {
+        advance_width: u16,
+        left_side_bearing: i16,
+    };
+
+    pub fn getMetrics(self: HmtxTable, num_hor_metrics: usize, glyph_index: usize) LongHorMetric {
+        if (glyph_index < num_hor_metrics) {
+            return self.loadHorMetric(glyph_index);
+        } else {
+            const last = self.loadHorMetric(num_hor_metrics - 1);
+            const lsb_index = glyph_index - num_hor_metrics;
+            const lsb_offs = num_hor_metrics * @bitSizeOf(LongHorMetric) / 8 + lsb_index * 2;
+            const lsb = fixEndianness(std.mem.bytesToValue(i16, self.hmtx_bytes[lsb_offs..]));
+            return .{
+                .advance_width = last.advance_width,
+                .left_side_bearing = lsb,
+            };
+        }
+    }
+
+    fn loadHorMetric(self: HmtxTable, idx: usize) LongHorMetric {
+        const offs = idx * @bitSizeOf(LongHorMetric) / 8;
+        return fixEndianness(std.mem.bytesToValue(LongHorMetric, self.hmtx_bytes[offs..]));
+    }
+};
+
 pub const CmapTable = struct {
     cmap_bytes: []const u8,
 
@@ -398,6 +447,8 @@ pub const Ttf = struct {
         maxp,
         loca,
         glyf,
+        hhea,
+        hmtx,
     };
 
     head: HeadTable,
@@ -405,6 +456,8 @@ pub const Ttf = struct {
     cmap: CmapTable,
     loca: []const u32,
     glyf: GlyphTable,
+    hhea: HheaTable,
+    hmtx: HmtxTable,
 
     cmap_subtable: CmapTable.SubtableFormat4,
 
@@ -418,6 +471,8 @@ pub const Ttf = struct {
         var cmap: ?CmapTable = null;
         var glyf: ?GlyphTable = null;
         var loca: ?[]const u32 = null;
+        var hhea: ?HheaTable = null;
+        var hmtx: ?HmtxTable = null;
 
         for (table_entries) |entry_big| {
             const entry = fixEndianness(entry_big);
@@ -425,6 +480,9 @@ pub const Ttf = struct {
             switch (tag) {
                 .head => {
                     head = fixEndianness(std.mem.bytesToValue(HeadTable, tableFromEntry(font_data, entry)));
+                },
+                .hhea => {
+                    hhea = fixEndianness(std.mem.bytesToValue(HheaTable, tableFromEntry(font_data, entry)));
                 },
                 .loca => {
                     loca = try fixSliceEndianness(u32, alloc, @alignCast(std.mem.bytesAsSlice(u32, tableFromEntry(font_data, entry))));
@@ -437,6 +495,9 @@ pub const Ttf = struct {
                 },
                 .glyf => {
                     glyf = GlyphTable{ .data = tableFromEntry(font_data, entry) };
+                },
+                .hmtx => {
+                    hmtx = HmtxTable{ .hmtx_bytes = tableFromEntry(font_data, entry) };
                 },
             }
         }
@@ -457,6 +518,8 @@ pub const Ttf = struct {
             .cmap = cmap orelse return error.NoCmap,
             .glyf = glyf orelse return error.NoGlyf,
             .cmap_subtable = subtable,
+            .hhea = hhea orelse return error.NoHhea,
+            .hmtx = hmtx orelse return error.NoHmtx,
         };
     }
 
@@ -644,19 +707,37 @@ pub fn glyphForChar(alloc: Allocator, ttf: Ttf, char: u16) !?GlyphTable.SimpleGl
     return try ttf.glyf.getGlyphSimple(alloc, glyf_start, glyf_end);
 }
 
-pub fn pixelSizeFromGlyphHeader(font_size: f32, units_per_em: f32, glyph_header: GlyphTable.GlyphCommon) struct { u16, u16 } {
-    const width_f: f32 = @floatFromInt(glyph_header.x_max - glyph_header.x_min);
-    const height_f: f32 = @floatFromInt(glyph_header.y_max - glyph_header.y_min);
-
-    const dpi = 96; // Default DPI is 96
-    const base_dpi = 72; // from ttf spec
-    const scale = font_size * dpi / (base_dpi * units_per_em);
-
-    return .{
-        @intFromFloat(@round(width_f * scale)),
-        @intFromFloat(@round(height_f * scale)),
-    };
+pub fn metricsForChar(ttf: Ttf, char: u16) HmtxTable.LongHorMetric {
+    const glyph_index = ttf.cmap_subtable.getGlyphIndex(char);
+    return ttf.hmtx.getMetrics(ttf.hhea.num_of_long_hor_metrics, glyph_index);
 }
+
+pub const FunitToPixelConverter = struct {
+    scale: f32,
+
+    pub fn init(font_size: f32, units_per_em: f32) FunitToPixelConverter {
+        const dpi = 96; // Default DPI is 96
+        const base_dpi = 72; // from ttf spec
+        return .{
+            .scale = font_size * dpi / (base_dpi * units_per_em),
+        };
+    }
+
+    pub fn pixelBoundsForGlyph(self: FunitToPixelConverter, glyph_header: GlyphTable.GlyphCommon) [2]u16 {
+        const width_f: f32 = @floatFromInt(glyph_header.x_max - glyph_header.x_min);
+        const height_f: f32 = @floatFromInt(glyph_header.y_max - glyph_header.y_min);
+
+        return .{
+            @intFromFloat(@round(width_f * self.scale)),
+            @intFromFloat(@round(height_f * self.scale)),
+        };
+    }
+
+    pub fn pixelFromFunit(self: FunitToPixelConverter, funit: i64) i32 {
+        const size_f: f32 = @floatFromInt(funit);
+        return @intFromFloat(@round(self.scale * size_f));
+    }
+};
 
 pub const BBox = struct {
     const invalid = BBox{
@@ -1245,11 +1326,15 @@ pub fn renderGlyphAt1PxPerFunit(alloc: Allocator, glyph: GlyphTable.SimpleGlyph)
     var curves = std.ArrayList(GlyphSegmentIter.Output).init(alloc);
     defer curves.deinit();
 
-    var total_bbox = BBox.invalid;
+    var total_bbox = BBox{
+        .min_x = glyph.common.x_min,
+        .max_x = glyph.common.x_max,
+        .min_y = glyph.common.y_min,
+        .max_y = glyph.common.y_max,
+    };
+
     while (iter.next()) |item| {
         try curves.append(item);
-        const item_bbox = curveBounds(item);
-        total_bbox = mergeBboxes(total_bbox, item_bbox);
     }
 
     var canvas = try Canvas.init(alloc, ((total_bbox.width() + 7) / 8) * 8, total_bbox.height());
