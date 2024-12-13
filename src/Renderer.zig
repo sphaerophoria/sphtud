@@ -232,6 +232,9 @@ pub const FrameRenderer = struct {
         const temp_viewport = sphrender.TemporaryViewport.init();
         defer temp_viewport.reset();
 
+        gl.glClearColor(0.0, 0.0, 0.0, 0.0);
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT);
+
         temp_viewport.setViewport(@intCast(dep_width), @intCast(dep_height));
 
         try self.renderObjectWithTransform(input, Transform.identity);
