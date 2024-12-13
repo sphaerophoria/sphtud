@@ -178,10 +178,21 @@ pub const FrameRenderer = struct {
             },
             .generated_mask => |m| {
                 const object_dims = object.dims(self.objects);
-                self.renderer.program.render(self.renderer.default_buffer, &.{.{ .image = m.texture.inner }}, &.{.{
-                    .idx = DefaultPlaneReservedIndex.aspect.asIndex(),
-                    .val = .{ .float = sphmath.calcAspect(object_dims[0], object_dims[1]) },
-                }}, transform);
+                self.renderer.program.render(
+                    self.renderer.default_buffer,
+                    &.{},
+                    &.{
+                        .{
+                            .idx = DefaultPlaneReservedIndex.input_image.asIndex(),
+                            .val = .{ .image = m.texture.inner },
+                        },
+                        .{
+                            .idx = DefaultPlaneReservedIndex.aspect.asIndex(),
+                            .val = .{ .float = sphmath.calcAspect(object_dims[0], object_dims[1]) },
+                        },
+                    },
+                    transform,
+                );
             },
             .drawing => |d| {
                 const display_object = self.objects.get(d.display_object);
