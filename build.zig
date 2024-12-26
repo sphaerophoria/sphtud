@@ -5,6 +5,8 @@ const Builder = struct {
     target: std.Build.ResolvedTarget,
     opt: std.builtin.OptimizeMode,
 
+    check_step: *std.Build.Step,
+
     sphmath: *std.Build.Module,
     sphrender: *std.Build.Module,
     sphtext: *std.Build.Module,
@@ -12,6 +14,8 @@ const Builder = struct {
     fn init(b: *std.Build) Builder {
         const target = b.standardTargetOptions(.{});
         const opt = b.standardOptimizeOption(.{});
+
+        const check_step = b.step("check", "");
 
         const sphmath = b.createModule(.{
             .root_source_file = b.path("src/sphmath.zig"),
@@ -30,6 +34,7 @@ const Builder = struct {
 
         return .{
             .b = b,
+            .check_step = check_step,
             .target = target,
             .opt = opt,
             .sphmath = sphmath,
@@ -95,6 +100,13 @@ const Builder = struct {
             .optimize = self.opt,
         });
     }
+
+    fn installAndCheck(self: *Builder, exe: *std.Build.Step.Compile) !void {
+        const check_exe = try self.b.allocator.create(std.Build.Step.Compile);
+        check_exe.* = exe.*;
+        self.check_step.dependOn(&check_exe.step);
+        self.b.installArtifact(exe);
+    }
 };
 
 pub fn build(b: *std.Build) !void {
@@ -103,7 +115,7 @@ pub fn build(b: *std.Build) !void {
     const exe = builder.addExecutable("sphimp", "src/main.zig");
     builder.addAppDependencies(exe);
     builder.addGuiDependencies(exe);
-    b.installArtifact(exe);
+    try builder.installAndCheck(exe);
 
     const lint_exe = builder.addExecutable(
         "lint",
@@ -111,7 +123,7 @@ pub fn build(b: *std.Build) !void {
     );
     lint_exe.linkSystemLibrary("EGL");
     builder.addAppDependencies(lint_exe);
-    b.installArtifact(lint_exe);
+    try builder.installAndCheck(lint_exe);
 
     const uts = builder.addTest(
         "test",
