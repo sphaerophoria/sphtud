@@ -10,6 +10,7 @@ pub const Buffer = sphrender.PlaneRenderProgram.Buffer;
 program: sphrender.PlaneRenderProgram,
 glyph_atlas: GlyphAtlas,
 point_size: f32,
+multiplier: f32 = 0.25,
 
 const TextRenderer = @This();
 
@@ -353,7 +354,7 @@ pub fn render(self: TextRenderer, buf: Buffer, transform: sphmath.Transform) !vo
         },
         .{
             .idx = TextReservedIndex.multiplier.asIndex(),
-            .val = .{ .float = self.point_size * 0.3 },
+            .val = .{ .float = self.point_size * self.multiplier },
         },
     }, transform);
 }
