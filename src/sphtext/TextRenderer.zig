@@ -346,7 +346,7 @@ pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, t
     return buf;
 }
 
-pub fn render(self: TextRenderer, buf: Buffer, transform: sphmath.Transform) !void {
+pub fn render(self: TextRenderer, buf: Buffer, transform: sphmath.Transform) void {
     self.program.render(buf, &.{}, &.{
         .{
             .idx = TextReservedIndex.input_df.asIndex(),

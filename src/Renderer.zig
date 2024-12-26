@@ -223,7 +223,7 @@ pub const FrameRenderer = struct {
             },
             .text => |t| {
                 if (t.buffer) |b| {
-                    try t.renderer.render(b, transform);
+                    t.renderer.render(b, transform);
                 }
             },
         }
