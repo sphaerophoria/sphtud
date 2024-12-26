@@ -10,6 +10,7 @@ const Builder = struct {
     sphmath: *std.Build.Module,
     sphrender: *std.Build.Module,
     sphtext: *std.Build.Module,
+    sphimp: *std.Build.Module,
 
     fn init(b: *std.Build) Builder {
         const target = b.standardTargetOptions(.{});
@@ -32,6 +33,25 @@ const Builder = struct {
         sphtext.addImport("sphrender", sphrender);
         sphtext.addImport("sphmath", sphmath);
 
+        const sphimp = b.createModule(.{
+            .root_source_file = b.path("src/sphimp/sphimp.zig"),
+        });
+        sphimp.addImport("sphrender", sphrender);
+        sphimp.addImport("sphmath", sphmath);
+        sphimp.addImport("sphtext", sphtext);
+        sphimp.addCSourceFiles(.{
+            .root = b.path("src/stb"),
+            .files = &.{ "stb_image.c", "stb_image_write.c" },
+        });
+        sphimp.addIncludePath(b.path("src/stb"));
+
+        const sphui = b.createModule(.{
+            .root_source_file = b.path("src/gui/gui.zig"),
+        });
+        sphui.addImport("sphrender", sphrender);
+        sphui.addImport("sphmath", sphmath);
+        sphui.addImport("sphtext", sphtext);
+
         return .{
             .b = b,
             .check_step = check_step,
@@ -40,6 +60,7 @@ const Builder = struct {
             .sphmath = sphmath,
             .sphrender = sphrender,
             .sphtext = sphtext,
+            .sphimp = sphimp,
         };
     }
 
@@ -47,17 +68,12 @@ const Builder = struct {
         self: *Builder,
         exe: *std.Build.Step.Compile,
     ) void {
-        exe.addCSourceFile(.{
-            .file = self.b.path("src/stb_image.c"),
-        });
-        exe.addCSourceFile(.{
-            .file = self.b.path("src/stb_image_write.c"),
-        });
         exe.linkSystemLibrary("GL");
-        exe.addIncludePath(self.b.path("src"));
+        exe.addIncludePath(self.b.path("src/stb"));
         exe.root_module.addImport("sphmath", self.sphmath);
         exe.root_module.addImport("sphrender", self.sphrender);
         exe.root_module.addImport("sphtext", self.sphtext);
+        exe.root_module.addImport("sphimp", self.sphimp);
         exe.linkLibC();
         exe.linkLibCpp();
     }
@@ -127,7 +143,7 @@ pub fn build(b: *std.Build) !void {
 
     const uts = builder.addTest(
         "test",
-        "src/App.zig",
+        "src/sphimp/App.zig",
     );
     builder.addAppDependencies(uts);
 

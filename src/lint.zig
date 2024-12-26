@@ -4,9 +4,10 @@ const egl = @cImport({
     @cInclude("EGL/egl.h");
     @cInclude("EGL/eglext.h");
 });
-const App = @import("App.zig");
+const sphimp = @import("sphimp");
+const App = sphimp.App;
 const sphmath = @import("sphmath");
-const obj_mod = @import("object.zig");
+const obj_mod = sphimp.object;
 const stbiw = @cImport({
     @cInclude("stb_image_write.h");
 });
