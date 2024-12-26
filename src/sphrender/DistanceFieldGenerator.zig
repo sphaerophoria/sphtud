@@ -72,7 +72,11 @@ pub fn generateDistanceField(self: DistanceFieldGenerator, alloc: Allocator, poi
         const temp_viewport = sphrender.TemporaryViewport.init();
         defer temp_viewport.reset();
 
+        const temp_scissor = sphrender.TemporaryScissor.init();
+        defer temp_scissor.reset();
+
         temp_viewport.setViewport(@intCast(width), @intCast(height));
+        temp_scissor.setAbsolute(0, 0, @intCast(width), @intCast(height));
 
         clearBuffers();
 
