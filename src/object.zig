@@ -857,7 +857,12 @@ pub const TextObject = struct {
         }
 
         const ttf = &fonts.get(self.font).ttf;
-        const layout = try self.renderer.layoutText(alloc, self.current_text, ttf.*);
+        const layout = try self.renderer.layoutText(
+            alloc,
+            self.current_text,
+            ttf.*,
+            std.math.maxInt(u31),
+        );
         errdefer layout.deinit(alloc);
 
         const buffer = try self.renderer.makeTextBuffer(alloc, layout, ttf.*, distance_field_renderer);

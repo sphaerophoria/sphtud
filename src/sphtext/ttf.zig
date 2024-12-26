@@ -101,10 +101,10 @@ const HheaTable = packed struct {
     num_of_long_hor_metrics: u16,
 };
 
-const HmtxTable = struct {
+pub const HmtxTable = struct {
     hmtx_bytes: []const u8,
 
-    const LongHorMetric = packed struct {
+    pub const LongHorMetric = packed struct {
         advance_width: u16,
         left_side_bearing: i16,
     };
@@ -477,6 +477,7 @@ pub const Ttf = struct {
         for (table_entries) |entry_big| {
             const entry = fixEndianness(entry_big);
             const tag = std.meta.stringToEnum(HeaderTag, &entry.tag) orelse continue;
+
             switch (tag) {
                 .head => {
                     head = fixEndianness(std.mem.bytesToValue(HeadTable, tableFromEntry(font_data, entry)));
@@ -710,6 +711,10 @@ pub fn glyphForChar(alloc: Allocator, ttf: Ttf, char: u16) !?GlyphTable.SimpleGl
 pub fn metricsForChar(ttf: Ttf, char: u16) HmtxTable.LongHorMetric {
     const glyph_index = ttf.cmap_subtable.getGlyphIndex(char);
     return ttf.hmtx.getMetrics(ttf.hhea.num_of_long_hor_metrics, glyph_index);
+}
+
+pub fn lineHeight(ttf: Ttf) i16 {
+    return ttf.hhea.ascent - ttf.hhea.descent + ttf.hhea.line_gap;
 }
 
 pub const FunitToPixelConverter = struct {

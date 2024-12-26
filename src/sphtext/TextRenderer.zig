@@ -60,54 +60,224 @@ pub fn deinit(self: *TextRenderer, alloc: Allocator) void {
     self.glyph_atlas.deinit(alloc);
 }
 
-pub fn layoutText(self: *TextRenderer, alloc: Allocator, text: []const u8, ttf: ttf_mod.Ttf) !TextLayout {
-    var min_x: i32 = 0;
-    var max_x: i32 = 0;
-    var min_y: i32 = 0;
-    var max_y: i32 = 0;
-    var funit_cursor: i64 = 0;
+const LayoutState = enum {
+    in_word,
+    between_word,
+};
 
-    var glyphs = std.ArrayList(TextLayout.GlyphLoc).init(alloc);
-    defer glyphs.deinit();
+const LayoutBox = struct {
+    min_x: i32 = 0,
+    max_x: i32 = 0,
+    min_y: i32 = 0,
+    max_y: i32 = 0,
 
-    const funit_converter = ttf_mod.FunitToPixelConverter.init(self.point_size, @floatFromInt(ttf.head.units_per_em));
-    for (text) |c| {
-        const metrics = ttf_mod.metricsForChar(ttf, c);
-        defer funit_cursor += metrics.advance_width;
+    fn width(self: LayoutBox) i32 {
+        return self.max_x - self.min_x;
+    }
 
-        const header = ttf_mod.glyphHeaderForChar(ttf, c) orelse continue;
-        const x1 = funit_cursor + metrics.left_side_bearing;
+    fn merge(a: LayoutBox, b: LayoutBox) LayoutBox {
+        return .{
+            .min_x = @min(a.min_x, b.min_x),
+            .max_x = @max(a.max_x, b.max_x),
+            .min_y = @min(a.min_y, b.min_y),
+            .max_y = @max(a.max_y, b.max_y),
+        };
+    }
+};
+
+const LayoutHelper = struct {
+    line_height: i16,
+    text: []const u8,
+    ttf: *const ttf_mod.Ttf,
+    wrap_width_px: u31,
+    funit_converter: ttf_mod.FunitToPixelConverter,
+    glyphs: std.ArrayList(TextLayout.GlyphLoc),
+
+    funit_cursor_x: i64 = 0,
+    funit_cursor_y: i64 = 0,
+    text_idx: usize = 0,
+    rollback_data: RollbackData = .{},
+    bounds: LayoutBox = .{},
+    layout_state: LayoutState = .between_word,
+
+    const RollbackData = struct {
+        text_idx: usize = 0,
+        glyphs_len: usize = 0,
+        bounds: LayoutBox = .{},
+        start_x: i64 = 0,
+    };
+
+    fn init(alloc: Allocator, text: []const u8, ttf: *const ttf_mod.Ttf, wrap_width_px: u31, font_size: f32) LayoutHelper {
+        return .{
+            .line_height = ttf_mod.lineHeight(ttf.*),
+            .text = text,
+            .ttf = ttf,
+            .wrap_width_px = wrap_width_px,
+            .funit_converter = ttf_mod.FunitToPixelConverter.init(font_size, @floatFromInt(ttf.head.units_per_em)),
+            .glyphs = std.ArrayList(TextLayout.GlyphLoc).init(alloc),
+        };
+    }
+
+    fn nextChar(self: *LayoutHelper) ?u8 {
+        if (self.text_idx >= self.text.len) return null;
+        defer self.text_idx += 1;
+        return self.text[self.text_idx];
+    }
+
+    fn step(self: *LayoutHelper) !bool {
+        const c = self.nextChar() orelse return false;
+
+        self.updateRollbackData(c);
+
+        if (c == '\n') {
+            self.advanceLine();
+            return true;
+        }
+
+        const metrics = ttf_mod.metricsForChar(self.ttf.*, c);
+
+        const glyph_bounds = self.calcCharBounds(metrics.left_side_bearing, c) orelse {
+            self.advanceNoGlyphChar(metrics.advance_width);
+            return true;
+        };
+
+        const new_bounds = self.bounds.merge(glyph_bounds);
+        const over_wrap_width = new_bounds.width() >= self.wrap_width_px;
+
+        if (over_wrap_width) {
+            self.doTextWrapping();
+            return true;
+        }
+
+        self.funit_cursor_x += metrics.advance_width;
+
+        try self.glyphs.append(.{
+            .char = c,
+            .pixel_x1 = glyph_bounds.min_x,
+            .pixel_x2 = glyph_bounds.max_x,
+            .pixel_y1 = glyph_bounds.min_y,
+            .pixel_y2 = glyph_bounds.max_y,
+        });
+        self.bounds = new_bounds;
+
+        return true;
+    }
+
+    fn advanceLine(self: *LayoutHelper) void {
+        self.funit_cursor_y -= self.line_height;
+        self.funit_cursor_x = 0;
+        // If we've moved up a line, rollback data needs to put us back at the
+        // start of the line, not wherever we were when the word started
+        self.rollback_data.start_x = 0;
+    }
+
+    fn updateRollbackData(self: *LayoutHelper, c: u8) void {
+        if (std.ascii.isWhitespace(c)) {
+            self.layout_state = .between_word;
+            return;
+        } else if (self.layout_state == .in_word) {
+            return;
+        }
+
+        // Now guaranteed to be in a word without layout state between word
+        self.layout_state = .in_word;
+        self.rollback_data.text_idx = self.text_idx - 1;
+        self.rollback_data.glyphs_len = self.glyphs.items.len;
+        self.rollback_data.bounds = self.bounds;
+        self.rollback_data.start_x = self.funit_cursor_x;
+    }
+
+    fn advanceNoGlyphChar(self: *LayoutHelper, advance_width: u16) void {
+        self.funit_cursor_x += advance_width;
+        self.bounds.max_x += self.funit_converter.pixelFromFunit(advance_width);
+        // -1 to ensure that we stay BELOW the wrap width, or else future
+        // checks will get confused about why the bounding box is >= the
+        // wrap width
+        self.bounds.max_x = @min(self.wrap_width_px - 1, self.bounds.max_x);
+    }
+
+    fn doTextWrapping(self: *LayoutHelper) void {
+        const word_at_line_start = self.rollback_data.start_x == 0;
+        if (word_at_line_start) {
+            // In this case the word itself is longer than the wrap width. We
+            // don't have a choice but to split the word up. Move back a
+            // character since the character we just laid out is past the end
+            // of the line and move to the next line
+            self.text_idx -= 1;
+        } else {
+            self.rollback();
+        }
+
+        self.advanceLine();
+    }
+
+    fn calcCharBounds(self: *LayoutHelper, left_side_bearing: i16, c: u8) ?LayoutBox {
+        const header = ttf_mod.glyphHeaderForChar(self.ttf.*, c) orelse {
+            return null;
+        };
+
+        const x1 = self.funit_cursor_x + left_side_bearing;
         const x2 = x1 + header.x_max - header.x_min;
 
-        const x1_px = funit_converter.pixelFromFunit(x1);
-        const y1_px = funit_converter.pixelFromFunit(header.y_min);
+        const y1 = self.funit_cursor_y + header.y_min;
+        const y2 = y1 + header.y_max - header.y_min;
+
+        const x1_px = self.funit_converter.pixelFromFunit(x1);
+        const y1_px = self.funit_converter.pixelFromFunit(y1);
         // Why not just use x2 or header.y_max? We want to make sure no matter
         // how much the cursor has advanced in funits, we always render the
         // glyph aligned to the same number of pixels.
-        const x2_px = x1_px + funit_converter.pixelFromFunit(x2 - x1);
-        const y2_px = y1_px + funit_converter.pixelFromFunit(header.y_max - header.y_min);
+        const x2_px = x1_px + self.funit_converter.pixelFromFunit(x2 - x1);
+        const y2_px = y1_px + self.funit_converter.pixelFromFunit(y2 - y1);
 
-        try glyphs.append(.{
-            .char = c,
-            .pixel_x1 = x1_px,
-            .pixel_x2 = x2_px,
-            .pixel_y1 = y1_px,
-            .pixel_y2 = y2_px,
-        });
-
-        min_x = @min(min_x, x1_px);
-        max_x = @max(max_x, x2_px);
-        min_y = @min(min_y, y1_px);
-        max_y = @max(max_y, y2_px);
+        return .{
+            .min_x = x1_px,
+            .max_x = x2_px,
+            .min_y = y1_px,
+            .max_y = y2_px,
+        };
     }
 
+    fn rollback(self: *LayoutHelper) void {
+        self.text_idx = self.rollback_data.text_idx;
+        self.glyphs.resize(self.rollback_data.glyphs_len) catch unreachable;
+        self.bounds = self.rollback_data.bounds;
+        self.funit_cursor_x = self.rollback_data.start_x;
+    }
+};
+
+pub fn layoutText(self: *TextRenderer, alloc: Allocator, text: []const u8, ttf: ttf_mod.Ttf, wrap_width_px: u31) !TextLayout {
+    var layout_helper = LayoutHelper.init(alloc, text, &ttf, wrap_width_px, self.point_size);
+    errdefer layout_helper.glyphs.deinit();
+
+    while (try layout_helper.step()) {}
+
     return .{
-        .glyphs = try glyphs.toOwnedSlice(),
-        .min_x = min_x,
-        .max_x = max_x,
-        .min_y = min_y,
-        .max_y = max_y,
+        .glyphs = try layout_helper.glyphs.toOwnedSlice(),
+        .min_x = layout_helper.bounds.min_x,
+        .max_x = layout_helper.bounds.max_x,
+        .min_y = layout_helper.bounds.min_y,
+        .max_y = layout_helper.bounds.max_y,
     };
+}
+
+test "layout text infinite loop" {
+    const alloc = std.testing.allocator;
+    const text = "bannister.jpgasdlfkjasdlkfjaslkdfjklasjf kl";
+    var ttf = try ttf_mod.Ttf.init(alloc, @embedFile("res/Hack-Regular.ttf"));
+    defer ttf.deinit(alloc);
+    const point_size = 11;
+    const wrap_width_px = 284;
+
+    var layout_helper = LayoutHelper.init(alloc, text, &ttf, wrap_width_px, point_size);
+    defer layout_helper.glyphs.deinit();
+
+    const max_steps = 1000;
+    var i: usize = 0;
+    while (try layout_helper.step()) {
+        if (i > max_steps) return error.TooLong;
+        i += 1;
+    }
 }
 
 pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, ttf: ttf_mod.Ttf, distance_field_generator: sphrender.DistanceFieldGenerator) !Buffer {
