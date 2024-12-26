@@ -10,11 +10,11 @@ pub fn applyHomogenous(in: Vec3) Vec2 {
     };
 }
 
-pub fn length2(in: Vec2) f32 {
+pub fn length2(in: anytype) f32 {
     return @reduce(.Add, in * in);
 }
 
-pub fn length(in: Vec2) f32 {
+pub fn length(in: anytype) f32 {
     return @sqrt(length2(in));
 }
 
@@ -27,8 +27,8 @@ test "dot sanity" {
     try std.testing.expectApproxEqAbs(32, ret, 0.001);
 }
 
-pub fn normalize(in: Vec2) Vec2 {
-    const l: Vec2 = @splat(length(in));
+pub fn normalize(in: anytype) @TypeOf(in) {
+    const l: @TypeOf(in) = @splat(length(in));
     return in / l;
 }
 
