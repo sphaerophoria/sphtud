@@ -1,0 +1,26 @@
+.{
+    .name = "sphimp",
+    .version = "0.0.1",
+    .minimum_zig_version = "0.13.0",
+    .dependencies = .{
+        .sphmath = .{
+            .path = "src/sphmath",
+        },
+        .sphrender = .{
+            .path = "src/sphrender",
+        },
+        .sphtext = .{
+            .path = "src/sphtext",
+        },
+        .sphui = .{
+            .path = "src/gui",
+        },
+    },
+    .paths = .{
+        "res",
+        "src",
+        "ttf",
+        "build.zig",
+        "build.zig.zon",
+    },
+}

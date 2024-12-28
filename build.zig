@@ -18,20 +18,9 @@ const Builder = struct {
 
         const check_step = b.step("check", "");
 
-        const sphmath = b.createModule(.{
-            .root_source_file = b.path("src/sphmath.zig"),
-        });
-
-        const sphrender = b.createModule(.{
-            .root_source_file = b.path("src/sphrender/sphrender.zig"),
-        });
-        sphrender.addImport("sphmath", sphmath);
-
-        const sphtext = b.createModule(.{
-            .root_source_file = b.path("src/sphtext/sphtext.zig"),
-        });
-        sphtext.addImport("sphrender", sphrender);
-        sphtext.addImport("sphmath", sphmath);
+        const sphmath = b.dependency("sphmath", .{}).module("sphmath");
+        const sphrender = b.dependency("sphrender", .{}).module("sphrender");
+        const sphtext = b.dependency("sphtext", .{}).module("sphtext");
 
         const sphimp = b.createModule(.{
             .root_source_file = b.path("src/sphimp/sphimp.zig"),
@@ -44,13 +33,6 @@ const Builder = struct {
             .files = &.{ "stb_image.c", "stb_image_write.c" },
         });
         sphimp.addIncludePath(b.path("src/stb"));
-
-        const sphui = b.createModule(.{
-            .root_source_file = b.path("src/gui/gui.zig"),
-        });
-        sphui.addImport("sphrender", sphrender);
-        sphui.addImport("sphmath", sphmath);
-        sphui.addImport("sphtext", sphtext);
 
         return .{
             .b = b,
@@ -150,13 +132,4 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "");
     const run_uts = b.addRunArtifact(uts);
     test_step.dependOn(&run_uts.step);
-
-    const sphtext_uts = builder.addTest(
-        "sphtext_test",
-        "src/sphtext/sphtext.zig",
-    );
-    builder.addAppDependencies(sphtext_uts);
-
-    const run_sphtext_uts = b.addRunArtifact(sphtext_uts);
-    test_step.dependOn(&run_sphtext_uts.step);
 }
