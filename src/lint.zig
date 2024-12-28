@@ -213,7 +213,7 @@ pub fn main() !void {
             swap_colors_id,
         );
         app.setSelectedObject(shader_id);
-        try app.setShaderDependency(0, .{ .image = id });
+        try app.setShaderImage(0, id);
 
         app.setSelectedObject(composition_idx);
         _ = try app.addToComposition(id);

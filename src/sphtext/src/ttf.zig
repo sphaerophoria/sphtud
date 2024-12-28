@@ -717,6 +717,11 @@ pub fn lineHeight(ttf: Ttf) i16 {
     return ttf.hhea.ascent - ttf.hhea.descent + ttf.hhea.line_gap;
 }
 
+pub fn lineHeightPx(ttf: Ttf, point_size: f32) i32 {
+    const converter = FunitToPixelConverter.init(point_size, @floatFromInt(ttf.head.units_per_em));
+    return converter.pixelFromFunit(lineHeight(ttf));
+}
+
 pub const FunitToPixelConverter = struct {
     scale: f32,
 

@@ -224,7 +224,7 @@ pub fn render(self: *App) !void {
     );
     defer frame_renderer.deinit();
 
-    try frame_renderer.render(self.input_state.selected_object, self.view_state.objectToClipTransform(self.selectedDims()), self.view_state.window_width, self.view_state.window_height);
+    try frame_renderer.render(self.input_state.selected_object, self.view_state.objectToClipTransform(self.selectedDims()));
 }
 
 pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {
@@ -331,7 +331,15 @@ pub fn updateFontId(self: *App, id: FontStorage.FontId) !void {
     try text_obj.updateFont(self.alloc, id, self.fonts, self.renderer.distance_field_generator);
 }
 
-pub fn updateFontSize(self: *App, size: f32) !void {
+pub fn updateFontSize(self: *App, requested_size: f32) !void {
+    // NOTE: This feels like it should be done somewhere down the stack,
+    // however this is an application level decision. Lower down elements
+    // could probably handle smaller fonts, but we don't really think they
+    // would look good, etc.
+    //
+    // We also don't error as UI will spam us with these requests. Heal and move on
+    const size = @max(requested_size, 6.0);
+
     const text_obj = self.selectedObject().asText() orelse return error.NotText;
     try text_obj.updateFontSize(self.alloc, size, self.fonts, self.renderer.distance_field_generator);
 }
@@ -363,11 +371,21 @@ pub fn deleteSelectedObject(self: *App) !void {
     }
 }
 
-pub fn updateSelectedDims(self: *App, dims: PixelDims) !void {
+pub fn updateSelectedWidth(self: *App, width: f32) !void {
     const obj = self.selectedObject();
     switch (obj.data) {
         .composition => |*c| {
-            c.dims = dims;
+            c.dims[0] = @intFromFloat(width);
+        },
+        else => return error.CannotUpdateDims,
+    }
+}
+
+pub fn updateSelectedHeight(self: *App, height: f32) !void {
+    const obj = self.selectedObject();
+    switch (obj.data) {
+        .composition => |*c| {
+            c.dims[1] = @intFromFloat(height);
         },
         else => return error.CannotUpdateDims,
     }
@@ -423,16 +441,43 @@ pub fn updatePathDisplayObj(self: *App, id: ObjectId) !void {
     try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
 }
 
-pub fn setShaderDependency(self: *App, idx: usize, val: Renderer.UniformValue) !void {
-    const shader_data = self.selectedObject().asShader() orelse return error.SelectedItemNotShader;
-    if (idx >= shader_data.bindings.len) {
+pub fn setShaderFloat(self: *App, uniform_idx: usize, float_idx: usize, val: f32) !void {
+    const obj = self.selectedObject();
+    const bindings = switch (obj.data) {
+        .shader => |s| s.bindings,
+        .drawing => |d| d.bindings,
+        else => return error.NoShaderParams,
+    };
+    const uniform = &bindings[uniform_idx];
+    switch (uniform.*) {
+        .float => |*v| {
+            v.* = val;
+        },
+        .float2 => |*v| {
+            v[float_idx] = val;
+        },
+        .float3 => |*v| {
+            v[float_idx] = val;
+        },
+        .image, .int => {},
+    }
+}
+
+pub fn setShaderImage(self: *App, idx: usize, image: ObjectId) !void {
+    const obj = self.selectedObject();
+    const bindings = switch (obj.data) {
+        .shader => |s| s.bindings,
+        .drawing => |d| d.bindings,
+        else => return error.NoShaderParams,
+    };
+
+    if (idx >= bindings.len) {
         return error.InvalidShaderIdx;
     }
 
-    const prev_val = shader_data.bindings[idx];
-
-    try shader_data.setUniform(idx, val);
-    errdefer shader_data.bindings[idx] = prev_val;
+    const prev_val = bindings[idx];
+    bindings[idx] = .{ .image = image };
+    errdefer bindings[idx] = prev_val;
 
     try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
 }
@@ -605,11 +650,15 @@ pub fn addShaderObject(self: *App, name: []const u8, shader_id: ShaderId) !Objec
     return object_id;
 }
 
-fn selectedObject(self: *App) *Object {
+pub fn selectedObjectId(self: App) ObjectId {
+    return self.input_state.selected_object;
+}
+
+pub fn selectedObject(self: *App) *Object {
     return self.objects.get(self.input_state.selected_object);
 }
 
-fn selectedDims(self: *App) PixelDims {
+pub fn selectedDims(self: *App) PixelDims {
     return self.objects.get(self.input_state.selected_object).dims(&self.objects);
 }
 
@@ -1045,19 +1094,19 @@ const InputState = struct {
         switch (self.data) {
             .composition => |*c| {
                 switch (key) {
-                    'S' => c.* = self.makeCompositionInputState(objects, .scale),
-                    'R' => c.* = self.makeCompositionInputState(objects, .rotation),
+                    's' => c.* = self.makeCompositionInputState(objects, .scale),
+                    'r' => c.* = self.makeCompositionInputState(objects, .rotation),
                     else => {},
                 }
             },
             else => {},
         }
 
-        if (key == 'S' and ctrl) {
+        if (key == 's' and ctrl) {
             return .save;
         }
 
-        if (key == 'E' and ctrl) {
+        if (key == 'e' and ctrl) {
             return .export_image;
         }
 

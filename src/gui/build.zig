@@ -25,8 +25,6 @@ const Dependencies = struct {
 };
 
 pub fn build(b: *std.Build) !void {
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
     const test_step = b.step("test", "");
 
     const deps = Dependencies.init(b);
@@ -36,25 +34,10 @@ pub fn build(b: *std.Build) !void {
     });
     deps.add(sphui);
 
-    const demo = b.addExecutable(
-        .{
-            .name = "demo",
-            .root_source_file = b.path("src/demo.zig"),
-            .target = target,
-            .optimize = optimize,
-        },
-    );
-    demo.linkSystemLibrary("glfw");
-    deps.add(&demo.root_module);
-    demo.root_module.addImport("sphui", sphui);
-    b.installArtifact(demo);
-
-    const gui_uts = b.addTest(
-        .{
-            .name = "gui_test",
-            .root_source_file = b.path("src/gui.zig"),
-        },
-    );
+    const gui_uts = b.addTest(.{
+        .name = "gui_test",
+        .root_source_file = b.path("src/gui.zig"),
+    });
     deps.add(&gui_uts.root_module);
 
     const run_gui_uts = b.addRunArtifact(gui_uts);

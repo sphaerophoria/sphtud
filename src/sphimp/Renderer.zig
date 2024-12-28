@@ -98,8 +98,7 @@ pub const FrameRenderer = struct {
         self.texture_cache.deinit();
     }
 
-    pub fn render(self: *FrameRenderer, selected_object: ObjectId, transform: Transform, window_width: usize, window_height: usize) !void {
-        gl.glViewport(0, 0, @intCast(window_width), @intCast(window_height));
+    pub fn render(self: *FrameRenderer, selected_object: ObjectId, transform: Transform) !void {
         gl.glClearColor(0.0, 0.0, 0.0, 1.0);
         gl.glClear(gl.GL_COLOR_BUFFER_BIT);
 

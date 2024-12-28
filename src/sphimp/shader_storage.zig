@@ -86,6 +86,10 @@ pub fn ShaderStorage(comptime Id: type) type {
             return id;
         }
 
+        pub fn numItems(self: Self) usize {
+            return self.storage.items.len;
+        }
+
         pub fn get(self: Self, id: Id) Item {
             return self.storage.items[id.value];
         }

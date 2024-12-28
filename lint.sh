@@ -8,6 +8,10 @@ pushd src/sphtext/
 zig build test
 popd
 
+pushd src/gui/
+zig build test
+popd
+
 zig build test
 zig build
 

@@ -15,6 +15,14 @@ multiplier: f32 = 0.25,
 const TextRenderer = @This();
 
 pub const TextLayout = struct {
+    pub const empty = TextLayout{
+        .glyphs = &.{},
+        .min_x = 0,
+        .max_x = 0,
+        .min_y = 0,
+        .max_y = 0,
+    };
+
     const GlyphLoc = struct {
         char: u8,
         pixel_x1: i32,
@@ -98,7 +106,7 @@ const LayoutHelper = struct {
     funit_cursor_y: i64 = 0,
     text_idx: usize = 0,
     rollback_data: RollbackData = .{},
-    bounds: LayoutBox = .{},
+    bounds: LayoutBox,
     layout_state: LayoutState = .between_word,
 
     const RollbackData = struct {
@@ -109,12 +117,21 @@ const LayoutHelper = struct {
     };
 
     fn init(alloc: Allocator, text: []const u8, ttf: *const ttf_mod.Ttf, wrap_width_px: u31, font_size: f32) LayoutHelper {
+        const funit_converter = ttf_mod.FunitToPixelConverter.init(font_size, @floatFromInt(ttf.head.units_per_em));
+        const min_y = funit_converter.pixelFromFunit(ttf.hhea.descent);
+        const max_y = funit_converter.pixelFromFunit(ttf.hhea.ascent);
         return .{
             .line_height = ttf_mod.lineHeight(ttf.*),
             .text = text,
             .ttf = ttf,
             .wrap_width_px = wrap_width_px,
-            .funit_converter = ttf_mod.FunitToPixelConverter.init(font_size, @floatFromInt(ttf.head.units_per_em)),
+            .funit_converter = funit_converter,
+            .bounds = .{
+                .min_x = 0,
+                .max_x = 0,
+                .min_y = min_y,
+                .max_y = max_y,
+            },
             .glyphs = std.ArrayList(TextLayout.GlyphLoc).init(alloc),
         };
     }
@@ -159,6 +176,7 @@ const LayoutHelper = struct {
             .pixel_y1 = glyph_bounds.min_y,
             .pixel_y2 = glyph_bounds.max_y,
         });
+
         self.bounds = new_bounds;
 
         return true;
@@ -167,6 +185,7 @@ const LayoutHelper = struct {
     fn advanceLine(self: *LayoutHelper) void {
         self.funit_cursor_y -= self.line_height;
         self.funit_cursor_x = 0;
+        self.bounds.min_y -= self.funit_converter.pixelFromFunit(self.line_height);
         // If we've moved up a line, rollback data needs to put us back at the
         // start of the line, not wherever we were when the word started
         self.rollback_data.start_x = 0;
@@ -368,7 +387,7 @@ pub const TextReservedIndex = enum {
     }
 };
 
-fn pixToClip(val: usize, max: usize) f32 {
+fn pixToClip(val: u32, max: u32) f32 {
     const val_f: f32 = @floatFromInt(val);
     const max_f: f32 = @floatFromInt(max);
 

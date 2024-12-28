@@ -37,6 +37,10 @@ pub fn get(self: FontStorage, id: FontId) FontData {
     return self.inner.items[id.value];
 }
 
+pub fn numItems(self: FontStorage) usize {
+    return self.inner.items.len;
+}
+
 pub const IdIter = struct {
     idx: usize = 0,
     max: usize,

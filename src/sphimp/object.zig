@@ -180,8 +180,9 @@ pub const Object = struct {
                 return dims(source.*, object_list);
             },
             .shader => |s| {
-                const primary_input = s.bindings[s.primary_input_idx];
                 const default_res = PixelDims{ 1024, 1024 };
+                if (s.primary_input_idx >= s.bindings.len) return default_res;
+                const primary_input = s.bindings[s.primary_input_idx];
                 if (primary_input != .image) return default_res;
                 if (primary_input.image == null) return default_res;
                 const source = object_list.get(primary_input.image.?);
@@ -304,6 +305,14 @@ pub const Object = struct {
     pub fn asText(self: *Object) ?*TextObject {
         switch (self.data) {
             .text => |*t| return t,
+            else => return null,
+        }
+    }
+
+    pub fn shaderBindings(self: *Object) ?[]Renderer.UniformValue {
+        switch (self.data) {
+            .shader => |s| return s.bindings,
+            .drawing => |d| return d.bindings,
             else => return null,
         }
     }
@@ -945,6 +954,10 @@ pub const Objects = struct {
 
     pub fn get(self: *Objects, id: ObjectId) *Object {
         return self.inner.getPtr(id) orelse @panic("Invalid object ID");
+    }
+
+    pub fn numItems(self: Objects) usize {
+        return self.inner.count();
     }
 
     pub fn nextId(self: Objects) ObjectId {

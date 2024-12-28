@@ -11,6 +11,7 @@ const Builder = struct {
     sphrender: *std.Build.Module,
     sphtext: *std.Build.Module,
     sphimp: *std.Build.Module,
+    sphui: *std.Build.Module,
 
     fn init(b: *std.Build) Builder {
         const target = b.standardTargetOptions(.{});
@@ -21,6 +22,7 @@ const Builder = struct {
         const sphmath = b.dependency("sphmath", .{}).module("sphmath");
         const sphrender = b.dependency("sphrender", .{}).module("sphrender");
         const sphtext = b.dependency("sphtext", .{}).module("sphtext");
+        const sphui = b.dependency("sphui", .{}).module("sphui");
 
         const sphimp = b.createModule(.{
             .root_source_file = b.path("src/sphimp/sphimp.zig"),
@@ -43,6 +45,7 @@ const Builder = struct {
             .sphrender = sphrender,
             .sphtext = sphtext,
             .sphimp = sphimp,
+            .sphui = sphui,
         };
     }
 
@@ -62,23 +65,7 @@ const Builder = struct {
 
     fn addGuiDependencies(self: *Builder, exe: *std.Build.Step.Compile) void {
         exe.linkSystemLibrary("glfw");
-        exe.addCSourceFiles(.{
-            .files = &.{
-                "cimgui/cimgui.cpp",
-                "cimgui/imgui/imgui.cpp",
-                "cimgui/imgui/imgui_draw.cpp",
-                "cimgui/imgui/imgui_demo.cpp",
-                "cimgui/imgui/imgui_tables.cpp",
-                "cimgui/imgui/imgui_widgets.cpp",
-                "cimgui/imgui/backends/imgui_impl_glfw.cpp",
-                "cimgui/imgui/backends/imgui_impl_opengl3.cpp",
-            },
-        });
-        exe.addIncludePath(self.b.path("cimgui"));
-        exe.addIncludePath(self.b.path("cimgui/generator/output"));
-        exe.addIncludePath(self.b.path("cimgui/imgui/backends"));
-        exe.addIncludePath(self.b.path("cimgui/imgui"));
-        exe.defineCMacro("IMGUI_IMPL_API", "extern \"C\"");
+        exe.root_module.addImport("sphui", self.sphui);
     }
 
     fn addExecutable(self: *Builder, name: []const u8, root_source_file: []const u8) *std.Build.Step.Compile {
