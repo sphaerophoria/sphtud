@@ -183,7 +183,7 @@ fn allocateGlyphSpace(self: *GlyphAtlas, point_size: f32, units_per_em: f32, gly
     return .{
         .left = x_start,
         .right = self.x_cursor_px - padding,
-        .top = self.y_cursor_px + pixel_size[1] - padding,
+        .top = self.y_cursor_px + pixel_size[1],
         .bottom = self.y_cursor_px,
     };
 }
