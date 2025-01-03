@@ -97,6 +97,11 @@ pub fn inputOnCanvas(app: *App) !void {
     app.setMiddleUp();
     try app.render();
 
+    // Render sometimes in debug mode
+    if (selected_object.data == .composition) {
+        try app.toggleCompositionDebug();
+    }
+
     // Click the right mouse button a few times (create path elements)
     try app.setMousePos(400, 400);
     try app.clickRightMouse();

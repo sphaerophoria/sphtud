@@ -531,6 +531,11 @@ pub fn main() !void {
                     };
                     try sidebar.handle.updateObjectProperties();
                 },
+                .toggle_composition_debug => {
+                    app.toggleCompositionDebug() catch |e| {
+                        logError("Failed to set composition debug state", e, @errorReturnTrace());
+                    };
+                },
             }
         }
 

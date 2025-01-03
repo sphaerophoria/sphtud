@@ -166,6 +166,19 @@ pub fn widgetFactory(comptime Action: type, alloc: Allocator) !*WidgetFactory(Ac
     );
     errdefer ret.combo_box_shared.deinit(alloc);
 
+    ret.checkbox_shared = gui.checkbox.Shared{
+        .style = .{
+            .outer_size = typical_widget_height,
+            .inner_size = typical_widget_height * 4 / 5,
+            .corner_radius = corner_radius,
+            .outer_color = StyleColors.background_color2,
+            .outer_hover_color = StyleColors.background_color4,
+            .inner_color = StyleColors.default_color,
+            .inner_hover_color = StyleColors.hover_color,
+        },
+        .squircle_renderer = &ret.squircle_renderer,
+    };
+
     ret.overlay = gui.popup_layer.PopupLayer(Action){};
 
     return ret;
@@ -178,6 +191,7 @@ pub const StyleColors = struct {
     pub const background_color = gui.Color{ .r = 0.1, .g = 0.1, .b = 0.1, .a = 1.0 };
     pub const background_color2 = gui.Color{ .r = 0.2, .g = 0.2, .b = 0.2, .a = 1.0 };
     pub const background_color3 = gui.Color{ .r = 0.15, .g = 0.15, .b = 0.15, .a = 1.0 };
+    pub const background_color4 = gui.Color{ .r = 0.25, .g = 0.25, .b = 0.25, .a = 1.0 };
 
     pub fn hoverColor(default: gui.Color) gui.Color {
         return .{
@@ -218,6 +232,7 @@ pub fn WidgetFactory(comptime Action: type) type {
         even_vert_layout_shared: gui.even_vert_layout.Shared,
         property_list_style: gui.property_list.Style,
         combo_box_shared: gui.combo_box.Shared,
+        checkbox_shared: gui.checkbox.Shared,
         overlay: gui.popup_layer.PopupLayer(Action),
 
         const Self = @This();
@@ -334,6 +349,10 @@ pub fn WidgetFactory(comptime Action: type) type {
 
         pub fn makeRect(self: *Self, color: gui.Color) !gui.Widget(Action) {
             return gui.rect.Rect(Action).init(self.alloc, 1.0, color, &self.squircle_renderer);
+        }
+
+        pub fn makeCheckbox(self: *Self, checked: anytype, on_change: Action) !gui.Widget(Action) {
+            return try gui.checkbox.makeCheckbox(Action, self.alloc, checked, on_change, &self.checkbox_shared);
         }
 
         pub fn makeRunnerOrDeinit(self: *Self, inner: gui.Widget(Action)) !gui.runner.Runner(Action) {

@@ -290,6 +290,25 @@ pub const Handle = struct {
                 }
 
                 {
+                    const debug_label = try self.widget_factory.makeLabel("Debug");
+                    errdefer debug_label.deinit(self.widget_factory.alloc);
+
+                    const CheckedRetriever = struct {
+                        app: *App,
+
+                        pub fn checked(r: @This()) bool {
+                            const composition = r.app.selectedObject().asComposition() orelse return false;
+                            return composition.debug_masks;
+                        }
+                    };
+
+                    const debug_checkbox = try self.widget_factory.makeCheckbox(CheckedRetriever{ .app = self.app }, UiAction.toggle_composition_debug);
+                    errdefer debug_checkbox.deinit(self.widget_factory.alloc);
+
+                    try property_list.pushWidgets(self.widget_factory.alloc, debug_label, debug_checkbox);
+                }
+
+                {
                     const add_label = try self.widget_factory.makeLabel("Add");
                     errdefer add_label.deinit(self.widget_factory.alloc);
 

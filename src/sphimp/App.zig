@@ -128,7 +128,7 @@ pub fn save(self: *App, path: []const u8) !void {
 pub fn exportImage(self: *App, path: [:0]const u8) !void {
     const dims = self.selectedDims();
 
-    var fr = self.renderer.makeFrameRenderer(self.alloc, &self.objects, &self.shaders, &self.brushes);
+    var fr = self.renderer.makeFrameRenderer(self.alloc, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
     defer fr.deinit();
 
     const texture = try fr.renderObjectToTexture(self.selectedObject().*);
@@ -221,6 +221,7 @@ pub fn render(self: *App) !void {
         &self.objects,
         &self.shaders,
         &self.brushes,
+        self.input_state.mouse_pos,
     );
     defer frame_renderer.deinit();
 
@@ -228,12 +229,18 @@ pub fn render(self: *App) !void {
 }
 
 pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {
-    const action = self.input_state.setKeyDown(key, ctrl, &self.objects);
+    var fr = self.renderer.makeFrameRenderer(self.alloc, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
+    defer fr.deinit();
+
+    const action = try self.input_state.setKeyDown(key, ctrl, &self.objects, &fr);
     try self.handleInputAction(action);
 }
 
 pub fn setMouseDown(self: *App) !void {
-    const action = self.input_state.setMouseDown(&self.objects);
+    var fr = self.renderer.makeFrameRenderer(self.alloc, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
+    defer fr.deinit();
+
+    const action = try self.input_state.setMouseDown(&self.objects, &fr);
     try self.handleInputAction(action);
 }
 
@@ -417,6 +424,11 @@ pub fn deleteFromComposition(self: *App, id: obj_mod.CompositionIdx) !void {
     self.input_state.setMouseUp();
 }
 
+pub fn toggleCompositionDebug(self: *App) !void {
+    const composition = self.selectedObject().asComposition() orelse return error.NotComposition;
+    composition.debug_masks = !composition.debug_masks;
+}
+
 pub fn addComposition(self: *App) !ObjectId {
     const id = self.objects.nextId();
 
@@ -459,7 +471,7 @@ pub fn setShaderFloat(self: *App, uniform_idx: usize, float_idx: usize, val: f32
         .float3 => |*v| {
             v[float_idx] = val;
         },
-        .image, .int, .mat3x3 => {},
+        .image, .int, .uint, .mat3x3 => {},
     }
 }
 
@@ -897,10 +909,10 @@ const InputState = struct {
     }
 
     // FIXME: Objects should be const
-    fn setMouseDown(self: *InputState, objects: *obj_mod.Objects) ?InputAction {
+    fn setMouseDown(self: *InputState, objects: *obj_mod.Objects, frame_renderer: *Renderer.FrameRenderer) !?InputAction {
         switch (self.data) {
             .composition => |*action| {
-                action.* = self.makeCompositionInputState(objects, .move);
+                action.* = try self.makeCompositionInputState(objects, frame_renderer, .move);
             },
             .path => |*selected_obj| {
                 const path = objects.get(self.selected_object).asPath() orelse return null; // FIXME assert?
@@ -1090,12 +1102,12 @@ const InputState = struct {
     }
 
     // FIXME: Const objects probably
-    fn setKeyDown(self: *InputState, key: u8, ctrl: bool, objects: *Objects) ?InputAction {
+    fn setKeyDown(self: *InputState, key: u8, ctrl: bool, objects: *Objects, frame_renderer: *Renderer.FrameRenderer) !?InputAction {
         switch (self.data) {
             .composition => |*c| {
                 switch (key) {
-                    's' => c.* = self.makeCompositionInputState(objects, .scale),
-                    'r' => c.* = self.makeCompositionInputState(objects, .rotation),
+                    's' => c.* = try self.makeCompositionInputState(objects, frame_renderer, .scale),
+                    'r' => c.* = try self.makeCompositionInputState(objects, frame_renderer, .rotation),
                     else => {},
                 }
             },
@@ -1113,35 +1125,25 @@ const InputState = struct {
         return null;
     }
 
-    fn makeCompositionInputState(self: InputState, objects: *Objects, comptime purpose: CompositionInputPurpose) CompositionInputState {
-        const idx = self.findCompositionIdx(objects) orelse return .none;
+    fn makeCompositionInputState(self: InputState, objects: *Objects, frame_renderer: *Renderer.FrameRenderer, comptime purpose: CompositionInputPurpose) !CompositionInputState {
+        const idx = try self.findCompositionIdx(objects, frame_renderer) orelse return .none;
         const state = TransformAdjustingInputState.init(self.mouse_pos, self.selected_object, idx, objects);
         return @unionInit(CompositionInputState, @tagName(purpose), state);
     }
 
-    fn findCompositionIdx(self: InputState, objects: *Objects) ?obj_mod.CompositionIdx {
+    fn findCompositionIdx(self: InputState, objects: *Objects, frame_renderer: *Renderer.FrameRenderer) !?obj_mod.CompositionIdx {
         const obj = objects.get(self.selected_object);
-        const composition_obj = &obj.data.composition;
-        var closest_idx: usize = 0;
-        var current_dist = std.math.inf(f32);
-        const composition_dims = obj.dims(objects);
-        const composition_aspect = sphmath.calcAspect(composition_dims[0], composition_dims[1]);
 
-        for (0..composition_obj.objects.items.len) |idx| {
-            const transform = composition_obj.objects.items[idx].composedToCompositionTransform(objects, composition_aspect);
-            const center = sphmath.applyHomogenous(transform.apply(Vec3{ 0, 0, 1 }));
-            const dist = sphmath.length2(center - self.mouse_pos);
-            if (dist < current_dist) {
-                closest_idx = idx;
-                current_dist = dist;
-            }
-        }
+        const tex = try frame_renderer.renderCompositionIdMask(obj.*, 1, self.mouse_pos);
+        defer tex.deinit();
 
-        if (current_dist == std.math.inf(f32)) {
+        const composition_idx = try tex.sample(u32, 0, 0);
+
+        if (composition_idx == std.math.maxInt(u32)) {
             return null;
-        } else {
-            return .{ .value = closest_idx };
         }
+
+        return .{ .value = composition_idx };
     }
 };
 

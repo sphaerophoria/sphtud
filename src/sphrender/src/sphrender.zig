@@ -13,15 +13,17 @@ pub const UniformType = enum {
     float2,
     float3,
     int,
+    uint,
     mat3x3,
 
     pub fn fromGlType(typ: gl.GLenum) ?UniformType {
         switch (typ) {
-            gl.GL_SAMPLER_2D => return .image,
+            gl.GL_SAMPLER_2D, gl.GL_UNSIGNED_INT_SAMPLER_2D, gl.GL_INT_SAMPLER_2D => return .image,
             gl.GL_FLOAT => return .float,
             gl.GL_FLOAT_VEC2 => return .float2,
             gl.GL_FLOAT_VEC3 => return .float3,
             gl.GL_INT => return .int,
+            gl.GL_UNSIGNED_INT => return .uint,
             gl.GL_FLOAT_MAT3_ARB => return .mat3x3,
             else => {
                 std.log.warn("Unsupported GL uniform type: 0x{x}", .{typ});
@@ -37,6 +39,7 @@ pub const UniformDefault = union(UniformType) {
     float2: [2]f32,
     float3: [3]f32,
     int: i32,
+    uint: u32,
     mat3x3: sphmath.Mat3x3,
 };
 
@@ -46,6 +49,7 @@ pub const ResolvedUniformValue = union(UniformType) {
     float2: [2]f32,
     float3: [3]f32,
     int: i32,
+    uint: u32,
     mat3x3: sphmath.Mat3x3,
 };
 
@@ -185,6 +189,11 @@ const ProgramUniformIt = struct {
                     var default: gl.GLint = 0;
                     gl.glGetUniformiv(self.program, @intCast(self.idx), &default);
                     break :blk .{ .int = @intCast(default) };
+                },
+                .uint => blk: {
+                    var default: gl.GLuint = 0;
+                    gl.glGetUniformuiv(self.program, @intCast(self.idx), &default);
+                    break :blk .{ .uint = @intCast(default) };
                 },
                 .mat3x3 => blk: {
                     var default: sphmath.Mat3x3 = .{};
@@ -348,6 +357,9 @@ pub fn applyUniformAtLocation(loc: gl.GLint, expected_type: UniformType, val: Re
         .int => |v| {
             gl.glUniform1i(loc, v);
         },
+        .uint => |v| {
+            gl.glUniform1ui(loc, v);
+        },
         .mat3x3 => |v| {
             gl.glUniformMatrix3fv(loc, 1, gl.GL_TRUE, &v.data);
         },
@@ -362,14 +374,52 @@ pub const Texture = struct {
     pub fn deinit(self: Texture) void {
         gl.glDeleteTextures(1, &self.inner);
     }
+
+    pub fn sample(self: Texture, comptime T: type, x: u32, y: u32) !T {
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self.inner);
+
+        var gl_type: gl.GLint = undefined;
+        gl.glGetTexLevelParameteriv(
+            gl.GL_TEXTURE_2D,
+            0,
+            gl.GL_TEXTURE_INTERNAL_FORMAT,
+            &gl_type,
+        );
+
+        if (!typesCompatible(T, gl_type)) return error.NotCompatible;
+
+        var ret: T = undefined;
+        gl.glGetTextureSubImage(self.inner, 0, @bitCast(x), @bitCast(y), 0, 1, 1, 1, try sampleFormat(gl_type), try sampleType(gl_type), @sizeOf(T), &ret);
+        return ret;
+    }
+
+    fn typesCompatible(comptime T: type, gl_type: gl.GLint) bool {
+        if (T == u32) {
+            return gl_type == gl.GL_R32I;
+        } else {
+            @compileError("Unsupported type " ++ @typeName(T));
+        }
+    }
+
+    fn sampleFormat(gl_type: gl.GLint) !gl.GLenum {
+        switch (gl_type) {
+            gl.GL_R32I => return gl.GL_RED_INTEGER,
+            else => return error.UnknownSampleFormat,
+        }
+    }
+
+    fn sampleType(gl_type: gl.GLint) !gl.GLenum {
+        switch (gl_type) {
+            gl.GL_R32I => return gl.GL_INT,
+            else => return error.UnkonwnSampleType,
+        }
+    }
 };
 
 pub fn makeTextureFromR(data: []const u8, width: usize) Texture {
     const texture = makeTextureCommon();
     const height = data.len / width;
     gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RED, @intCast(width), @intCast(height), 0, gl.GL_RED, gl.GL_UNSIGNED_BYTE, data.ptr);
-
-    gl.glGenerateMipmap(gl.GL_TEXTURE_2D);
 
     return texture;
 }
@@ -380,25 +430,29 @@ pub fn makeTextureFromRgba(data: []const u8, width: usize) Texture {
     const height = data.len / width / 4;
     gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA, @intCast(width), @intCast(height), 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, data.ptr);
 
-    gl.glGenerateMipmap(gl.GL_TEXTURE_2D);
-
     return texture;
 }
 
 const TextureFormat = enum {
     rgbaf32,
     rf32,
+    ri32,
 
     fn toOpenGLType(self: TextureFormat) gl.GLint {
         return switch (self) {
             .rgbaf32 => gl.GL_RGBA32F,
             .rf32 => gl.GL_R32F,
+            .ri32 => gl.GL_R32I,
         };
     }
 };
 
 pub fn makeTextureOfSize(width: u31, height: u31, storage_format: TextureFormat) Texture {
     const texture = makeTextureCommon();
+    const format = switch (storage_format) {
+        .ri32 => gl.GL_RED_INTEGER,
+        else => gl.GL_RGBA,
+    };
     gl.glTexImage2D(
         gl.GL_TEXTURE_2D,
         0,
@@ -406,26 +460,25 @@ pub fn makeTextureOfSize(width: u31, height: u31, storage_format: TextureFormat)
         width,
         height,
         0,
-        gl.GL_RGBA,
-        gl.GL_UNSIGNED_BYTE,
+        @intCast(format),
+        gl.GL_INT,
         null,
     );
-    gl.glGenerateMipmap(gl.GL_TEXTURE_2D);
+
     return texture;
 }
 
 pub fn makeTextureCommon() Texture {
     var texture: gl.GLuint = 0;
 
-    // Generate the texture object
     gl.glGenTextures(1, &texture);
     gl.glBindTexture(gl.GL_TEXTURE_2D, texture);
 
-    // Set texture parameters (you can adjust these for your needs)
     gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE); // Wrap horizontally
     gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE); // Wrap vertically
     gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST); // Minification filter
     gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST); // Magnification filter
+    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAX_LEVEL, 0); // Disable mip mapping
 
     return .{ .inner = texture };
 }

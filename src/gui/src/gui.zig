@@ -24,6 +24,7 @@ pub const property_list = @import("property_list.zig");
 pub const null_widget = @import("null.zig");
 pub const combo_box = @import("combo_box.zig");
 pub const box = @import("box.zig");
+pub const checkbox = @import("checkbox.zig");
 
 test {
     std.testing.refAllDeclsRecursive(@This());
@@ -169,8 +170,8 @@ pub const PixelBBox = struct {
 
 pub fn InputResponse(comptime Action: type) type {
     return struct {
-        wants_focus: bool,
-        action: ?Action,
+        wants_focus: bool = false,
+        action: ?Action = null,
     };
 }
 
