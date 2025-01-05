@@ -1,4 +1,12 @@
 {
+   egl
+   Memcheck:Cond
+   fun:dri2_setup_extensions
+   fun:dri2_initialize_x11
+   fun:dri2_initialize
+   fun:eglInitialize
+}
+{
    backtrace
    Memcheck:Param
    msync(start)
