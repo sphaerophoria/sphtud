@@ -54,13 +54,18 @@ pub fn render(self: SquircleRenderer, color: Color, corner_radius_px: f32, widge
             .idx = @intFromEnum(SquircleIndex.corner_radius),
             .val = .{ .float = corner_radius_px },
         },
-    }, transform);
+        .{
+            .idx = @intFromEnum(SquircleIndex.transform),
+            .val = .{ .mat3x3 = transform.inner },
+        },
+    });
 }
 
 const SquircleIndex = enum {
     color,
     total_size,
     corner_radius,
+    transform,
 };
 
 const fragment_shader =

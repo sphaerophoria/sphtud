@@ -110,8 +110,16 @@ pub const FrameRenderer = struct {
         self.renderer.background_program.render(
             self.renderer.default_buffer,
             &.{},
-            &.{.{ .idx = DefaultPlaneReservedIndex.aspect.asIndex(), .val = .{ .float = toplevel_aspect } }},
-            transform,
+            &.{
+                .{
+                    .idx = DefaultPlaneReservedIndex.aspect.asIndex(),
+                    .val = .{ .float = toplevel_aspect },
+                },
+                .{
+                    .idx = DefaultPlaneReservedIndex.transform.asIndex(),
+                    .val = .{ .mat3x3 = transform.inner },
+                },
+            },
         );
 
         try self.renderObjectWithTransform(active_object.*, transform);
@@ -153,7 +161,11 @@ pub const FrameRenderer = struct {
                         .idx = DefaultPlaneReservedIndex.aspect.asIndex(),
                         .val = .{ .float = sphmath.calcAspect(f.width, f.height) },
                     },
-                }, transform);
+                    .{
+                        .idx = DefaultPlaneReservedIndex.transform.asIndex(),
+                        .val = .{ .mat3x3 = transform.inner },
+                    },
+                });
             },
             .shader => |s| {
                 var sources = std.ArrayList(ResolvedUniformValue).init(self.alloc);
@@ -164,10 +176,16 @@ pub const FrameRenderer = struct {
                 }
 
                 const object_dims = object.dims(self.objects);
-                self.shaders.get(s.program).program.render(self.renderer.default_buffer, sources.items, &.{.{
-                    .idx = CustomShaderReservedIndex.aspect.asIndex(),
-                    .val = .{ .float = sphmath.calcAspect(object_dims[0], object_dims[1]) },
-                }}, transform);
+                self.shaders.get(s.program).program.render(self.renderer.default_buffer, sources.items, &.{
+                    .{
+                        .idx = CustomShaderReservedIndex.aspect.asIndex(),
+                        .val = .{ .float = sphmath.calcAspect(object_dims[0], object_dims[1]) },
+                    },
+                    .{
+                        .idx = CustomShaderReservedIndex.transform.asIndex(),
+                        .val = .{ .mat3x3 = transform.inner },
+                    },
+                });
             },
             .path => |p| {
                 const display_object = self.objects.get(p.display_object);
@@ -189,8 +207,11 @@ pub const FrameRenderer = struct {
                             .idx = DefaultPlaneReservedIndex.aspect.asIndex(),
                             .val = .{ .float = sphmath.calcAspect(object_dims[0], object_dims[1]) },
                         },
+                        .{
+                            .idx = DefaultPlaneReservedIndex.transform.asIndex(),
+                            .val = .{ .mat3x3 = transform.inner },
+                        },
                     },
-                    transform,
                 );
             },
             .drawing => |d| {
@@ -217,7 +238,11 @@ pub const FrameRenderer = struct {
                             .idx = BrushReservedIndex.distance_field.asIndex(),
                             .val = .{ .image = d.distance_field.inner },
                         },
-                    }, transform);
+                        .{
+                            .idx = BrushReservedIndex.transform.asIndex(),
+                            .val = .{ .mat3x3 = transform.inner },
+                        },
+                    });
                 }
             },
             .text => |t| {
@@ -264,17 +289,8 @@ pub const FrameRenderer = struct {
 
                 return .{ .image = texture.inner };
             },
-            .float => |f| {
-                return .{ .float = f };
-            },
-            .float2 => |f| {
-                return .{ .float2 = f };
-            },
-            .float3 => |f| {
-                return .{ .float3 = f };
-            },
-            .int => |i| {
-                return .{ .int = i };
+            inline else => |val, tag| {
+                return @unionInit(ResolvedUniformValue, @tagName(tag), val);
             },
         }
     }
@@ -297,20 +313,21 @@ pub const UniformValue = union(UniformType) {
     float2: [2]f32,
     float3: [3]f32,
     int: i32,
+    mat3x3: sphmath.Mat3x3,
 
     pub fn fromDefault(default: UniformDefault) UniformValue {
         switch (default) {
             .image => return .{ .image = null },
-            .float => |v| return .{ .float = v },
-            .float2 => |v| return .{ .float2 = v },
-            .float3 => |v| return .{ .float3 = v },
-            .int => |v| return .{ .int = v },
+            inline else => |val, tag| {
+                return @unionInit(UniformValue, @tagName(tag), val);
+            },
         }
     }
 };
 
 pub const CustomShaderReservedIndex = enum {
     aspect,
+    transform,
 
     fn asIndex(self: CustomShaderReservedIndex) usize {
         return @intFromEnum(self);
@@ -320,6 +337,7 @@ pub const CustomShaderReservedIndex = enum {
 pub const BrushReservedIndex = enum {
     aspect,
     distance_field,
+    transform,
 
     fn asIndex(self: BrushReservedIndex) usize {
         return @intFromEnum(self);

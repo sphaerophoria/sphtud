@@ -459,7 +459,7 @@ pub fn setShaderFloat(self: *App, uniform_idx: usize, float_idx: usize, val: f32
         .float3 => |*v| {
             v[float_idx] = val;
         },
-        .image, .int => {},
+        .image, .int, .mat3x3 => {},
     }
 }
 

@@ -13,6 +13,7 @@ pub const UniformType = enum {
     float2,
     float3,
     int,
+    mat3x3,
 
     pub fn fromGlType(typ: gl.GLenum) ?UniformType {
         switch (typ) {
@@ -21,7 +22,11 @@ pub const UniformType = enum {
             gl.GL_FLOAT_VEC2 => return .float2,
             gl.GL_FLOAT_VEC3 => return .float3,
             gl.GL_INT => return .int,
-            else => return null,
+            gl.GL_FLOAT_MAT3_ARB => return .mat3x3,
+            else => {
+                std.log.warn("Unsupported GL uniform type: 0x{x}", .{typ});
+                return null;
+            },
         }
     }
 };
@@ -32,6 +37,7 @@ pub const UniformDefault = union(UniformType) {
     float2: [2]f32,
     float3: [3]f32,
     int: i32,
+    mat3x3: sphmath.Mat3x3,
 };
 
 pub const ResolvedUniformValue = union(UniformType) {
@@ -40,6 +46,7 @@ pub const ResolvedUniformValue = union(UniformType) {
     float2: [2]f32,
     float3: [3]f32,
     int: i32,
+    mat3x3: sphmath.Mat3x3,
 };
 
 pub const ReservedUniformValue = struct {
@@ -179,6 +186,11 @@ const ProgramUniformIt = struct {
                     gl.glGetUniformiv(self.program, @intCast(self.idx), &default);
                     break :blk .{ .int = @intCast(default) };
                 },
+                .mat3x3 => blk: {
+                    var default: sphmath.Mat3x3 = .{};
+                    gl.glGetnUniformfv(self.program, @intCast(self.idx), @sizeOf(@TypeOf(default.data)), &default.data);
+                    break :blk .{ .mat3x3 = default.transpose() };
+                },
             };
             if (name_len < 0) continue;
 
@@ -260,7 +272,11 @@ pub const plane_vertex_shader =
     \\in vec2 vUv;
     \\in vec2 vPos;
     \\out vec2 uv;
-    \\uniform mat3x3 transform;
+    \\uniform mat3x3 transform = mat3x3(
+    \\    1.0, 0.0, 0.0,
+    \\    0.0, 1.0, 0.0,
+    \\    0.0, 0.0, 1.0
+    \\);
     \\void main()
     \\{
     \\    vec3 transformed = transform * vec3(vPos, 1.0);
@@ -283,6 +299,7 @@ pub const plane_fragment_shader =
 pub const DefaultPlaneReservedIndex = enum {
     aspect,
     input_image,
+    transform,
 
     pub fn asIndex(self: DefaultPlaneReservedIndex) usize {
         return @intFromEnum(self);
@@ -330,6 +347,9 @@ pub fn applyUniformAtLocation(loc: gl.GLint, expected_type: UniformType, val: Re
         },
         .int => |v| {
             gl.glUniform1i(loc, v);
+        },
+        .mat3x3 => |v| {
+            gl.glUniformMatrix3fv(loc, 1, gl.GL_TRUE, &v.data);
         },
     }
 }

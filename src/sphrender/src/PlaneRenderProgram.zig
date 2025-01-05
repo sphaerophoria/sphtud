@@ -8,7 +8,6 @@ const ResolvedUniformValue = sphrender.ResolvedUniformValue;
 const ReservedUniformValue = sphrender.ReservedUniformValue;
 
 program: gl.GLuint,
-transform_location: gl.GLint,
 
 uniforms: []Uniform,
 reserved_uniforms: []?Uniform,
@@ -28,8 +27,6 @@ pub fn init(alloc: Allocator, vs: [:0]const u8, fs: [:0]const u8, comptime Index
     const program = try sphrender.compileLinkProgram(vs, fs);
     errdefer gl.glDeleteProgram(program);
 
-    const transform_location = gl.glGetUniformLocation(program, "transform");
-
     const reserved_names = if (IndexType) |T| std.meta.fieldNames(T) else &.{};
     const uniforms = try sphrender.getUniformList(alloc, program, reserved_names);
     errdefer sphrender.freeUniformList(alloc, uniforms.other);
@@ -37,7 +34,6 @@ pub fn init(alloc: Allocator, vs: [:0]const u8, fs: [:0]const u8, comptime Index
 
     return .{
         .program = program,
-        .transform_location = transform_location,
         .uniforms = uniforms.other,
         .reserved_uniforms = uniforms.reserved,
     };
@@ -54,10 +50,9 @@ pub fn makeDefaultBuffer(self: PlaneRenderProgram) Buffer {
     return Buffer.init(self.program);
 }
 
-pub fn render(self: PlaneRenderProgram, buffer: Buffer, uniforms: []const ResolvedUniformValue, reserved_uniforms: []const ReservedUniformValue, transform: sphmath.Transform) void {
+pub fn render(self: PlaneRenderProgram, buffer: Buffer, uniforms: []const ResolvedUniformValue, reserved_uniforms: []const ReservedUniformValue) void {
     gl.glUseProgram(self.program);
     gl.glBindVertexArray(buffer.vertex_array);
-    gl.glUniformMatrix3fv(self.transform_location, 1, gl.GL_TRUE, &transform.inner.data);
 
     var texture_unit_alloc = sphrender.TextureUnitAlloc{};
     for (self.uniforms, 0..) |uniform, i| {

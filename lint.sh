@@ -4,6 +4,10 @@ set -ex
 
 zig fmt src build.zig --check
 
+pushd src/sphmath/
+zig build test
+popd
+
 pushd src/sphtext/
 zig build test
 popd

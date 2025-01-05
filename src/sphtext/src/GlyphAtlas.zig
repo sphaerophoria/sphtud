@@ -212,7 +212,7 @@ fn renderTextureIntoAtlas(self: *GlyphAtlas, bounds: PixelBBox, distance_field: 
             .idx = sphrender.DefaultPlaneReservedIndex.input_image.asIndex(),
             .val = .{ .image = distance_field.inner },
         },
-    }, sphmath.Transform.identity);
+    });
 }
 
 // Adapter iterator to convert from glyph line segments into the format

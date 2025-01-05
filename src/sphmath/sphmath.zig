@@ -137,6 +137,42 @@ pub const Mat3x3 = struct {
             }
         }
     }
+
+    pub fn transpose(self: Mat3x3) Mat3x3 {
+        var ret = self;
+
+        const pairs: [3][2]usize = .{
+            .{ 1, 3 },
+            .{ 2, 6 },
+            .{ 5, 7 },
+        };
+
+        for (pairs) |pair| {
+            std.mem.swap(f32, &ret.data[pair[0]], &ret.data[pair[1]]);
+        }
+
+        return ret;
+    }
+
+    test "sanity transpose" {
+        const m1 = Mat3x3{ .data = .{
+            40, 50,  123,
+            92, -12, -25,
+            0,  45,  1,
+        } };
+
+        const transposed = m1.transpose();
+
+        try std.testing.expectApproxEqAbs(40, transposed.data[0], 1e-7);
+        try std.testing.expectApproxEqAbs(92, transposed.data[1], 1e-7);
+        try std.testing.expectApproxEqAbs(0, transposed.data[2], 1e-7);
+        try std.testing.expectApproxEqAbs(50, transposed.data[3], 1e-7);
+        try std.testing.expectApproxEqAbs(-12, transposed.data[4], 1e-7);
+        try std.testing.expectApproxEqAbs(45, transposed.data[5], 1e-7);
+        try std.testing.expectApproxEqAbs(123, transposed.data[6], 1e-7);
+        try std.testing.expectApproxEqAbs(-25, transposed.data[7], 1e-7);
+        try std.testing.expectApproxEqAbs(1, transposed.data[8], 1e-7);
+    }
 };
 
 pub const Transform = struct {
@@ -209,4 +245,8 @@ pub fn calcAspect(width: usize, height: usize) f32 {
     const height_f: f32 = @floatFromInt(height);
 
     return width_f / height_f;
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }

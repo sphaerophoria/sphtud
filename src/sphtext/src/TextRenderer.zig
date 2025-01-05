@@ -375,12 +375,17 @@ pub fn render(self: TextRenderer, buf: Buffer, transform: sphmath.Transform) voi
             .idx = TextReservedIndex.multiplier.asIndex(),
             .val = .{ .float = self.point_size * self.multiplier },
         },
-    }, transform);
+        .{
+            .idx = TextReservedIndex.transform.asIndex(),
+            .val = .{ .mat3x3 = transform.inner },
+        },
+    });
 }
 
 pub const TextReservedIndex = enum {
     input_df,
     multiplier,
+    transform,
 
     fn asIndex(self: TextReservedIndex) usize {
         return @intFromEnum(self);

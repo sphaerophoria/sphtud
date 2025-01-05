@@ -505,7 +505,11 @@ fn ColorHexagon(comptime Action: type, comptime ColorRetriever: type, comptime C
                     .idx = ColorUniformIndex.selected_color.asIndex(),
                     .val = .{ .float3 = .{ color.r, color.g, color.b } },
                 },
-            }, transform);
+                .{
+                    .idx = ColorUniformIndex.transform.asIndex(),
+                    .val = .{ .mat3x3 = transform.inner },
+                },
+            });
 
             const lightness_transform = util.widgetToClipTransform(split_bounds.lightness, window_bounds);
             self.shared.lightness_renderer.render(
@@ -529,8 +533,11 @@ fn ColorHexagon(comptime Action: type, comptime ColorRetriever: type, comptime C
                         .idx = @intFromEnum(LightnessUniformIndex.corner_radius),
                         .val = .{ .float = self.shared.style.corner_radius },
                     },
+                    .{
+                        .idx = @intFromEnum(LightnessUniformIndex.transform),
+                        .val = .{ .mat3x3 = lightness_transform.inner },
+                    },
                 },
-                lightness_transform,
             );
 
             const triangle_transform = util.widgetToClipTransform(split_bounds.pointer, window_bounds);
@@ -762,6 +769,7 @@ const ColorAxis = struct {
 const ColorUniformIndex = enum {
     lightness,
     selected_color,
+    transform,
 
     pub fn asIndex(self: ColorUniformIndex) usize {
         return @intFromEnum(self);
@@ -881,6 +889,7 @@ const LightnessUniformIndex = enum {
     color,
     total_size,
     corner_radius,
+    transform,
 };
 const lightness_slider_frag =
     \\#version 330

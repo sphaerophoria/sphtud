@@ -172,7 +172,11 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
                             },
                         },
                     },
-                }, transform);
+                    .{
+                        .idx = @intFromEnum(SolidColorIdx.transform),
+                        .val = .{ .mat3x3 = transform.inner },
+                    },
+                });
             }
 
             {
@@ -369,6 +373,7 @@ fn selectedTextRetriever(list_retriever: anytype) SelectedTextRetriever(@TypeOf(
 
 const SolidColorIdx = enum {
     color,
+    transform,
 };
 
 const solid_color_fragment_shader =
