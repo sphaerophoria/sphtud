@@ -60,7 +60,6 @@ const Builder = struct {
         exe.root_module.addImport("sphtext", self.sphtext);
         exe.root_module.addImport("sphimp", self.sphimp);
         exe.linkLibC();
-        exe.linkLibCpp();
     }
 
     fn addGuiDependencies(self: *Builder, exe: *std.Build.Step.Compile) void {
