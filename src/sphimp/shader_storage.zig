@@ -1,25 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Renderer = @import("Renderer.zig");
-
-pub const Item = struct {
-    name: []const u8,
-    program: Renderer.PlaneRenderProgram,
-    fs_source: [:0]const u8,
-
-    fn deinit(self: *Item, alloc: Allocator) void {
-        alloc.free(self.name);
-        alloc.free(self.fs_source);
-        self.program.deinit(alloc);
-    }
-
-    fn save(self: Item) Save {
-        return .{
-            .name = self.name,
-            .fs_source = self.fs_source,
-        };
-    }
-};
+const sphrender = @import("sphrender");
+const sphmath = @import("sphmath");
 
 pub const Save = struct {
     name: []const u8,
@@ -48,6 +31,36 @@ pub fn ShaderStorage(comptime Id: type) type {
             }
         };
 
+        const Program = if (Id == ShaderId)
+            sphrender.xyuvt_program.Program(Renderer.CustomShaderUniforms)
+        else if (Id == BrushId)
+            sphrender.xyuvt_program.Program(Renderer.BrushUniforms)
+        else
+            @compileError("Unknown shader id");
+
+        pub const Item = struct {
+            name: []const u8,
+            program: Program,
+            uniforms: sphrender.shader_program.UnknownUniforms,
+            buffer: sphrender.xyuvt_program.Buffer,
+            fs_source: [:0]const u8,
+
+            fn deinit(self: *Item, alloc: Allocator) void {
+                alloc.free(self.name);
+                alloc.free(self.fs_source);
+                self.buffer.deinit();
+                self.uniforms.deinit(alloc);
+                self.program.deinit();
+            }
+
+            fn save(self: Item) Save {
+                return .{
+                    .name = self.name,
+                    .fs_source = self.fs_source,
+                };
+            }
+        };
+
         pub fn deinit(self: *Self, alloc: Allocator) void {
             for (self.storage.items) |*shader| {
                 shader.deinit(alloc);
@@ -65,22 +78,23 @@ pub fn ShaderStorage(comptime Id: type) type {
             const name_duped = try alloc.dupe(u8, name);
             errdefer alloc.free(name_duped);
 
-            const ReservedIdType: ?type = if (Id == ShaderId)
-                Renderer.CustomShaderReservedIndex
-            else if (Id == BrushId)
-                Renderer.BrushReservedIndex
-            else
-                null;
-
-            const program = try Renderer.PlaneRenderProgram.init(alloc, Renderer.plane_vertex_shader, fs_source, ReservedIdType);
-            errdefer program.deinit(alloc);
+            const program = try Program.init(fs_source);
+            errdefer program.deinit();
 
             const duped_fs_source = try alloc.dupeZ(u8, fs_source);
             errdefer alloc.free(duped_fs_source);
 
+            const unknown_uniforms = try program.unknownUniforms(alloc);
+            errdefer unknown_uniforms.deinit(alloc);
+
+            const buffer = program.makeFullScreenPlane();
+            errdefer buffer.deinit();
+
             try self.storage.append(alloc, .{
                 .name = name_duped,
                 .program = program,
+                .buffer = buffer,
+                .uniforms = unknown_uniforms,
                 .fs_source = duped_fs_source,
             });
             return id;

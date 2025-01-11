@@ -7,20 +7,20 @@ const gui = @import("gui.zig");
 const Color = gui.Color;
 const PixelBBox = gui.PixelBBox;
 
-program: sphrender.PlaneRenderProgram,
-buffer: sphrender.PlaneRenderProgram.Buffer,
+const Program = sphrender.xyuvt_program.Program(SquircleUniform);
+const Buffer = sphrender.xyuvt_program.Buffer;
+
+program: Program,
+buffer: Buffer,
 
 const SquircleRenderer = @This();
 
-pub fn init(alloc: Allocator) !SquircleRenderer {
-    const program = try sphrender.PlaneRenderProgram.init(
-        alloc,
-        sphrender.plane_vertex_shader,
+pub fn init() !SquircleRenderer {
+    const program = try Program.init(
         fragment_shader,
-        SquircleIndex,
     );
 
-    const buffer = program.makeDefaultBuffer();
+    const buffer = program.makeFullScreenPlane();
 
     return .{
         .program = program,
@@ -28,44 +28,28 @@ pub fn init(alloc: Allocator) !SquircleRenderer {
     };
 }
 
-pub fn deinit(self: SquircleRenderer, alloc: Allocator) void {
-    self.program.deinit(alloc);
+pub fn deinit(self: SquircleRenderer) void {
+    self.program.deinit();
     self.buffer.deinit();
 }
 
 pub fn render(self: SquircleRenderer, color: Color, corner_radius_px: f32, widget_bounds: PixelBBox, transform: sphmath.Transform) void {
-    self.program.render(self.buffer, &.{}, &.{
-        .{
-            .idx = @intFromEnum(SquircleIndex.color),
-            .val = .{
-                .float3 = .{ color.r, color.g, color.b },
-            },
+    self.program.render(self.buffer, .{
+        .color = .{ color.r, color.g, color.b },
+        .total_size = .{
+            @floatFromInt(widget_bounds.calcWidth()),
+            @floatFromInt(widget_bounds.calcHeight()),
         },
-        .{
-            .idx = @intFromEnum(SquircleIndex.total_size),
-            .val = .{
-                .float2 = .{
-                    @floatFromInt(widget_bounds.calcWidth()),
-                    @floatFromInt(widget_bounds.calcHeight()),
-                },
-            },
-        },
-        .{
-            .idx = @intFromEnum(SquircleIndex.corner_radius),
-            .val = .{ .float = corner_radius_px },
-        },
-        .{
-            .idx = @intFromEnum(SquircleIndex.transform),
-            .val = .{ .mat3x3 = transform.inner },
-        },
+        .corner_radius = corner_radius_px,
+        .transform = transform.inner,
     });
 }
 
-const SquircleIndex = enum {
-    color,
-    total_size,
-    corner_radius,
-    transform,
+const SquircleUniform = struct {
+    color: sphmath.Vec3,
+    total_size: sphmath.Vec2,
+    corner_radius: f32,
+    transform: sphmath.Mat3x3,
 };
 
 const fragment_shader =

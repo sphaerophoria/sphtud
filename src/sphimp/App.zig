@@ -47,8 +47,8 @@ pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
     var objects = Objects{};
     errdefer objects.deinit(alloc);
 
-    var renderer = try Renderer.init(alloc);
-    errdefer renderer.deinit(alloc);
+    var renderer = try Renderer.init();
+    errdefer renderer.deinit();
 
     var shaders = ShaderStorage(ShaderId){};
     errdefer shaders.deinit(alloc);
@@ -93,7 +93,7 @@ pub fn deinit(self: *App) void {
     self.alloc.destroy(self.io_thread);
 
     self.objects.deinit(self.alloc);
-    self.renderer.deinit(self.alloc);
+    self.renderer.deinit();
     self.shaders.deinit(self.alloc);
     self.brushes.deinit(self.alloc);
     self.fonts.deinit(self.alloc);
@@ -185,7 +185,7 @@ pub fn load(self: *App, path: []const u8) !void {
         _ = try loadFontIntoStorage(self.alloc, p, &new_fonts);
     }
 
-    var new_objects = try Objects.load(self.alloc, parsed.value.objects, new_shaders, new_brushes, self.renderer.path_program, self.renderer.default_buffer);
+    var new_objects = try Objects.load(self.alloc, parsed.value.objects, new_shaders, new_brushes, self.renderer.path_program);
     // Note that objects gets swapped in and is freed by this defer
     defer new_objects.deinit(self.alloc);
 
@@ -546,7 +546,7 @@ pub fn addText(self: *App) !ObjectId {
     try self.objects.append(self.alloc, .{
         .name = name,
         .data = .{
-            .text = try obj_mod.TextObject.init(self.alloc, font_id, self.renderer.program.makeDefaultBuffer()),
+            .text = try obj_mod.TextObject.init(self.alloc, font_id),
         },
     });
 

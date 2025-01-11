@@ -1,7 +1,8 @@
 pub const gl = @import("gl.zig");
 pub const geometry = @import("geometry.zig");
-pub const PlaneRenderProgram = @import("PlaneRenderProgram.zig");
 pub const DistanceFieldGenerator = @import("DistanceFieldGenerator.zig");
+pub const shader_program = @import("shader_program.zig");
+pub const xyuvt_program = @import("xyuvt.zig");
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -128,13 +129,13 @@ pub fn compileLinkProgram(vs: [:0]const u8, fs: [:0]const u8) !gl.GLuint {
     return program;
 }
 
-const ProgramUniformIt = struct {
+pub const ProgramUniformIt = struct {
     num_uniforms: usize,
     program: gl.GLuint,
     name_buf: [1024]u8 = undefined,
     idx: usize = 0,
 
-    fn init(program: gl.GLuint) !ProgramUniformIt {
+    pub fn init(program: gl.GLuint) !ProgramUniformIt {
         var num_uniforms: gl.GLint = 0;
         gl.glGetProgramiv(program, gl.GL_ACTIVE_UNIFORMS, &num_uniforms);
 
@@ -148,7 +149,7 @@ const ProgramUniformIt = struct {
         };
     }
 
-    fn next(self: *ProgramUniformIt) ?Uniform {
+    pub fn next(self: *ProgramUniformIt) ?Uniform {
         while (self.idx < self.num_uniforms) {
             defer self.idx += 1;
 
@@ -293,27 +294,6 @@ pub const plane_vertex_shader =
     \\    uv = vUv;
     \\}
 ;
-
-pub const plane_fragment_shader =
-    \\#version 330
-    \\in vec2 uv;
-    \\out vec4 fragment;
-    \\uniform sampler2D input_image;  // The texture
-    \\void main()
-    \\{
-    \\    fragment = texture(input_image, vec2(uv.x, uv.y));
-    \\}
-;
-
-pub const DefaultPlaneReservedIndex = enum {
-    aspect,
-    input_image,
-    transform,
-
-    pub fn asIndex(self: DefaultPlaneReservedIndex) usize {
-        return @intFromEnum(self);
-    }
-};
 
 pub const TextureUnitAlloc = struct {
     idx: usize = 0,

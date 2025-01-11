@@ -5,11 +5,13 @@ const ttf_mod = @import("ttf.zig");
 const sphmath = @import("sphmath");
 const gl = sphrender.gl;
 
-const PlaneRenderProgram = sphrender.PlaneRenderProgram;
 const Texture = sphrender.Texture;
 
+const PlaneRenderProgram = sphrender.xyuvt_program.Program(sphrender.xyuvt_program.ImageSamplerUniforms);
+const PlaneRenderBuffer = sphrender.xyuvt_program.Buffer;
+
 program: PlaneRenderProgram,
-glyph_buffer: PlaneRenderProgram.Buffer,
+glyph_buffer: PlaneRenderBuffer,
 texture: Texture,
 tex_width: usize,
 tex_height: usize,
@@ -52,14 +54,9 @@ pub const PixelBBox = struct {
     }
 };
 
-pub fn init(alloc: Allocator) !GlyphAtlas {
-    const program = try PlaneRenderProgram.init(
-        alloc,
-        sphrender.plane_vertex_shader,
-        sphrender.plane_fragment_shader,
-        sphrender.DefaultPlaneReservedIndex,
-    );
-    errdefer program.deinit(alloc);
+pub fn init() !GlyphAtlas {
+    const program = try PlaneRenderProgram.init(sphrender.xyuvt_program.image_sampler_frag);
+    errdefer program.deinit();
 
     var c_max_texture_size: c_int = 0;
     gl.glGetIntegerv(gl.GL_MAX_TEXTURE_SIZE, &c_max_texture_size);
@@ -92,7 +89,7 @@ pub fn init(alloc: Allocator) !GlyphAtlas {
 
     return .{
         .program = program,
-        .glyph_buffer = program.makeDefaultBuffer(),
+        .glyph_buffer = program.makeFullScreenPlane(),
         .texture = texture,
         .tex_width = tex_width,
         .tex_height = tex_height,
@@ -101,7 +98,7 @@ pub fn init(alloc: Allocator) !GlyphAtlas {
 
 pub fn deinit(self: *GlyphAtlas, alloc: Allocator) void {
     self.texture.deinit();
-    self.program.deinit(alloc);
+    self.program.deinit();
     self.glyph_locations.deinit(alloc);
     self.glyph_buffer.deinit();
 }
@@ -207,11 +204,8 @@ fn renderTextureIntoAtlas(self: *GlyphAtlas, bounds: PixelBBox, distance_field: 
 
     temp_scissor.setAbsolute(bounds.left, bounds.bottom, bounds.right - bounds.left, bounds.top - bounds.bottom);
 
-    self.program.render(self.glyph_buffer, &.{}, &.{
-        .{
-            .idx = sphrender.DefaultPlaneReservedIndex.input_image.asIndex(),
-            .val = .{ .image = distance_field.inner },
-        },
+    self.program.render(self.glyph_buffer, .{
+        .input_image = distance_field,
     });
 }
 

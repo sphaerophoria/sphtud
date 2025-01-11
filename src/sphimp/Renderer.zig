@@ -8,16 +8,15 @@ const sphmath = @import("sphmath");
 const sphtext = @import("sphtext");
 const TextRenderer = sphtext.TextRenderer;
 const gl = sphrender.gl;
+const ShaderProgram = sphrender.shader_program.Program;
+const PlaneProgram = sphrender.xyuvt_program.Program;
+const PlaneBuffer = sphrender.xyuvt_program.Buffer;
 
 pub const ResolvedUniformValue = sphrender.ResolvedUniformValue;
 pub const UniformType = sphrender.UniformType;
 pub const UniformDefault = sphrender.UniformDefault;
 pub const Uniform = sphrender.Uniform;
-pub const PlaneRenderProgram = sphrender.PlaneRenderProgram;
 pub const Texture = sphrender.Texture;
-pub const DefaultPlaneReservedIndex = sphrender.DefaultPlaneReservedIndex;
-pub const plane_vertex_shader = sphrender.plane_vertex_shader;
-pub const plane_fragment_shader = sphrender.plane_fragment_shader;
 pub const FramebufferRenderContext = sphrender.FramebufferRenderContext;
 
 const ShaderStorage = shader_storage.ShaderStorage;
@@ -29,12 +28,15 @@ const Object = obj_mod.Object;
 const ObjectId = obj_mod.ObjectId;
 const Transform = sphmath.Transform;
 
-program: PlaneRenderProgram,
-default_buffer: PlaneRenderProgram.Buffer,
-background_program: PlaneRenderProgram,
+sampler_program: PlaneProgram(sphrender.xyuvt_program.ImageSamplerUniforms),
+sampler_buffer: PlaneBuffer,
+background_program: PlaneProgram(BackgroundUniforms),
+background_buffer: PlaneBuffer,
 path_program: PathRenderProgram,
-comp_id_program: PlaneRenderProgram,
-display_id_program: PlaneRenderProgram,
+comp_id_program: PlaneProgram(IdUniforms),
+comp_id_buffer: PlaneBuffer,
+display_id_program: PlaneProgram(DisplayIdUniforms),
+display_id_buffer: PlaneBuffer,
 distance_field_generator: sphrender.DistanceFieldGenerator,
 
 const Renderer = @This();
@@ -54,17 +56,20 @@ fn glDebugCallback(source: gl.GLenum, typ: gl.GLenum, id: gl.GLuint, severity: g
     }
 }
 
-pub fn init(alloc: Allocator) !Renderer {
+pub fn init() !Renderer {
     gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA);
     gl.glEnable(gl.GL_BLEND);
 
     gl.glDebugMessageCallback(glDebugCallback, null);
 
-    const plane_program = try PlaneRenderProgram.init(alloc, sphrender.plane_vertex_shader, sphrender.plane_fragment_shader, sphrender.DefaultPlaneReservedIndex);
-    errdefer plane_program.deinit(alloc);
+    const sampler_program = try PlaneProgram(sphrender.xyuvt_program.ImageSamplerUniforms).init(sphrender.xyuvt_program.image_sampler_frag);
+    errdefer sampler_program.deinit();
 
-    const background_program = try PlaneRenderProgram.init(alloc, sphrender.plane_vertex_shader, checkerboard_fragment_shader, sphrender.DefaultPlaneReservedIndex);
-    errdefer background_program.deinit(alloc);
+    const background_program = try PlaneProgram(BackgroundUniforms).init(checkerboard_fragment_shader);
+    errdefer background_program.deinit();
+
+    const background_buffer = background_program.makeFullScreenPlane();
+    errdefer background_buffer.deinit();
 
     const path_program = try PathRenderProgram.init();
     errdefer path_program.deinit();
@@ -72,30 +77,40 @@ pub fn init(alloc: Allocator) !Renderer {
     const distance_field_generator = try sphrender.DistanceFieldGenerator.init();
     errdefer distance_field_generator.deinit();
 
-    const comp_id_program = try sphrender.PlaneRenderProgram.init(alloc, sphrender.plane_vertex_shader, comp_id_frag, IdProgIdx);
-    errdefer comp_id_program.deinit(alloc);
+    const comp_id_program = try PlaneProgram(IdUniforms).init(comp_id_frag);
+    errdefer comp_id_program.deinit();
 
-    const display_id_prog = try sphrender.PlaneRenderProgram.init(alloc, sphrender.plane_vertex_shader, display_id_frag, DisplayIdProgIdx);
-    errdefer display_id_prog.deinit(alloc);
+    const comp_id_buffer = comp_id_program.makeFullScreenPlane();
+    errdefer comp_id_buffer.deinit();
+
+    const display_id_prog = try PlaneProgram(DisplayIdUniforms).init(display_id_frag);
+    errdefer display_id_prog.deinit();
 
     return .{
-        .program = plane_program,
-        .default_buffer = plane_program.makeDefaultBuffer(),
+        .sampler_program = sampler_program,
+        .sampler_buffer = sampler_program.makeFullScreenPlane(),
         .background_program = background_program,
+        .background_buffer = background_buffer,
         .path_program = path_program,
         .comp_id_program = comp_id_program,
+        .comp_id_buffer = comp_id_buffer,
         .display_id_program = display_id_prog,
+        .display_id_buffer = display_id_prog.makeFullScreenPlane(),
         .distance_field_generator = distance_field_generator,
     };
 }
 
-pub fn deinit(self: *Renderer, alloc: Allocator) void {
-    self.program.deinit(alloc);
-    self.background_program.deinit(alloc);
+pub fn deinit(self: *Renderer) void {
+    self.sampler_program.deinit();
+    self.sampler_buffer.deinit();
+    self.background_program.deinit();
+    self.background_buffer.deinit();
     self.path_program.deinit();
     self.distance_field_generator.deinit();
-    self.comp_id_program.deinit(alloc);
-    self.display_id_program.deinit(alloc);
+    self.comp_id_program.deinit();
+    self.comp_id_buffer.deinit();
+    self.display_id_program.deinit();
+    self.display_id_buffer.deinit();
 }
 
 pub const FrameRenderer = struct {
@@ -121,17 +136,10 @@ pub const FrameRenderer = struct {
         const toplevel_aspect = sphmath.calcAspect(object_dims[0], object_dims[1]);
 
         self.renderer.background_program.render(
-            self.renderer.default_buffer,
-            &.{},
-            &.{
-                .{
-                    .idx = DefaultPlaneReservedIndex.aspect.asIndex(),
-                    .val = .{ .float = toplevel_aspect },
-                },
-                .{
-                    .idx = DefaultPlaneReservedIndex.transform.asIndex(),
-                    .val = .{ .mat3x3 = transform.inner },
-                },
+            self.renderer.background_buffer,
+            .{
+                .aspect = toplevel_aspect,
+                .transform = transform.inner,
             },
         );
 
@@ -192,21 +200,11 @@ pub const FrameRenderer = struct {
 
             // Run render program that samples from tex
             self.renderer.comp_id_program.render(
-                self.renderer.default_buffer,
-                &.{},
-                &.{
-                    .{
-                        .idx = @intFromEnum(IdProgIdx.input_image),
-                        .val = .{ .image = tex.inner },
-                    },
-                    .{
-                        .idx = @intFromEnum(IdProgIdx.composition_idx),
-                        .val = .{ .uint = @intCast(comp_idx) },
-                    },
-                    .{
-                        .idx = @intFromEnum(IdProgIdx.transform),
-                        .val = .{ .mat3x3 = total_transform.inner },
-                    },
+                self.renderer.comp_id_buffer,
+                .{
+                    .input_image = tex,
+                    .composition_idx = @intCast(comp_idx),
+                    .transform = total_transform.inner,
                 },
             );
         }
@@ -240,34 +238,16 @@ pub const FrameRenderer = struct {
                     const preview_transform = Transform.scale(preview_scale, preview_scale)
                         .then(Transform.translate(1.0 - preview_scale, preview_scale - 1.0));
 
-                    self.renderer.display_id_program.render(self.renderer.default_buffer, &.{}, &.{
-                        .{
-                            .idx = @intFromEnum(DisplayIdProgIdx.input_image),
-                            .val = .{
-                                .image = output_tex.inner,
-                            },
-                        },
-                        .{
-                            .idx = @intFromEnum(DisplayIdProgIdx.transform),
-                            .val = .{ .mat3x3 = preview_transform.inner },
-                        },
+                    self.renderer.display_id_program.render(self.renderer.display_id_buffer, .{
+                        .input_image = output_tex,
+                        .transform = preview_transform.inner,
                     });
                 }
             },
             .filesystem => |f| {
-                self.renderer.program.render(self.renderer.default_buffer, &.{}, &.{
-                    .{
-                        .idx = DefaultPlaneReservedIndex.input_image.asIndex(),
-                        .val = .{ .image = f.texture.inner },
-                    },
-                    .{
-                        .idx = DefaultPlaneReservedIndex.aspect.asIndex(),
-                        .val = .{ .float = sphmath.calcAspect(f.width, f.height) },
-                    },
-                    .{
-                        .idx = DefaultPlaneReservedIndex.transform.asIndex(),
-                        .val = .{ .mat3x3 = transform.inner },
-                    },
+                self.renderer.sampler_program.render(self.renderer.sampler_buffer, .{
+                    .input_image = f.texture,
+                    .transform = transform.inner,
                 });
             },
             .shader => |s| {
@@ -279,16 +259,16 @@ pub const FrameRenderer = struct {
                 }
 
                 const object_dims = object.dims(self.objects);
-                self.shaders.get(s.program).program.render(self.renderer.default_buffer, sources.items, &.{
+                const shader = self.shaders.get(s.program);
+                shader.program.renderWithExtra(
+                    shader.buffer,
                     .{
-                        .idx = CustomShaderReservedIndex.aspect.asIndex(),
-                        .val = .{ .float = sphmath.calcAspect(object_dims[0], object_dims[1]) },
+                        .aspect = sphmath.calcAspect(object_dims[0], object_dims[1]),
+                        .transform = transform.inner,
                     },
-                    .{
-                        .idx = CustomShaderReservedIndex.transform.asIndex(),
-                        .val = .{ .mat3x3 = transform.inner },
-                    },
-                });
+                    shader.uniforms,
+                    sources.items,
+                );
             },
             .path => |p| {
                 const display_object = self.objects.get(p.display_object);
@@ -297,25 +277,10 @@ pub const FrameRenderer = struct {
                 self.renderer.path_program.render(p.render_buffer, transform, p.points.items.len);
             },
             .generated_mask => |m| {
-                const object_dims = object.dims(self.objects);
-                self.renderer.program.render(
-                    self.renderer.default_buffer,
-                    &.{},
-                    &.{
-                        .{
-                            .idx = DefaultPlaneReservedIndex.input_image.asIndex(),
-                            .val = .{ .image = m.texture.inner },
-                        },
-                        .{
-                            .idx = DefaultPlaneReservedIndex.aspect.asIndex(),
-                            .val = .{ .float = sphmath.calcAspect(object_dims[0], object_dims[1]) },
-                        },
-                        .{
-                            .idx = DefaultPlaneReservedIndex.transform.asIndex(),
-                            .val = .{ .mat3x3 = transform.inner },
-                        },
-                    },
-                );
+                self.renderer.sampler_program.render(self.renderer.sampler_buffer, .{
+                    .input_image = m.texture,
+                    .transform = transform.inner,
+                });
             },
             .drawing => |d| {
                 const display_object = self.objects.get(d.display_object);
@@ -332,20 +297,11 @@ pub const FrameRenderer = struct {
                 const brush = self.brushes.get(d.brush);
 
                 if (d.hasPoints()) {
-                    brush.program.render(self.renderer.default_buffer, sources.items, &.{
-                        .{
-                            .idx = BrushReservedIndex.aspect.asIndex(),
-                            .val = .{ .float = sphmath.calcAspect(dims[0], dims[1]) },
-                        },
-                        .{
-                            .idx = BrushReservedIndex.distance_field.asIndex(),
-                            .val = .{ .image = d.distance_field.inner },
-                        },
-                        .{
-                            .idx = BrushReservedIndex.transform.asIndex(),
-                            .val = .{ .mat3x3 = transform.inner },
-                        },
-                    });
+                    brush.program.renderWithExtra(brush.buffer, .{
+                        .aspect = sphmath.calcAspect(dims[0], dims[1]),
+                        .distance_field = d.distance_field,
+                        .transform = transform.inner,
+                    }, brush.uniforms, sources.items);
                 }
             },
             .text => |t| {
@@ -434,23 +390,20 @@ pub const UniformValue = union(UniformType) {
     }
 };
 
-pub const CustomShaderReservedIndex = enum {
-    aspect,
-    transform,
-
-    fn asIndex(self: CustomShaderReservedIndex) usize {
-        return @intFromEnum(self);
-    }
+pub const CustomShaderUniforms = struct {
+    aspect: f32,
+    transform: sphmath.Mat3x3,
 };
 
-pub const BrushReservedIndex = enum {
-    aspect,
-    distance_field,
-    transform,
+pub const BrushUniforms = struct {
+    aspect: f32,
+    distance_field: Texture,
+    transform: sphmath.Mat3x3,
+};
 
-    fn asIndex(self: BrushReservedIndex) usize {
-        return @intFromEnum(self);
-    }
+const BackgroundUniforms = struct {
+    aspect: f32,
+    transform: sphmath.Mat3x3,
 };
 
 const TextureCache = struct {
@@ -582,10 +535,10 @@ pub const checkerboard_fragment_shader =
     \\}
 ;
 
-const IdProgIdx = enum {
-    input_image,
-    composition_idx,
-    transform,
+const IdUniforms = struct {
+    input_image: Texture,
+    composition_idx: u32,
+    transform: sphmath.Mat3x3,
 };
 
 pub const comp_id_frag =
@@ -602,9 +555,9 @@ pub const comp_id_frag =
     \\}
 ;
 
-const DisplayIdProgIdx = enum {
-    input_image,
-    transform,
+const DisplayIdUniforms = struct {
+    input_image: Texture,
+    transform: sphmath.Mat3x3,
 };
 
 pub const display_id_frag =

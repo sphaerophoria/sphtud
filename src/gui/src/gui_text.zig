@@ -23,7 +23,7 @@ pub fn guiText(alloc: Allocator, shared: *const SharedState, text_retriever_cons
     const text_layout = TextRenderer.TextLayout.empty;
     errdefer text_layout.deinit(alloc);
 
-    const text_buffer = shared.text_renderer.program.makeDefaultBuffer();
+    const text_buffer = shared.text_renderer.program.makeFullScreenPlane();
     errdefer text_buffer.deinit();
 
     // Callers still may want to look at the text

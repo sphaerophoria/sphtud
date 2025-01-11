@@ -20,8 +20,8 @@ pub const PropertyWidgetGenerator = struct {
 
     const drag_speed = 0.01;
 
-    pub fn addImageToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, uniform: sphrender.Uniform) !void {
-        const uniform_label = try self.widget_factory.makeLabel(uniform.name);
+    pub fn addImageToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, name: []const u8) !void {
+        const uniform_label = try self.widget_factory.makeLabel(name);
         errdefer uniform_label.deinit(self.widget_factory.alloc);
 
         const value_widget = try self.widget_factory.makeComboBox(
@@ -36,8 +36,8 @@ pub const PropertyWidgetGenerator = struct {
         try self.property_list.pushWidgets(self.widget_factory.alloc, uniform_label, value_widget);
     }
 
-    pub fn addFloatToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, uniform: sphrender.Uniform) !void {
-        const uniform_label = try self.widget_factory.makeLabel(uniform.name);
+    pub fn addFloatToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, name: []const u8) !void {
+        const uniform_label = try self.widget_factory.makeLabel(name);
         errdefer uniform_label.deinit(self.widget_factory.alloc);
 
         const value_widget = try self.widget_factory.makeDragFloat(
@@ -57,14 +57,14 @@ pub const PropertyWidgetGenerator = struct {
         try self.property_list.pushWidgets(self.widget_factory.alloc, uniform_label, value_widget);
     }
 
-    pub fn addFloat2ToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, uniform: sphrender.Uniform) !void {
+    pub fn addFloat2ToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, name: []const u8) !void {
         const max_label_len = 20;
         const params: [2][]const u8 = .{ "X", "Y" };
         for (params, 0..) |param_name, idx| {
             const uniform_label = try self.widget_factory.makeLabel(
                 label_adaptors.stackBuf(
                     "{s} {s}",
-                    .{ uniform.name, param_name },
+                    .{ name, param_name },
                     max_label_len,
                 ),
             );
@@ -88,8 +88,8 @@ pub const PropertyWidgetGenerator = struct {
         }
     }
 
-    pub fn addFloat3ToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, uniform: sphrender.Uniform) !void {
-        const uniform_label = try self.widget_factory.makeLabel(uniform.name);
+    pub fn addFloat3ToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, name: []const u8) !void {
+        const uniform_label = try self.widget_factory.makeLabel(name);
         errdefer uniform_label.deinit(self.widget_factory.alloc);
 
         const value_widget = try self.widget_factory.makeColorPicker(

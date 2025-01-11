@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const sphmath = @import("sphmath");
 const sphrender = @import("sphrender");
 const gui = @import("gui.zig");
 const util = @import("util.zig");
@@ -12,6 +13,8 @@ const InputState = gui.InputState;
 const PopupLayer = gui.popup_layer.PopupLayer;
 const GuiText = gui.gui_text.GuiText;
 const SquircleRenderer = @import("SquircleRenderer.zig");
+
+const TriangleProgram = sphrender.shader_program.Program(TriangleVertex, TriangleUniform);
 
 pub const Style = struct {
     background: Color,
@@ -31,8 +34,8 @@ pub const Style = struct {
 
 pub const Shared = struct {
     style: Style,
-    triangle_program: sphrender.PlaneRenderProgram,
-    triangle_buf: sphrender.PlaneRenderProgram.Buffer,
+    triangle_program: TriangleProgram,
+    triangle_buf: sphrender.shader_program.Buffer(TriangleVertex),
     guitext_state: *const gui.gui_text.SharedState,
     squircle_renderer: *const SquircleRenderer,
     selectable: *const gui.selectable_list.SharedState,
@@ -48,22 +51,18 @@ pub const Shared = struct {
         frame: *const gui.frame.Shared,
     };
 
-    pub fn init(alloc: Allocator, options: Options) !Shared {
-        const triangle_program = try sphrender.PlaneRenderProgram.init(alloc, sphrender.plane_vertex_shader, solid_color_fragment_shader, SolidColorIdx);
-        errdefer triangle_program.deinit(alloc);
+    pub fn init(options: Options) !Shared {
+        const triangle_program = try TriangleProgram.init(triangle_vertex_shader, triangle_fragment_shader);
+        errdefer triangle_program.deinit();
 
-        var triangle_buf = triangle_program.makeDefaultBuffer();
-        errdefer triangle_buf.deinit();
-        triangle_buf.updateBuffer(&.{
+        var triangle_buf = triangle_program.makeBuffer(&.{
             // Make a triangle that is pointing down and taking up the full
             // clip space
-            //
-            // UV coords aren't used, we could just use a different vertex
-            // shader, but whatever
-            .{ .uv_x = 0.0, .uv_y = 0.0, .clip_x = -1.0, .clip_y = 1.0 },
-            .{ .uv_x = 0.0, .uv_y = 0.0, .clip_x = 1.0, .clip_y = 1.0 },
-            .{ .uv_x = 0.0, .uv_y = 0.0, .clip_x = 0.0, .clip_y = -1.0 },
+            .{ .vPos = .{ -1.0, 1.0 } },
+            .{ .vPos = .{ 1.0, 1.0 } },
+            .{ .vPos = .{ 0.0, -1.0 } },
         });
+        errdefer triangle_buf.deinit();
 
         return .{
             .triangle_program = triangle_program,
@@ -77,9 +76,9 @@ pub const Shared = struct {
         };
     }
 
-    pub fn deinit(self: *Shared, alloc: Allocator) void {
+    pub fn deinit(self: *Shared) void {
         self.triangle_buf.deinit();
-        self.triangle_program.deinit(alloc);
+        self.triangle_program.deinit();
     }
 };
 
@@ -161,21 +160,13 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
             {
                 const triangle_bounds = sub_sizes.triangleBounds(widget_bounds);
                 const transform = util.widgetToClipTransform(triangle_bounds, window_bounds);
-                self.shared.triangle_program.render(self.shared.triangle_buf, &.{}, &.{
-                    .{
-                        .idx = @intFromEnum(SolidColorIdx.color),
-                        .val = .{
-                            .float3 = .{
-                                self.shared.style.triangle_color.r,
-                                self.shared.style.triangle_color.g,
-                                self.shared.style.triangle_color.b,
-                            },
-                        },
+                self.shared.triangle_program.render(self.shared.triangle_buf, .{
+                    .color = .{
+                        self.shared.style.triangle_color.r,
+                        self.shared.style.triangle_color.g,
+                        self.shared.style.triangle_color.b,
                     },
-                    .{
-                        .idx = @intFromEnum(SolidColorIdx.transform),
-                        .val = .{ .mat3x3 = transform.inner },
-                    },
+                    .transform = transform.inner,
                 });
             }
 
@@ -371,12 +362,31 @@ fn selectedTextRetriever(list_retriever: anytype) SelectedTextRetriever(@TypeOf(
     };
 }
 
-const SolidColorIdx = enum {
-    color,
-    transform,
+const TriangleUniform = struct {
+    color: sphmath.Vec3,
+    transform: sphmath.Mat3x3,
 };
 
-const solid_color_fragment_shader =
+const TriangleVertex = struct {
+    vPos: sphmath.Vec2,
+};
+
+pub const triangle_vertex_shader =
+    \\#version 330
+    \\in vec2 vPos;
+    \\uniform mat3x3 transform = mat3x3(
+    \\    1.0, 0.0, 0.0,
+    \\    0.0, 1.0, 0.0,
+    \\    0.0, 0.0, 1.0
+    \\);
+    \\void main()
+    \\{
+    \\    vec3 transformed = transform * vec3(vPos, 1.0);
+    \\    gl_Position = vec4(transformed.x, transformed.y, 0.0, transformed.z);
+    \\}
+;
+
+const triangle_fragment_shader =
     \\#version 330
     \\out vec4 fragment;
     \\uniform vec3 color;

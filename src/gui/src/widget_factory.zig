@@ -44,8 +44,8 @@ pub fn widgetFactory(comptime Action: type, alloc: Allocator) !*WidgetFactory(Ac
         .squircle_renderer = &ret.squircle_renderer,
     };
 
-    ret.squircle_renderer = try gui.SquircleRenderer.init(alloc);
-    errdefer ret.squircle_renderer.deinit(alloc);
+    ret.squircle_renderer = try gui.SquircleRenderer.init();
+    errdefer ret.squircle_renderer.deinit();
 
     ret.guitext_state = gui.gui_text.SharedState{
         .ttf = &ret.ttf,
@@ -81,7 +81,6 @@ pub fn widgetFactory(comptime Action: type, alloc: Allocator) !*WidgetFactory(Ac
     };
 
     ret.shared_color = try gui.color_picker.SharedColorPickerState.init(
-        alloc,
         gui.color_picker.ColorStyle{
             .preview_width = widget_width,
             .preview_height = typical_widget_height,
@@ -96,7 +95,7 @@ pub fn widgetFactory(comptime Action: type, alloc: Allocator) !*WidgetFactory(Ac
         &ret.frame_shared,
         &ret.property_list_style,
     );
-    errdefer ret.shared_color.deinit(alloc);
+    errdefer ret.shared_color.deinit();
 
     ret.shared_textbox_state = gui.textbox.SharedTextboxState{
         .squircle_renderer = &ret.squircle_renderer,
@@ -140,7 +139,6 @@ pub fn widgetFactory(comptime Action: type, alloc: Allocator) !*WidgetFactory(Ac
     };
 
     ret.combo_box_shared = try gui.combo_box.Shared.init(
-        alloc,
         .{
             .style = .{
                 .background = StyleColors.default_color,
@@ -241,10 +239,10 @@ pub fn WidgetFactory(comptime Action: type) type {
             self.text_renderer.deinit(self.alloc);
             self.distance_field_renderer.deinit();
             self.ttf.deinit(self.alloc);
-            self.squircle_renderer.deinit(self.alloc);
-            self.shared_color.deinit(self.alloc);
+            self.squircle_renderer.deinit();
+            self.shared_color.deinit();
             self.overlay.reset();
-            self.combo_box_shared.deinit(self.alloc);
+            self.combo_box_shared.deinit();
             self.alloc.destroy(self);
         }
 

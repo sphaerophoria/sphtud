@@ -12,8 +12,10 @@ const PixelBBox = gui.PixelBBox;
 const InputState = gui.InputState;
 const PopupLayer = gui.popup_layer.PopupLayer;
 const Color = gui.Color;
-const PlaneRenderProgram = sphrender.PlaneRenderProgram;
 const SquircleRenderer = @import("SquircleRenderer.zig");
+
+const HexagonProgram = sphrender.xyuvt_program.Program(HexagonUniform);
+const LightnessProgram = sphrender.xyuvt_program.Program(LightnessUniform);
 
 pub const ColorStyle = struct {
     preview_width: u31,
@@ -26,9 +28,10 @@ pub const ColorStyle = struct {
 
 pub const SharedColorPickerState = struct {
     style: ColorStyle,
-    hexagon_renderer: PlaneRenderProgram,
-    vertex_buffer: PlaneRenderProgram.Buffer,
-    lightness_renderer: PlaneRenderProgram,
+    hexagon_renderer: HexagonProgram,
+    hexagon_buffer: sphrender.xyuvt_program.Buffer,
+    lightness_renderer: LightnessProgram,
+    lightness_buffer: sphrender.xyuvt_program.Buffer,
     drag_shared: *const gui.drag_float.Shared,
     guitext_state: *const gui.gui_text.SharedState,
     squircle_renderer: *const SquircleRenderer,
@@ -36,7 +39,6 @@ pub const SharedColorPickerState = struct {
     property_list_style: *const gui.property_list.Style,
 
     pub fn init(
-        alloc: Allocator,
         style: ColorStyle,
         drag_shared: *const gui.drag_float.Shared,
         guitext_state: *const gui.gui_text.SharedState,
@@ -44,29 +46,23 @@ pub const SharedColorPickerState = struct {
         frame_shared: *const gui.frame.Shared,
         property_list_style: *const gui.property_list.Style,
     ) !SharedColorPickerState {
-        const hexagon_renderer = try PlaneRenderProgram.init(
-            alloc,
-            sphrender.plane_vertex_shader,
+        const hexagon_renderer = try HexagonProgram.init(
             hexagon_color_frag,
-            ColorUniformIndex,
         );
-        errdefer hexagon_renderer.deinit(alloc);
+        errdefer hexagon_renderer.deinit();
 
-        const buffer = hexagon_renderer.makeDefaultBuffer();
-
-        const lightness_renderer = try PlaneRenderProgram.init(
-            alloc,
-            sphrender.plane_vertex_shader,
+        const lightness_renderer = try LightnessProgram.init(
             lightness_slider_frag,
-            LightnessUniformIndex,
         );
+        errdefer lightness_renderer.deinit();
 
         return .{
             .style = style,
             .hexagon_renderer = hexagon_renderer,
-            .vertex_buffer = buffer,
+            .hexagon_buffer = hexagon_renderer.makeFullScreenPlane(),
             .drag_shared = drag_shared,
             .lightness_renderer = lightness_renderer,
+            .lightness_buffer = lightness_renderer.makeFullScreenPlane(),
             .guitext_state = guitext_state,
             .squircle_renderer = squircle_renderer,
             .frame = frame_shared,
@@ -74,10 +70,11 @@ pub const SharedColorPickerState = struct {
         };
     }
 
-    pub fn deinit(self: *SharedColorPickerState, alloc: Allocator) void {
-        self.hexagon_renderer.deinit(alloc);
-        self.vertex_buffer.deinit();
-        self.lightness_renderer.deinit(alloc);
+    pub fn deinit(self: *SharedColorPickerState) void {
+        self.hexagon_renderer.deinit();
+        self.hexagon_buffer.deinit();
+        self.lightness_renderer.deinit();
+        self.lightness_buffer.deinit();
     }
 };
 
@@ -496,47 +493,23 @@ fn ColorHexagon(comptime Action: type, comptime ColorRetriever: type, comptime C
             const split_bounds = splitHexagonBounds(self.shared, bounds, lightness);
 
             const transform = util.widgetToClipTransform(split_bounds.hexagon, window_bounds);
-            self.shared.hexagon_renderer.render(self.shared.vertex_buffer, &.{}, &.{
-                .{
-                    .idx = ColorUniformIndex.lightness.asIndex(),
-                    .val = .{ .float = lightness },
-                },
-                .{
-                    .idx = ColorUniformIndex.selected_color.asIndex(),
-                    .val = .{ .float3 = .{ color.r, color.g, color.b } },
-                },
-                .{
-                    .idx = ColorUniformIndex.transform.asIndex(),
-                    .val = .{ .mat3x3 = transform.inner },
-                },
+            self.shared.hexagon_renderer.render(self.shared.hexagon_buffer, .{
+                .lightness = lightness,
+                .selected_color = .{ color.r, color.g, color.b },
+                .transform = transform.inner,
             });
 
             const lightness_transform = util.widgetToClipTransform(split_bounds.lightness, window_bounds);
             self.shared.lightness_renderer.render(
-                self.shared.vertex_buffer,
-                &.{},
-                &.{
-                    .{
-                        .idx = @intFromEnum(LightnessUniformIndex.color),
-                        .val = .{ .float3 = .{ max_brightness_color.r, max_brightness_color.g, max_brightness_color.b } },
+                self.shared.lightness_buffer,
+                .{
+                    .color = .{ max_brightness_color.r, max_brightness_color.g, max_brightness_color.b },
+                    .total_size = .{
+                        @floatFromInt(split_bounds.lightness.calcWidth()),
+                        @floatFromInt(split_bounds.lightness.calcHeight()),
                     },
-                    .{
-                        .idx = @intFromEnum(LightnessUniformIndex.total_size),
-                        .val = .{
-                            .float2 = .{
-                                @floatFromInt(split_bounds.lightness.calcWidth()),
-                                @floatFromInt(split_bounds.lightness.calcHeight()),
-                            },
-                        },
-                    },
-                    .{
-                        .idx = @intFromEnum(LightnessUniformIndex.corner_radius),
-                        .val = .{ .float = self.shared.style.corner_radius },
-                    },
-                    .{
-                        .idx = @intFromEnum(LightnessUniformIndex.transform),
-                        .val = .{ .mat3x3 = lightness_transform.inner },
-                    },
+                    .corner_radius = self.shared.style.corner_radius,
+                    .transform = lightness_transform.inner,
                 },
             );
 
@@ -766,14 +739,10 @@ const ColorAxis = struct {
     }
 };
 
-const ColorUniformIndex = enum {
-    lightness,
-    selected_color,
-    transform,
-
-    pub fn asIndex(self: ColorUniformIndex) usize {
-        return @intFromEnum(self);
-    }
+const HexagonUniform = struct {
+    lightness: f32,
+    selected_color: sphmath.Vec3,
+    transform: sphmath.Mat3x3,
 };
 
 // Why not just use HSV? I don't like the idea of it. Geometrically it doesn't
@@ -885,12 +854,13 @@ pub const hexagon_color_frag = std.fmt.comptimePrint(
     hsv_rgb_axis.g[2],
 });
 
-const LightnessUniformIndex = enum {
-    color,
-    total_size,
-    corner_radius,
-    transform,
+const LightnessUniform = struct {
+    color: sphmath.Vec3,
+    total_size: sphmath.Vec2,
+    corner_radius: f32,
+    transform: sphmath.Mat3x3,
 };
+
 const lightness_slider_frag =
     \\#version 330
     \\in vec2 uv;

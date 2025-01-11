@@ -99,28 +99,28 @@ fn makeCreateObject(app: *App, widget_factory: *gui.widget_factory.WidgetFactory
     return wrapFrameScrollViewOrDeinit(widget_factory, layout.asWidget());
 }
 
-fn addShaderParamsToPropertyList(app: *App, property_list: *gui.property_list.PropertyList(UiAction), widget_factory: *gui.widget_factory.WidgetFactory(UiAction), uniforms: []sphrender.Uniform) !void {
+fn addShaderParamsToPropertyList(app: *App, property_list: *gui.property_list.PropertyList(UiAction), widget_factory: *gui.widget_factory.WidgetFactory(UiAction), uniforms: sphrender.shader_program.UnknownUniforms) !void {
     const property_widget_gen = object_properties.PropertyWidgetGenerator{
         .app = app,
         .widget_factory = widget_factory,
         .property_list = property_list,
     };
 
-    for (0..uniforms.len) |i| {
-        const uniform = uniforms[i];
+    for (0..uniforms.items.len) |i| {
+        const uniform = uniforms.items[i];
 
         switch (uniform.default) {
             .image => {
-                try property_widget_gen.addImageToPropertyList(i, uniforms[i]);
+                try property_widget_gen.addImageToPropertyList(i, uniforms.items[i].name);
             },
             .float => {
-                try property_widget_gen.addFloatToPropertyList(i, uniforms[i]);
+                try property_widget_gen.addFloatToPropertyList(i, uniforms.items[i].name);
             },
             .float2 => {
-                try property_widget_gen.addFloat2ToPropertyList(i, uniforms[i]);
+                try property_widget_gen.addFloat2ToPropertyList(i, uniforms.items[i].name);
             },
             .float3 => {
-                try property_widget_gen.addFloat3ToPropertyList(i, uniforms[i]);
+                try property_widget_gen.addFloat3ToPropertyList(i, uniforms.items[i].name);
             },
             else => {
                 const uniform_label = try widget_factory.makeLabel(uniform.name);
@@ -338,7 +338,7 @@ pub const Handle = struct {
             },
             .shader => |s| {
                 const shader = self.app.shaders.get(s.program);
-                try addShaderParamsToPropertyList(self.app, property_list, self.widget_factory, shader.program.uniforms);
+                try addShaderParamsToPropertyList(self.app, property_list, self.widget_factory, shader.uniforms);
             },
             .drawing => |d| {
                 {
@@ -379,7 +379,7 @@ pub const Handle = struct {
                     self.app,
                     property_list,
                     self.widget_factory,
-                    brush.program.uniforms,
+                    brush.uniforms,
                 );
             },
             .path => {

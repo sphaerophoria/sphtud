@@ -5,9 +5,10 @@ const sphmath = @import("sphmath");
 const ttf_mod = @import("ttf.zig");
 const sphrender = @import("sphrender");
 
-pub const Buffer = sphrender.PlaneRenderProgram.Buffer;
+const ShaderProgram = sphrender.xyuvt_program.Program(TextUniforms);
+pub const Buffer = sphrender.xyuvt_program.Buffer;
 
-program: sphrender.PlaneRenderProgram,
+program: ShaderProgram,
 glyph_atlas: GlyphAtlas,
 point_size: f32,
 multiplier: f32 = 0.25,
@@ -51,10 +52,10 @@ pub const TextLayout = struct {
 };
 
 pub fn init(alloc: Allocator, point_size: f32) !TextRenderer {
-    const program = try sphrender.PlaneRenderProgram.init(alloc, sphrender.plane_vertex_shader, text_fragment_shader, TextReservedIndex);
-    errdefer program.deinit(alloc);
+    const program = try ShaderProgram.init(text_fragment_shader);
+    errdefer program.deinit();
 
-    const glyph_atlas = try GlyphAtlas.init(alloc);
+    const glyph_atlas = try GlyphAtlas.init();
     errdefer glyph_atlas.deinit(alloc);
 
     return .{
@@ -65,7 +66,7 @@ pub fn init(alloc: Allocator, point_size: f32) !TextRenderer {
 }
 
 pub fn deinit(self: *TextRenderer, alloc: Allocator) void {
-    self.program.deinit(alloc);
+    self.program.deinit();
     self.glyph_atlas.deinit(alloc);
 }
 
@@ -302,7 +303,8 @@ test "layout text infinite loop" {
 
 pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, ttf: ttf_mod.Ttf, distance_field_generator: sphrender.DistanceFieldGenerator) !Buffer {
     const num_points_per_plane = 6;
-    const new_buffer_data = try alloc.alloc(sphrender.PlaneRenderProgram.Buffer.BufferPoint, text.glyphs.len * num_points_per_plane);
+    const Vertex = sphrender.xyuvt_program.Vertex;
+    const new_buffer_data = try alloc.alloc(Vertex, text.glyphs.len * num_points_per_plane);
     defer alloc.free(new_buffer_data);
 
     var arena = std.heap.ArenaAllocator.init(alloc);
@@ -321,34 +323,27 @@ pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, t
         const clip_y_top = pixToClip(@intCast(glyph.pixel_y2 - text.min_y), text.height());
         const clip_y_bottom = pixToClip(@intCast(glyph.pixel_y1 - text.min_y), text.height());
 
-        const BufferPoint = sphrender.PlaneRenderProgram.Buffer.BufferPoint;
-
-        const bl = BufferPoint{
-            .clip_x = clip_x_start,
-            .clip_y = clip_y_bottom,
-            .uv_x = uv_loc.left,
-            .uv_y = uv_loc.bottom,
+        const bl = Vertex{
+            .vPos = .{ clip_x_start, clip_y_bottom },
+            .vUv = .{ uv_loc.left, uv_loc.bottom },
         };
 
-        const br = BufferPoint{
-            .clip_x = clip_x_end,
-            .clip_y = clip_y_bottom,
-            .uv_x = uv_loc.right,
-            .uv_y = uv_loc.bottom,
+        const br = Vertex{
+            .vPos = .{
+                clip_x_end,
+                clip_y_bottom,
+            },
+            .vUv = .{ uv_loc.right, uv_loc.bottom },
         };
 
-        const tl = BufferPoint{
-            .clip_x = clip_x_start,
-            .clip_y = clip_y_top,
-            .uv_x = uv_loc.left,
-            .uv_y = uv_loc.top,
+        const tl = Vertex{
+            .vPos = .{ clip_x_start, clip_y_top },
+            .vUv = .{ uv_loc.left, uv_loc.top },
         };
 
-        const tr = BufferPoint{
-            .clip_x = clip_x_end,
-            .clip_y = clip_y_top,
-            .uv_x = uv_loc.right,
-            .uv_y = uv_loc.top,
+        const tr = Vertex{
+            .vPos = .{ clip_x_end, clip_y_top },
+            .vUv = .{ uv_loc.right, uv_loc.top },
         };
 
         new_buffer_data[buffer_idx + 0] = bl;
@@ -359,37 +354,24 @@ pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, t
         new_buffer_data[buffer_idx + 5] = tr;
     }
 
-    var buf = self.program.makeDefaultBuffer();
+    var buf = self.program.makeFullScreenPlane();
     buf.updateBuffer(new_buffer_data);
 
     return buf;
 }
 
 pub fn render(self: TextRenderer, buf: Buffer, transform: sphmath.Transform) void {
-    self.program.render(buf, &.{}, &.{
-        .{
-            .idx = TextReservedIndex.input_df.asIndex(),
-            .val = .{ .image = self.glyph_atlas.texture.inner },
-        },
-        .{
-            .idx = TextReservedIndex.multiplier.asIndex(),
-            .val = .{ .float = self.point_size * self.multiplier },
-        },
-        .{
-            .idx = TextReservedIndex.transform.asIndex(),
-            .val = .{ .mat3x3 = transform.inner },
-        },
+    self.program.render(buf, .{
+        .input_df = self.glyph_atlas.texture,
+        .multiplier = self.point_size * self.multiplier,
+        .transform = transform.inner,
     });
 }
 
-pub const TextReservedIndex = enum {
-    input_df,
-    multiplier,
-    transform,
-
-    fn asIndex(self: TextReservedIndex) usize {
-        return @intFromEnum(self);
-    }
+pub const TextUniforms = struct {
+    input_df: sphrender.Texture,
+    multiplier: f32,
+    transform: sphmath.Mat3x3,
 };
 
 fn pixToClip(val: u32, max: u32) f32 {

@@ -84,7 +84,7 @@ pub const Object = struct {
         };
     }
 
-    pub fn load(alloc: Allocator, save_obj: SaveObject, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), path_render_program: Renderer.PathRenderProgram, plane_buffer: Renderer.PlaneRenderProgram.Buffer) !Object {
+    pub fn load(alloc: Allocator, save_obj: SaveObject, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), path_render_program: Renderer.PathRenderProgram) !Object {
         const data: Data = switch (save_obj.data) {
             .filesystem => |s| blk: {
                 break :blk .{
@@ -152,7 +152,7 @@ pub const Object = struct {
                 };
             },
             .text => |t| blk: {
-                var text_object = try TextObject.init(alloc, .{ .value = t.font_id }, plane_buffer);
+                var text_object = try TextObject.init(alloc, .{ .value = t.font_id });
                 errdefer text_object.deinit(alloc);
 
                 text_object.current_text = try alloc.dupe(u8, t.current_text);
@@ -384,12 +384,12 @@ pub const ShaderObject = struct {
     bindings: []Renderer.UniformValue,
 
     pub fn init(alloc: Allocator, id: ShaderId, shaders: ShaderStorage(ShaderId), primary_input_idx: usize) !ShaderObject {
-        const program = shaders.get(id).program;
+        const shader = shaders.get(id);
 
-        const bindings = try alloc.alloc(Renderer.UniformValue, program.uniforms.len);
+        const bindings = try alloc.alloc(Renderer.UniformValue, shader.uniforms.items.len);
         errdefer alloc.free(bindings);
 
-        for (program.uniforms, 0..) |uniform, idx| {
+        for (shader.uniforms.items, 0..) |uniform, idx| {
             bindings[idx] = Renderer.UniformValue.fromDefault(uniform.default);
         }
 
@@ -687,7 +687,7 @@ pub const DrawingObject = struct {
 
     pub fn init(alloc: Allocator, display_object: ObjectId, brush_id: BrushId, brushes: ShaderStorage(BrushId)) !DrawingObject {
         const brush = brushes.get(brush_id);
-        const uniforms = brush.program.uniforms;
+        const uniforms = brush.uniforms.items;
         const bindings = try alloc.alloc(Renderer.UniformValue, uniforms.len);
         errdefer alloc.free(bindings);
 
@@ -758,13 +758,13 @@ pub const DrawingObject = struct {
 
     pub fn updateBrush(self: *DrawingObject, alloc: Allocator, brush_id: BrushId, brushes: ShaderStorage(BrushId)) !void {
         const brush = brushes.get(brush_id);
-        const uniforms = brush.program.uniforms;
+        const uniforms = brush.uniforms;
 
-        var bindings = try alloc.alloc(Renderer.UniformValue, uniforms.len);
+        var bindings = try alloc.alloc(Renderer.UniformValue, uniforms.items.len);
         defer alloc.free(bindings);
 
         for (0..bindings.len) |i| {
-            bindings[i] = Renderer.UniformValue.fromDefault(uniforms[i].default);
+            bindings[i] = Renderer.UniformValue.fromDefault(uniforms.items[i].default);
         }
         self.brush = brush_id;
         std.mem.swap([]Renderer.UniformValue, &bindings, &self.bindings);
@@ -803,9 +803,7 @@ pub const TextObject = struct {
 
     const default_point_size = 64.0;
 
-    pub fn init(alloc: Allocator, font_id: FontStorage.FontId, plane_buffer: Renderer.PlaneRenderProgram.Buffer) !TextObject {
-        errdefer plane_buffer.deinit();
-
+    pub fn init(alloc: Allocator, font_id: FontStorage.FontId) !TextObject {
         const renderer = try TextRenderer.init(alloc, default_point_size);
 
         return .{
@@ -930,7 +928,7 @@ pub const Objects = struct {
     inner: ObjectStorage = .{},
     next_id: usize = 0,
 
-    pub fn load(alloc: Allocator, data: []SaveObject, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), path_render_program: Renderer.PathRenderProgram, plane_buffer: Renderer.PlaneRenderProgram.Buffer) !Objects {
+    pub fn load(alloc: Allocator, data: []SaveObject, shaders: ShaderStorage(ShaderId), brushes: ShaderStorage(BrushId), path_render_program: Renderer.PathRenderProgram) !Objects {
         var objects = ObjectStorage{};
         errdefer freeObjectList(alloc, &objects);
 
@@ -938,7 +936,7 @@ pub const Objects = struct {
 
         var max_id: usize = 0;
         for (data) |saved_object| {
-            const object = try Object.load(alloc, saved_object, shaders, brushes, path_render_program, plane_buffer);
+            const object = try Object.load(alloc, saved_object, shaders, brushes, path_render_program);
             try objects.put(alloc, .{ .value = saved_object.id }, object);
             max_id = @max(max_id, saved_object.id);
         }
