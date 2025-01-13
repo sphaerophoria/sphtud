@@ -27,7 +27,9 @@ pub fn Program(comptime Vertex: type, comptime KnownUniforms: type) type {
 
             while (uniform_it.next()) |uniform| {
                 if (knownUniformIdx(KnownUniforms, uniform.name)) |idx| {
-                    known_uniform_locations[idx] = uniform.loc;
+                    if (num_known_uniforms > 0) {
+                        known_uniform_locations[idx] = uniform.loc;
+                    }
                 }
             }
 
