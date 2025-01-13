@@ -127,6 +127,8 @@ pub fn Buffer(comptime Elem: type) type {
 
         const Self = @This();
 
+        const binding_index = 0;
+
         pub fn init(program: gl.GLuint, initial_data: []const Elem) Self {
             const fields = std.meta.fields(Elem);
             var field_locs: [fields.len]gl.GLint = undefined;
@@ -136,24 +138,20 @@ pub fn Buffer(comptime Elem: type) type {
             }
 
             var vertex_buffer: gl.GLuint = 0;
-            gl.glGenBuffers(1, &vertex_buffer);
-            errdefer gl.glDeleteBuffers(1, &vertex_buffer);
+            gl.glCreateBuffers(1, &vertex_buffer);
 
-            gl.glBindBuffer(gl.GL_ARRAY_BUFFER, vertex_buffer);
-            gl.glBufferData(gl.GL_ARRAY_BUFFER, @intCast(initial_data.len * elem_stride), initial_data.ptr, gl.GL_STATIC_DRAW);
+            gl.glNamedBufferData(vertex_buffer, @intCast(initial_data.len * elem_stride), initial_data.ptr, gl.GL_STATIC_DRAW);
 
             var vertex_array: gl.GLuint = 0;
-            gl.glGenVertexArrays(1, &vertex_array);
-            errdefer gl.glDeleteVertexArrays(1, &vertex_array);
+            gl.glCreateVertexArrays(1, &vertex_array);
 
-            gl.glBindVertexArray(vertex_array);
+            gl.glVertexArrayVertexBuffer(vertex_array, binding_index, vertex_buffer, 0, elem_stride);
 
             inline for (fields, field_locs) |field, loc| {
                 if (loc >= 0) {
                     const offs = @offsetOf(Elem, field.name);
-                    const offs_ptr: ?*anyopaque = if (offs == 0) null else @ptrFromInt(offs);
 
-                    gl.glEnableVertexAttribArray(@intCast(loc));
+                    gl.glEnableVertexArrayAttrib(vertex_array, @intCast(loc));
                     const num_elems = switch (field.type) {
                         sphmath.Vec2 => 2,
                         sphmath.Vec3 => 3,
@@ -164,7 +162,8 @@ pub fn Buffer(comptime Elem: type) type {
                         sphmath.Vec3, sphmath.Vec2, f32 => gl.GL_FLOAT,
                         else => @compileError("Unknown type"),
                     };
-                    gl.glVertexAttribPointer(@intCast(loc), num_elems, elem_type, gl.GL_FALSE, elem_stride, offs_ptr);
+                    gl.glVertexArrayAttribFormat(vertex_array, @intCast(loc), num_elems, elem_type, gl.GL_FALSE, offs);
+                    gl.glVertexArrayAttribBinding(vertex_array, @intCast(loc), binding_index);
                 }
             }
 
@@ -181,8 +180,7 @@ pub fn Buffer(comptime Elem: type) type {
         }
 
         pub fn updateBuffer(self: *Self, points: []const Elem) void {
-            gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vertex_buffer);
-            gl.glBufferData(gl.GL_ARRAY_BUFFER, @intCast(points.len * elem_stride), points.ptr, gl.GL_STATIC_DRAW);
+            gl.glNamedBufferData(self.vertex_buffer, @intCast(points.len * elem_stride), points.ptr, gl.GL_STATIC_DRAW);
             self.len = points.len;
         }
     };
