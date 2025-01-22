@@ -1,5 +1,6 @@
 const std = @import("std");
 
+pub const Vec4 = @Vector(4, f32);
 pub const Vec3 = @Vector(3, f32);
 pub const Vec2 = @Vector(2, f32);
 
@@ -175,6 +176,109 @@ pub const Mat3x3 = struct {
     }
 };
 
+pub const Mat4x4 = struct {
+    data: [16]f32 = .{
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    },
+
+    pub fn mul(self: Mat4x4, vec: Vec4) Vec4 {
+        const x = self.data[0..4].* * vec;
+        const y = self.data[4..8].* * vec;
+        const z = self.data[8..12].* * vec;
+        const w = self.data[12..16].* * vec;
+
+        return .{
+            @reduce(.Add, x),
+            @reduce(.Add, y),
+            @reduce(.Add, z),
+            @reduce(.Add, w),
+        };
+    }
+
+    pub fn matmul(a: Mat4x4, b: Mat4x4) Mat4x4 {
+        var ret: [16]f32 = undefined;
+
+        for (0..16) |i| {
+            const row = i / 4;
+            const col = i % 4;
+
+            const a_row = a.data[row * 4 .. (row + 1) * 4];
+            const b_col = [4]f32{
+                b.data[col],
+                b.data[4 + col],
+                b.data[8 + col],
+                b.data[12 + col],
+            };
+
+            ret[i] =
+                a_row[0] * b_col[0] +
+                a_row[1] * b_col[1] +
+                a_row[2] * b_col[2] +
+                a_row[3] * b_col[3];
+        }
+
+        return .{
+            .data = ret,
+        };
+    }
+
+    test "sanity mat4x4 mul" {
+        const a = Mat4x4{
+            .data = .{
+                0.1200094,  0.30596924, 0.1209669,  0.20991278,
+                0.68232872, 0.7114988,  0.61315368, 0.46940583,
+                0.7062717,  0.56776279, 0.07779681, 0.7478156,
+                0.43145997, 0.54170567, 0.55784837, 0.80018073,
+            },
+        };
+
+        const b = Mat4x4{
+            .data = .{
+                0.24334952, 0.24894254, 0.95571304, 0.06000008,
+                0.84849957, 0.2171747,  0.71621696, 0.27510181,
+                0.27072156, 0.82861865, 0.93675428, 0.97610207,
+                0.85716946, 0.39110445, 0.38627996, 0.56932472,
+            },
+        };
+
+        const expected = Mat4x4{
+            .data = .{
+                0.50149817, 0.27865748, 0.52823627, 0.32895784,
+                1.33810506, 1.01603747, 1.91739436, 1.1024193,
+                1.31568333, 0.65606268, 1.44337709, 0.70025646,
+                1.40154467, 1.00025132, 1.63199134, 1.17499146,
+            },
+        };
+
+        const output = a.matmul(b);
+        for (expected.data, output.data) |expected_val, output_val| {
+            try std.testing.expectApproxEqAbs(expected_val, output_val, 1e-4);
+        }
+    }
+
+    pub fn transpose(self: Mat4x4) Mat4x4 {
+        var ret = self;
+
+        const pairs: [6][2]usize = .{
+            .{ 1, 4 },
+            .{ 2, 8 },
+            .{ 3, 12 },
+            .{ 6, 9 },
+            .{ 7, 13 },
+            .{ 11, 14 },
+        };
+
+        for (pairs) |pair| {
+            std.mem.swap(f32, &ret.data[pair[0]], &ret.data[pair[1]]);
+        }
+
+        return ret;
+    }
+};
+
 pub const Transform = struct {
     pub const identity: Transform = .{};
 
@@ -237,6 +341,102 @@ pub const Transform = struct {
             0.0, 1.0, y,
             0.0, 0.0, 1.0,
         } } };
+    }
+};
+
+pub const Transform3D = struct {
+    pub const identity: Transform3D = .{};
+
+    inner: Mat4x4 = .{},
+
+    pub fn then(self: Transform3D, next: Transform3D) Transform3D {
+        return .{ .inner = next.inner.matmul(self.inner) };
+    }
+
+    pub fn scale(x: f32, y: f32, z: f32) Transform3D {
+        return .{ .inner = .{
+            .data = .{
+                x,   0.0, 0.0, 0.0,
+                0.0, y,   0.0, 0.0,
+                0.0, 0.0, z,   0.0,
+                0.0, 0.0, 0.0, 1.0,
+            },
+        } };
+    }
+
+    pub fn rotateX(angle: f32) Transform3D {
+        const c = @cos(angle);
+        const s = @sin(angle);
+
+        return .{ .inner = .{
+            .data = .{
+                1.0, 0.0, 0.0, 0.0,
+                0.0, c,   -s,  0.0,
+                0.0, s,   c,   0.0,
+                0.0, 0.0, 0.0, 1.0,
+            },
+        } };
+    }
+
+    pub fn rotateY(angle: f32) Transform3D {
+        const c = @cos(angle);
+        const s = @sin(angle);
+
+        return .{ .inner = .{
+            .data = .{
+                c,   0.0, -s,  0.0,
+                0.0, 1.0, 0.0, 0.0,
+                s,   0.0, c,   0.0,
+                0.0, 0.0, 0.0, 1.0,
+            },
+        } };
+    }
+
+    pub fn rotateZ(angle: f32) Transform3D {
+        const c = @cos(angle);
+        const s = @sin(angle);
+
+        return .{ .inner = .{
+            .data = .{
+                c,   -s,  0.0, 0.0,
+                s,   c,   0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
+                0.0, 0.0, 0.0, 1.0,
+            },
+        } };
+    }
+
+    pub fn translate(x: f32, y: f32, z: f32) Transform3D {
+        return .{ .inner = .{ .data = .{
+            1.0, 0.0, 0.0, x,
+            0.0, 1.0, 0.0, y,
+            0.0, 0.0, 1.0, z,
+            0.0, 0.0, 0.0, 1.0,
+        } } };
+    }
+
+    pub fn perspective(fov: f32, near: f32, far: f32) Transform3D {
+        const z1 = far / (near - far);
+        const z2 = (near * far) / (near - far);
+
+        const cot = 1 / @tan(fov / 2.0);
+
+        return .{ .inner = .{ .data = .{
+            cot, 0.0, 0.0, 0.0,
+            0.0, cot, 0.0, 0.0,
+            0.0, 0.0, z1,  -z2,
+            0.0, 0.0, 1.0, 0.0,
+        } } };
+    }
+
+    pub fn format(value: Transform3D, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        for (0..4) |row_idx| {
+            const row = value.inner.data[row_idx * 4 .. (row_idx + 1) * 4];
+            for (0..4) |col_idx| {
+                try writer.print("{d}, ", .{row[col_idx]});
+            }
+            try writer.print("\n", .{});
+        }
     }
 };
 

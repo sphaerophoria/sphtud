@@ -99,6 +99,7 @@ pub fn Program(comptime Vertex: type, comptime KnownUniforms: type) type {
                         sphmath.Vec2 => .float2,
                         f32 => .float,
                         sphmath.Mat3x3 => .mat3x3,
+                        sphmath.Mat4x4 => .mat4x4,
                         sphrender.Texture => .image,
                         u32 => .uint,
                         else => @compileError("Unsupported uniform type " ++ @typeName(option.type)),

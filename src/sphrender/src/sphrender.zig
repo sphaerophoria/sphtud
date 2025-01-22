@@ -21,6 +21,7 @@ pub const UniformType = enum {
     int,
     uint,
     mat3x3,
+    mat4x4,
 
     pub fn fromGlType(typ: gl.GLenum) ?UniformType {
         switch (typ) {
@@ -31,6 +32,7 @@ pub const UniformType = enum {
             gl.GL_INT => return .int,
             gl.GL_UNSIGNED_INT => return .uint,
             gl.GL_FLOAT_MAT3_ARB => return .mat3x3,
+            gl.GL_FLOAT_MAT4_ARB => return .mat4x4,
             else => {
                 std.log.warn("Unsupported GL uniform type: 0x{x}", .{typ});
                 return null;
@@ -47,6 +49,7 @@ pub const UniformDefault = union(UniformType) {
     int: i32,
     uint: u32,
     mat3x3: sphmath.Mat3x3,
+    mat4x4: sphmath.Mat4x4,
 };
 
 pub const ResolvedUniformValue = union(UniformType) {
@@ -57,6 +60,7 @@ pub const ResolvedUniformValue = union(UniformType) {
     int: i32,
     uint: u32,
     mat3x3: sphmath.Mat3x3,
+    mat4x4: sphmath.Mat4x4,
 };
 
 pub const ReservedUniformValue = struct {
@@ -202,6 +206,11 @@ pub const ProgramUniformIt = struct {
                     gl.glGetnUniformfv(self.program, @intCast(self.idx), @sizeOf(@TypeOf(default.data)), &default.data);
                     break :blk .{ .mat3x3 = default.transpose() };
                 },
+                .mat4x4 => blk: {
+                    var default: sphmath.Mat4x4 = .{};
+                    gl.glGetnUniformfv(self.program, @intCast(self.idx), @sizeOf(@TypeOf(default.data)), &default.data);
+                    break :blk .{ .mat4x4 = default.transpose() };
+                },
             };
             if (name_len < 0) continue;
 
@@ -325,6 +334,9 @@ pub fn applyUniformAtLocation(loc: gl.GLint, expected_type: UniformType, val: Re
         },
         .mat3x3 => |v| {
             gl.glUniformMatrix3fv(loc, 1, gl.GL_TRUE, &v.data);
+        },
+        .mat4x4 => |v| {
+            gl.glUniformMatrix4fv(loc, 1, gl.GL_TRUE, &v.data);
         },
     }
 }
