@@ -160,12 +160,12 @@ fn getChecked(retriever: anytype) bool {
             }
         },
         .Pointer => |p| {
-            if (p.child == bool and p.size == .Slice) {
-                return retriever.*;
+            if (p.child == bool and p.size == .One) {
+                return retriever.*.*;
             }
         },
         else => {},
     }
 
-    @compileError("text_retriever must be a bool or have a checked() function, type is " ++ @typeName(T));
+    @compileError("Checked retriever must be a bool or have a checked() function, type is " ++ @typeName(T));
 }
