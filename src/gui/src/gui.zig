@@ -25,6 +25,7 @@ pub const null_widget = @import("null.zig");
 pub const combo_box = @import("combo_box.zig");
 pub const box = @import("box.zig");
 pub const checkbox = @import("checkbox.zig");
+pub const util = @import("util.zig");
 
 test {
     std.testing.refAllDeclsRecursive(@This());
