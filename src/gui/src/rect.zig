@@ -19,7 +19,6 @@ pub fn Rect(comptime Action: type) type {
         const Self = @This();
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.deinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .update = Self.update,
@@ -45,11 +44,6 @@ pub fn Rect(comptime Action: type) type {
                 .vtable = &Self.widget_vtable,
                 .ctx = @ptrCast(rect),
             };
-        }
-
-        fn deinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            alloc.destroy(self);
         }
 
         fn getSize(ctx: ?*anyopaque) PixelSize {

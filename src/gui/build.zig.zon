@@ -12,6 +12,12 @@
         .sphtext = .{
             .path = "../sphtext",
         },
+        .sphalloc = .{
+            .path = "../sphalloc",
+        },
+        .sphutil = .{
+            .path = "../sphutil",
+        },
     },
     .paths = .{
         "src",

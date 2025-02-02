@@ -8,6 +8,13 @@ const gui = @import("sphui");
 const list_io = @import("list_io.zig");
 
 pub const UiActionType = @typeInfo(UiAction).Union.tag_type.?;
+
+pub const TextEditRequest = struct {
+    notifier: gui.textbox.TextboxNotifier,
+    pos: usize,
+    items: []const gui.KeyEvent,
+};
+
 pub const UiAction = union(enum) {
     update_selected_object: ObjectId,
     create_path,
@@ -16,11 +23,7 @@ pub const UiAction = union(enum) {
     create_text,
     create_shader: ShaderId,
     delete_selected_object,
-    edit_selected_object_name: struct {
-        notifier: gui.textbox.TextboxNotifier,
-        pos: usize,
-        items: []const gui.KeyEvent,
-    },
+    edit_selected_object_name: TextEditRequest,
     update_composition_width: f32,
     update_composition_height: f32,
     update_shader_float: struct {
@@ -39,11 +42,7 @@ pub const UiAction = union(enum) {
     update_drawing_source: ObjectId,
     update_brush: BrushId,
     update_path_source: ObjectId,
-    update_text_obj_name: struct {
-        notifier: gui.textbox.TextboxNotifier,
-        pos: usize,
-        items: []const gui.KeyEvent,
-    },
+    update_text_obj_name: TextEditRequest,
     update_selected_font: FontStorage.FontId,
     update_text_size: f32,
     add_to_composition: ObjectId,

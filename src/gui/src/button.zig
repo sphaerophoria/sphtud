@@ -35,15 +35,14 @@ pub const ButtonStyle = struct {
 
 pub fn makeButton(
     comptime Action: type,
-    alloc: Allocator,
+    alloc: gui.GuiAlloc,
     text_retriever: anytype,
     shared: *const SharedButtonState,
     click_action: anytype,
 ) !Widget(Action) {
     const label = try label_mod.makeLabel(Action, alloc, text_retriever, shared.text_shared);
-    errdefer label.deinit(alloc);
 
-    const button = try alloc.create(Button(Action));
+    const button = try alloc.heap.arena().create(Button(Action));
     button.* = .{
         .label = label,
         .click_action = click_action,
@@ -73,7 +72,6 @@ pub fn Button(comptime Action: type) type {
         const Self = @This();
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.deinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .setInputState = Self.setInputState,
@@ -81,12 +79,6 @@ pub fn Button(comptime Action: type) type {
             .setFocused = null,
             .reset = null,
         };
-
-        fn deinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            self.label.deinit(alloc);
-            alloc.destroy(self);
-        }
 
         fn getSize(ctx: ?*anyopaque) PixelSize {
             const self: *Self = @ptrCast(@alignCast(ctx));

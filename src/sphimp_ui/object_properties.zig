@@ -1,3 +1,5 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 const sphimp = @import("sphimp");
 const App = sphimp.App;
 const ObjectId = sphimp.object.ObjectId;
@@ -15,15 +17,13 @@ const WidgetFactory = gui.widget_factory.WidgetFactory(UiAction);
 
 pub const PropertyWidgetGenerator = struct {
     app: *App,
-    widget_factory: *WidgetFactory,
+    widget_factory: WidgetFactory,
     property_list: *PropertyList,
 
     const drag_speed = 0.01;
 
     pub fn addImageToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, name: []const u8) !void {
         const uniform_label = try self.widget_factory.makeLabel(name);
-        errdefer uniform_label.deinit(self.widget_factory.alloc);
-
         const value_widget = try self.widget_factory.makeComboBox(
             list_io.objectListRetriever(ShaderImage{ .uniform_idx = uniform_idx }, self.app),
             ui_action.ShaderImage{
@@ -31,15 +31,11 @@ pub const PropertyWidgetGenerator = struct {
                 .uniform_idx = uniform_idx,
             },
         );
-        errdefer value_widget.deinit(self.widget_factory.alloc);
-
-        try self.property_list.pushWidgets(self.widget_factory.alloc, uniform_label, value_widget);
+        try self.property_list.pushWidgets(uniform_label, value_widget);
     }
 
     pub fn addFloatToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, name: []const u8) !void {
         const uniform_label = try self.widget_factory.makeLabel(name);
-        errdefer uniform_label.deinit(self.widget_factory.alloc);
-
         const value_widget = try self.widget_factory.makeDragFloat(
             float_adaptors.ShaderUniform{
                 .app = self.app,
@@ -52,9 +48,7 @@ pub const PropertyWidgetGenerator = struct {
             },
             drag_speed,
         );
-        errdefer value_widget.deinit(self.widget_factory.alloc);
-
-        try self.property_list.pushWidgets(self.widget_factory.alloc, uniform_label, value_widget);
+        try self.property_list.pushWidgets(uniform_label, value_widget);
     }
 
     pub fn addFloat2ToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, name: []const u8) !void {
@@ -68,8 +62,6 @@ pub const PropertyWidgetGenerator = struct {
                     max_label_len,
                 ),
             );
-            errdefer uniform_label.deinit(self.widget_factory.alloc);
-
             const value_widget = try self.widget_factory.makeDragFloat(
                 float_adaptors.ShaderUniform{
                     .app = self.app,
@@ -82,15 +74,13 @@ pub const PropertyWidgetGenerator = struct {
                 },
                 drag_speed,
             );
-            errdefer value_widget.deinit(self.widget_factory.alloc);
 
-            try self.property_list.pushWidgets(self.widget_factory.alloc, uniform_label, value_widget);
+            try self.property_list.pushWidgets(uniform_label, value_widget);
         }
     }
 
     pub fn addFloat3ToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, name: []const u8) !void {
         const uniform_label = try self.widget_factory.makeLabel(name);
-        errdefer uniform_label.deinit(self.widget_factory.alloc);
 
         const value_widget = try self.widget_factory.makeColorPicker(
             color_adaptors.ShaderUniform{
@@ -99,9 +89,8 @@ pub const PropertyWidgetGenerator = struct {
             },
             ui_action.ShaderColor{ .uniform_idx = uniform_idx },
         );
-        errdefer value_widget.deinit(self.widget_factory.alloc);
 
-        try self.property_list.pushWidgets(self.widget_factory.alloc, uniform_label, value_widget);
+        try self.property_list.pushWidgets(uniform_label, value_widget);
     }
 };
 

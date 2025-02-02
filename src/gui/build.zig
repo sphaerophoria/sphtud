@@ -4,16 +4,22 @@ const Dependencies = struct {
     sphmath: *std.Build.Module,
     sphtext: *std.Build.Module,
     sphrender: *std.Build.Module,
+    sphalloc: *std.Build.Module,
+    sphutil: *std.Build.Module,
 
     fn init(b: *std.Build) Dependencies {
         const sphmath = b.dependency("sphmath", .{});
         const sphrender = b.dependency("sphrender", .{});
         const sphtext = b.dependency("sphtext", .{});
+        const sphalloc = b.dependency("sphalloc", .{});
+        const sphutil = b.dependency("sphutil", .{});
 
         return .{
             .sphmath = sphmath.module("sphmath"),
             .sphtext = sphtext.module("sphtext"),
             .sphrender = sphrender.module("sphrender"),
+            .sphalloc = sphalloc.module("sphalloc"),
+            .sphutil = sphutil.module("sphutil"),
         };
     }
 
@@ -21,6 +27,8 @@ const Dependencies = struct {
         mod.addImport("sphmath", self.sphmath);
         mod.addImport("sphrender", self.sphrender);
         mod.addImport("sphtext", self.sphtext);
+        mod.addImport("sphalloc", self.sphalloc);
+        mod.addImport("sphutil", self.sphutil);
     }
 };
 

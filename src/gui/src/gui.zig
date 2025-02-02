@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const sphmath = @import("sphmath");
+const sphrender = @import("sphrender");
+const sphutil = @import("sphutil");
 
 pub const label = @import("label.zig");
 pub const drag_float = @import("drag_float.zig");
@@ -37,6 +39,7 @@ pub const Key = union(enum) {
     right_arrow,
     backspace,
     delete,
+    escape,
 
     fn eql(self: Key, other: Key) bool {
         return std.meta.eql(self, other);
@@ -70,7 +73,13 @@ pub const KeyTracker = struct {
 
     // always lower case
     held_keys: std.BoundedArray(Key, max_pressed_keys) = .{},
-    pressed_this_frame: std.ArrayListUnmanaged(KeyEvent) = .{},
+    pressed_this_frame: std.ArrayList(KeyEvent),
+
+    pub fn init(gpa: Allocator) KeyTracker {
+        return .{
+            .pressed_this_frame = std.ArrayList(KeyEvent).init(gpa),
+        };
+    }
 
     pub fn isKeyDown(self: KeyTracker, key: Key) bool {
         const lower_key = key.toLower();
@@ -89,8 +98,8 @@ pub const KeyTracker = struct {
         self.pressed_this_frame.clearRetainingCapacity();
     }
 
-    fn pushDown(self: *KeyTracker, alloc: Allocator, key: KeyEvent) !void {
-        try self.pressed_this_frame.append(alloc, key);
+    fn pushDown(self: *KeyTracker, key: KeyEvent) !void {
+        try self.pressed_this_frame.append(key);
 
         const lower_key = key.key.toLower();
         for (self.held_keys.slice()) |held| {
@@ -131,10 +140,12 @@ pub const InputState = struct {
     mouse_pressed: bool = false,
     mouse_released: bool = false,
     frame_scroll: f32 = 0,
-    key_tracker: KeyTracker = .{},
+    key_tracker: KeyTracker,
 
-    pub fn deinit(self: *InputState, alloc: Allocator) void {
-        self.key_tracker.deinit(alloc);
+    pub fn init(gpa: Allocator) InputState {
+        return .{
+            .key_tracker = KeyTracker.init(gpa),
+        };
     }
 
     pub fn startFrame(self: *InputState) void {
@@ -150,7 +161,7 @@ pub const InputState = struct {
         self.frame_scroll = 0;
     }
 
-    pub fn pushInput(self: *InputState, alloc: Allocator, action: WindowAction) !void {
+    pub fn pushInput(self: *InputState, action: WindowAction) !void {
         switch (action) {
             .mouse_move => |pos| {
                 self.mouse_pos = pos;
@@ -166,7 +177,7 @@ pub const InputState = struct {
                 self.frame_scroll += amount;
             },
             .key_down => |ev| {
-                try self.key_tracker.pushDown(alloc, ev);
+                try self.key_tracker.pushDown(ev);
             },
             .key_up => |key| {
                 self.key_tracker.pushUp(key);
@@ -248,7 +259,6 @@ pub fn InputResponse(comptime Action: type) type {
 pub fn Widget(comptime Action: type) type {
     return struct {
         pub const VTable = struct {
-            deinit: *const fn (ctx: ?*anyopaque, alloc: Allocator) void,
             render: *const fn (ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void,
             getSize: *const fn (ctx: ?*anyopaque) PixelSize,
             update: ?*const fn (ctx: ?*anyopaque, available_size: PixelSize) anyerror!void,
@@ -261,10 +271,6 @@ pub fn Widget(comptime Action: type) type {
 
         vtable: *const VTable,
         ctx: ?*anyopaque,
-
-        pub fn deinit(self: Self, alloc: Allocator) void {
-            self.vtable.deinit(self.ctx, alloc);
-        }
 
         pub fn getSize(self: Self) PixelSize {
             return self.vtable.getSize(self.ctx);
@@ -310,3 +316,5 @@ pub const Color = struct {
     b: f32,
     a: f32,
 };
+
+pub const GuiAlloc = sphrender.RenderAlloc;

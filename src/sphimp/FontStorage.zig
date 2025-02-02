@@ -1,5 +1,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const sphutil = @import("sphutil");
+const RuntimeSegmentedList = sphutil.RuntimeSegmentedList;
+const memory_limits = @import("memory_limits.zig");
+const sphalloc = @import("sphalloc");
+const Sphalloc = sphalloc.Sphalloc;
 
 const sphtext = @import("sphtext");
 const ttf_mod = sphtext.ttf;
@@ -7,6 +12,8 @@ const ttf_mod = sphtext.ttf;
 pub const FontId = struct { value: usize };
 const FontStorage = @This();
 
+// FIXME: Fonts can be fairly large, we should only keep the ones we are
+// actively using loaded
 const FontData = struct {
     ttf_content: []const u8,
     path: [:0]const u8, // relative
@@ -15,30 +22,34 @@ const FontData = struct {
 
 pub const Save = []const u8;
 
-inner: std.ArrayListUnmanaged(FontData) = .{},
+alloc: *Sphalloc,
+inner: RuntimeSegmentedList(FontData),
 
-pub fn deinit(self: *FontStorage, alloc: Allocator) void {
-    for (self.inner.items) |*font_data| {
-        font_data.ttf.deinit(alloc);
-        alloc.free(font_data.ttf_content);
-        alloc.free(font_data.path);
-    }
-    self.inner.deinit(alloc);
+pub fn init(alloc: *Sphalloc) !FontStorage {
+    return .{
+        .alloc = alloc,
+        .inner = try RuntimeSegmentedList(FontData).init(
+            alloc.arena(),
+            alloc.block_alloc.allocator(),
+            memory_limits.initial_fonts,
+            memory_limits.max_fonts,
+        ),
+    };
 }
 
 // On success, takes ownership of font_data and name
-pub fn append(self: *FontStorage, alloc: Allocator, font_data: []const u8, path: [:0]const u8, ttf: ttf_mod.Ttf) !FontId {
-    const next_id = self.inner.items.len;
-    try self.inner.append(alloc, .{ .ttf_content = font_data, .path = path, .ttf = ttf });
+pub fn append(self: *FontStorage, font_data: []const u8, path: [:0]const u8, ttf: ttf_mod.Ttf) !FontId {
+    const next_id = self.inner.len;
+    try self.inner.append(.{ .ttf_content = font_data, .path = path, .ttf = ttf });
     return .{ .value = next_id };
 }
 
 pub fn get(self: FontStorage, id: FontId) FontData {
-    return self.inner.items[id.value];
+    return self.inner.get(id.value);
 }
 
 pub fn numItems(self: FontStorage) usize {
-    return self.inner.items.len;
+    return self.inner.len;
 }
 
 pub const IdIter = struct {
@@ -56,13 +67,18 @@ pub const IdIter = struct {
 };
 
 pub fn idIter(self: FontStorage) IdIter {
-    return .{ .max = self.inner.items.len };
+    return .{ .max = self.inner.len };
 }
 
 pub fn saveLeaky(self: FontStorage, alloc: Allocator) ![]Save {
-    var ret = try alloc.alloc([]const u8, self.inner.items.len);
-    for (self.inner.items, 0..) |v, i| {
-        ret[i] = try std.fs.cwd().realpathAlloc(alloc, v.path);
+    var ret = try alloc.alloc([]const u8, self.inner.len);
+    var it = self.inner.sliceIter();
+    var out_idx: usize = 0;
+    while (it.next()) |slice| {
+        for (slice) |elem| {
+            ret[out_idx] = try std.fs.cwd().realpathAlloc(alloc, elem.path);
+            out_idx += 1;
+        }
     }
 
     return ret;

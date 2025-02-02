@@ -3,6 +3,9 @@
     .version = "0.0.1",
     .minimum_zig_version = "0.13.0",
     .dependencies = .{
+        .sphalloc = .{
+            .path = "src/sphalloc",
+        },
         .sphmath = .{
             .path = "src/sphmath",
         },
@@ -17,6 +20,9 @@
         },
         .sphwindow = .{
             .path = "src/sphwindow",
+        },
+        .sphutil = .{
+            .path = "src/sphutil",
         },
     },
     .paths = .{

@@ -9,6 +9,9 @@
         .sphrender = .{
             .path = "../sphrender",
         },
+        .sphalloc = .{
+            .path = "../sphalloc",
+        },
     },
     .paths = .{
         "src",

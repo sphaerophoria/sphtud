@@ -29,7 +29,6 @@ pub fn makeCheckbox(comptime Action: type, alloc: Allocator, checked: anytype, o
     const T = Checkbox(Action, @TypeOf(checked));
 
     const ctx = try alloc.create(T);
-    errdefer alloc.destroy(ctx);
 
     ctx.* = .{
         .checked = checked,
@@ -52,7 +51,6 @@ pub fn Checkbox(comptime Action: type, comptime Checked: type) type {
 
         const Self = @This();
         const vtable = Widget(Action).VTable{
-            .deinit = Self.deinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .update = null,
@@ -60,11 +58,6 @@ pub fn Checkbox(comptime Action: type, comptime Checked: type) type {
             .setFocused = null,
             .reset = null,
         };
-
-        fn deinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            alloc.destroy(self);
-        }
 
         fn render(ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void {
             const self: *Self = @ptrCast(@alignCast(ctx));

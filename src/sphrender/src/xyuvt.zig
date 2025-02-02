@@ -3,6 +3,9 @@ const Allocator = std.mem.Allocator;
 const sphmath = @import("sphmath");
 const shader_program = @import("shader_program.zig");
 const sphrender = @import("sphrender.zig");
+const GlAlloc = @import("GlAlloc.zig");
+const sphalloc = @import("sphalloc");
+const ScratchAlloc = sphalloc.ScratchAlloc;
 
 pub const ImageSamplerUniforms = struct {
     input_image: sphrender.Texture,
@@ -27,23 +30,19 @@ pub fn Program(comptime KnownUniforms: type) type {
         const InnerProgram = shader_program.Program(Vertex, KnownUniforms);
         const Self = @This();
 
-        pub fn init(fs: [:0]const u8) !Self {
-            const inner = try InnerProgram.init(vertex_shader, fs);
+        pub fn init(gl_alloc: *GlAlloc, fs: [:0]const u8) !Self {
+            const inner = try InnerProgram.init(gl_alloc, vertex_shader, fs);
             return .{
                 .inner = inner,
             };
         }
 
-        pub fn deinit(self: Self) void {
-            self.inner.deinit();
+        pub fn unknownUniforms(self: Self, scratch: *ScratchAlloc) !shader_program.UnknownUniforms {
+            return self.inner.unknownUniforms(scratch);
         }
 
-        pub fn unknownUniforms(self: Self, alloc: Allocator) !shader_program.UnknownUniforms {
-            return self.inner.unknownUniforms(alloc);
-        }
-
-        pub fn makeFullScreenPlane(self: Self) Buffer {
-            return self.inner.makeBuffer(&.{
+        pub fn makeFullScreenPlane(self: Self, gl_alloc: *GlAlloc) !Buffer {
+            return try self.inner.makeBuffer(gl_alloc, &.{
                 .{ .vPos = .{ -1.0, -1.0 }, .vUv = .{ 0.0, 0.0 } },
                 .{ .vPos = .{ 1.0, -1.0 }, .vUv = .{ 1.0, 0.0 } },
                 .{ .vPos = .{ -1.0, 1.0 }, .vUv = .{ 0.0, 1.0 } },

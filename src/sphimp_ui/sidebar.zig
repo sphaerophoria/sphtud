@@ -1,3 +1,5 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 const sphimp = @import("sphimp");
 const ObjectId = sphimp.object.ObjectId;
 const App = sphimp.App;
@@ -17,24 +19,21 @@ const ui_action = @import("ui_action.zig");
 const UiAction = ui_action.UiAction;
 const list_io = @import("list_io.zig");
 const WidgetFactory = gui.widget_factory.WidgetFactory(UiAction);
+const sphalloc = @import("sphalloc");
+const Sphalloc = sphalloc.Sphalloc;
+const GlAlloc = sphrender.GlAlloc;
 
-fn wrapFrameScrollViewOrDeinit(widget_factory: *WidgetFactory, inner: gui.Widget(UiAction)) !gui.Widget(UiAction) {
-    const frame = blk: {
-        errdefer inner.deinit(widget_factory.alloc);
-        break :blk try widget_factory.makeFrame(inner);
-    };
-    errdefer frame.deinit(widget_factory.alloc);
-
+fn wrapFrameScrollView(widget_factory: WidgetFactory, inner: gui.Widget(UiAction)) !gui.Widget(UiAction) {
+    const frame = try widget_factory.makeFrame(inner);
     return try widget_factory.makeScrollView(frame);
 }
 
-fn makeObjList(app: *App, widget_factory: *WidgetFactory) !gui.Widget(UiAction) {
+fn makeObjList(app: *App, widget_factory: WidgetFactory) !gui.Widget(UiAction) {
     const layout = blk: {
         const layout = try widget_factory.makeLayout();
-        errdefer layout.deinit(widget_factory.alloc);
 
         const label = try widget_factory.makeLabel("Object list");
-        try layout.pushOrDeinitWidget(widget_factory.alloc, label);
+        try layout.pushWidget(label);
 
         const RetrieverCtx = struct {
             pub fn selectedObject(_: @This(), a: *App) ?ObjectId {
@@ -47,59 +46,58 @@ fn makeObjList(app: *App, widget_factory: *WidgetFactory) !gui.Widget(UiAction) 
             retriever,
             list_io.itListAction(&app.objects, &sphimp.object.Objects.idIter, .update_selected_object),
         );
-        try layout.pushOrDeinitWidget(widget_factory.alloc, obj_list);
+        try layout.pushWidget(obj_list);
 
         break :blk layout;
     };
 
-    return wrapFrameScrollViewOrDeinit(widget_factory, layout.asWidget());
+    return wrapFrameScrollView(widget_factory, layout.asWidget());
 }
 
-fn makeCreateObject(app: *App, widget_factory: *gui.widget_factory.WidgetFactory(UiAction)) !gui.Widget(UiAction) {
+fn makeCreateObject(app: *App, widget_factory: gui.widget_factory.WidgetFactory(UiAction)) !gui.Widget(UiAction) {
     const layout = blk: {
         const layout = try widget_factory.makeLayout();
-        errdefer layout.deinit(widget_factory.alloc);
 
         {
             const label = try widget_factory.makeLabel("Create an item");
-            try layout.pushOrDeinitWidget(widget_factory.alloc, label);
+            try layout.pushWidget(label);
         }
 
         {
             const button = try widget_factory.makeButton("New path", .create_path);
-            try layout.pushOrDeinitWidget(widget_factory.alloc, button);
+            try layout.pushWidget(button);
         }
         {
             const button = try widget_factory.makeButton("New composition", .create_composition);
-            try layout.pushOrDeinitWidget(widget_factory.alloc, button);
+            try layout.pushWidget(button);
         }
         {
             const button = try widget_factory.makeButton("New drawing", .create_drawing);
-            try layout.pushOrDeinitWidget(widget_factory.alloc, button);
+            try layout.pushWidget(button);
         }
         {
             const button = try widget_factory.makeButton("New text", .create_text);
-            try layout.pushOrDeinitWidget(widget_factory.alloc, button);
+            try layout.pushWidget(button);
         }
 
         {
             const label = try widget_factory.makeLabel("Create a shader");
-            try layout.pushOrDeinitWidget(widget_factory.alloc, label);
+            try layout.pushWidget(label);
 
             const shader_list = try widget_factory.makeSelectableList(
                 list_io.ShaderListRetriever{ .app = app },
                 list_io.itListAction(&app.shaders, &ShaderStorage(ShaderId).idIter, .create_shader),
             );
-            try layout.pushOrDeinitWidget(widget_factory.alloc, shader_list);
+            try layout.pushWidget(shader_list);
         }
 
         break :blk layout;
     };
 
-    return wrapFrameScrollViewOrDeinit(widget_factory, layout.asWidget());
+    return wrapFrameScrollView(widget_factory, layout.asWidget());
 }
 
-fn addShaderParamsToPropertyList(app: *App, property_list: *gui.property_list.PropertyList(UiAction), widget_factory: *gui.widget_factory.WidgetFactory(UiAction), uniforms: sphrender.shader_program.UnknownUniforms) !void {
+fn addShaderParamsToPropertyList(app: *App, property_list: anytype, widget_factory: gui.widget_factory.WidgetFactory(UiAction), uniforms: sphrender.shader_program.UnknownUniforms) !void {
     const property_widget_gen = object_properties.PropertyWidgetGenerator{
         .app = app,
         .widget_factory = widget_factory,
@@ -124,12 +122,8 @@ fn addShaderParamsToPropertyList(app: *App, property_list: *gui.property_list.Pr
             },
             else => {
                 const uniform_label = try widget_factory.makeLabel(uniform.name);
-                errdefer uniform_label.deinit(widget_factory.alloc);
-
                 const value_widget = try widget_factory.makeLabel("unimplemented");
-                errdefer value_widget.deinit(widget_factory.alloc);
-
-                try property_list.pushWidgets(widget_factory.alloc, uniform_label, value_widget);
+                try property_list.pushWidgets(uniform_label, value_widget);
             },
         }
     }
@@ -140,69 +134,48 @@ const ObjectProperties = struct {
     specific_properties: *gui.layout.Layout(UiAction),
 };
 
-fn makeObjectProperties(app: *App, widget_factory: *gui.widget_factory.WidgetFactory(UiAction)) !ObjectProperties {
+fn makeObjectProperties(app: *App, widget_factory: gui.widget_factory.WidgetFactory(UiAction)) !ObjectProperties {
     const layout = blk: {
         const layout = try widget_factory.makeLayout();
-        errdefer layout.deinit(widget_factory.alloc);
 
         const layout_name = try widget_factory.makeLabel("Object properties");
-        try layout.pushOrDeinitWidget(widget_factory.alloc, layout_name);
+        try layout.pushWidget(layout_name);
 
-        const property_list = try widget_factory.makePropertyList();
-        try layout.pushOrDeinitWidget(widget_factory.alloc, property_list.asWidget());
+        const property_list = try widget_factory.makePropertyList(4);
+        try layout.pushWidget(property_list.asWidget());
 
         {
             const name_label = try widget_factory.makeLabel("Name");
-            errdefer name_label.deinit(widget_factory.alloc);
-
             const name_box = try widget_factory.makeTextbox(
                 label_adaptors.SelectedObjectName.init(app),
                 &UiAction.makeEditName,
             );
-            errdefer name_box.deinit(widget_factory.alloc);
-
-            try property_list.pushWidgets(widget_factory.alloc, name_label, name_box);
+            try property_list.pushWidgets(name_label, name_box);
         }
 
         {
             const delete_button = try widget_factory.makeButton("Delete", .delete_selected_object);
-            errdefer delete_button.deinit(widget_factory.alloc);
-
-            try property_list.pushWidgets(widget_factory.alloc, gui.null_widget.makeNull(UiAction), delete_button);
+            try property_list.pushWidgets(gui.null_widget.makeNull(UiAction), delete_button);
         }
 
         {
             const label = try widget_factory.makeLabel("Width");
-            errdefer label.deinit(widget_factory.alloc);
-
             const value = try widget_factory.makeLabel(label_adaptors.SelectedObjectWidth.init(app));
-            errdefer value.deinit(widget_factory.alloc);
-
-            try property_list.pushWidgets(widget_factory.alloc, label, value);
+            try property_list.pushWidgets(label, value);
         }
 
         {
             const label = try widget_factory.makeLabel("Height");
-            errdefer label.deinit(widget_factory.alloc);
-
             const value = try widget_factory.makeLabel(label_adaptors.SelectedObjectHeight.init(app));
-            errdefer value.deinit(widget_factory.alloc);
-
-            try property_list.pushWidgets(widget_factory.alloc, label, value);
+            try property_list.pushWidgets(label, value);
         }
 
         break :blk layout;
     };
 
-    const specific_layout = blk: {
-        errdefer layout.deinit(widget_factory.alloc);
-
-        const specific_layout = try widget_factory.makeLayout();
-        try layout.pushOrDeinitWidget(widget_factory.alloc, specific_layout.asWidget());
-        break :blk specific_layout;
-    };
-
-    const widget = try wrapFrameScrollViewOrDeinit(widget_factory, layout.asWidget());
+    const specific_layout = try widget_factory.makeLayout();
+    try layout.pushWidget(specific_layout.asWidget());
+    const widget = try wrapFrameScrollView(widget_factory, layout.asWidget());
 
     return .{
         .widget = widget,
@@ -211,12 +184,13 @@ fn makeObjectProperties(app: *App, widget_factory: *gui.widget_factory.WidgetFac
 }
 
 pub const Handle = struct {
+    removable_content_alloc: gui.GuiAlloc,
     // Note that these widgets are owned by the sidebar, not by us
     object_properties: gui.Widget(UiAction),
     specific_object_properties: *gui.layout.Layout(UiAction),
 
     app: *App,
-    widget_factory: *WidgetFactory,
+    removable_content_widget_factory: WidgetFactory,
 
     pub fn notifyObjectChanged(self: Handle) void {
         // When objects change, we re-use the same widgets, but users expect
@@ -230,68 +204,53 @@ pub const Handle = struct {
     /// the items in the property list may have changed, and we have to
     /// re-generate
     pub fn updateObjectProperties(self: Handle) !void {
-        self.specific_object_properties.clear(self.widget_factory.alloc);
+        self.specific_object_properties.clear();
 
-        const property_list = try self.widget_factory.makePropertyList();
-        try self.specific_object_properties.pushOrDeinitWidget(self.widget_factory.alloc, property_list.asWidget());
+        try self.removable_content_alloc.reset();
+
+        const property_list = try self.removable_content_widget_factory.makePropertyList(50);
+        try self.specific_object_properties.pushWidget(property_list.asWidget());
 
         const selected_obj = self.app.objects.get(self.app.input_state.selected_object);
 
         {
-            const type_label_key = try self.widget_factory.makeLabel("Object type");
-            errdefer type_label_key.deinit(self.widget_factory.alloc);
-
-            const type_label_value = try self.widget_factory.makeLabel(@tagName(selected_obj.data));
-            errdefer type_label_value.deinit(self.widget_factory.alloc);
-
-            try property_list.pushWidgets(self.widget_factory.alloc, type_label_key, type_label_value);
+            const type_label_key = try self.removable_content_widget_factory.makeLabel("Object type");
+            const type_label_value = try self.removable_content_widget_factory.makeLabel(@tagName(selected_obj.data));
+            try property_list.pushWidgets(type_label_key, type_label_value);
         }
 
         switch (selected_obj.data) {
             .filesystem => |fs_obj| {
                 {
-                    const source_key = try self.widget_factory.makeLabel("Source");
-                    errdefer source_key.deinit(self.widget_factory.alloc);
-
-                    const source_value = try self.widget_factory.makeLabel(fs_obj.source);
-                    errdefer source_value.deinit(self.widget_factory.alloc);
-
-                    try property_list.pushWidgets(self.widget_factory.alloc, source_key, source_value);
+                    const source_key = try self.removable_content_widget_factory.makeLabel("Source");
+                    const source_value = try self.removable_content_widget_factory.makeLabel(fs_obj.source);
+                    try property_list.pushWidgets(source_key, source_value);
                 }
             },
             .generated_mask => {},
             .composition => |comp| {
                 {
-                    const width_label = try self.widget_factory.makeLabel("Width");
-                    errdefer width_label.deinit(self.widget_factory.alloc);
-
-                    const width_dragger = try self.widget_factory.makeDragFloat(
+                    const width_label = try self.removable_content_widget_factory.makeLabel("Width");
+                    const width_dragger = try self.removable_content_widget_factory.makeDragFloat(
                         float_adaptors.SelectedObjectWidth.init(self.app),
                         &UiAction.makeUpdateCompositionWidth,
                         1.0,
                     );
-                    errdefer width_dragger.deinit(self.widget_factory.alloc);
-
-                    try property_list.pushWidgets(self.widget_factory.alloc, width_label, width_dragger);
+                    try property_list.pushWidgets(width_label, width_dragger);
                 }
 
                 {
-                    const height_label = try self.widget_factory.makeLabel("Height");
-                    errdefer height_label.deinit(self.widget_factory.alloc);
-
-                    const height_dragger = try self.widget_factory.makeDragFloat(
+                    const height_label = try self.removable_content_widget_factory.makeLabel("Height");
+                    const height_dragger = try self.removable_content_widget_factory.makeDragFloat(
                         float_adaptors.SelectedObjectHeight.init(self.app),
                         &UiAction.makeUpdateCompositionHeight,
                         1.0,
                     );
-                    errdefer height_dragger.deinit(self.widget_factory.alloc);
-
-                    try property_list.pushWidgets(self.widget_factory.alloc, height_label, height_dragger);
+                    try property_list.pushWidgets(height_label, height_dragger);
                 }
 
                 {
-                    const debug_label = try self.widget_factory.makeLabel("Debug");
-                    errdefer debug_label.deinit(self.widget_factory.alloc);
+                    const debug_label = try self.removable_content_widget_factory.makeLabel("Debug");
 
                     const CheckedRetriever = struct {
                         app: *App,
@@ -302,49 +261,37 @@ pub const Handle = struct {
                         }
                     };
 
-                    const debug_checkbox = try self.widget_factory.makeCheckbox(CheckedRetriever{ .app = self.app }, UiAction.toggle_composition_debug);
-                    errdefer debug_checkbox.deinit(self.widget_factory.alloc);
-
-                    try property_list.pushWidgets(self.widget_factory.alloc, debug_label, debug_checkbox);
+                    const debug_checkbox = try self.removable_content_widget_factory.makeCheckbox(CheckedRetriever{ .app = self.app }, UiAction.toggle_composition_debug);
+                    try property_list.pushWidgets(debug_label, debug_checkbox);
                 }
 
                 {
-                    const add_label = try self.widget_factory.makeLabel("Add");
-                    errdefer add_label.deinit(self.widget_factory.alloc);
-
+                    const add_label = try self.removable_content_widget_factory.makeLabel("Add");
                     const RetrieverCtx = struct {
                         pub fn selectedObject(_: @This(), _: *App) ?ObjectId {
                             return null;
                         }
                     };
-                    const add_combobox = try self.widget_factory.makeComboBox(
+                    const add_combobox = try self.removable_content_widget_factory.makeComboBox(
                         list_io.objectListRetriever(RetrieverCtx{}, self.app),
                         list_io.itListAction(&self.app.objects, &sphimp.object.Objects.idIter, .add_to_composition),
                     );
-                    errdefer add_combobox.deinit(self.widget_factory.alloc);
-
-                    try property_list.pushWidgets(self.widget_factory.alloc, add_label, add_combobox);
+                    try property_list.pushWidgets(add_label, add_combobox);
                 }
 
                 for (0..comp.objects.items.len) |comp_idx| {
-                    const name_label = try self.widget_factory.makeLabel(label_adaptors.CompositionObjName.init(self.app, comp_idx));
-                    errdefer name_label.deinit(self.widget_factory.alloc);
-
-                    const delete_button = try self.widget_factory.makeButton("Delete", .{ .delete_from_composition = comp_idx });
-                    errdefer delete_button.deinit(self.widget_factory.alloc);
-
-                    try property_list.pushWidgets(self.widget_factory.alloc, name_label, delete_button);
+                    const name_label = try self.removable_content_widget_factory.makeLabel(label_adaptors.CompositionObjName.init(self.app, comp_idx));
+                    const delete_button = try self.removable_content_widget_factory.makeButton("Delete", .{ .delete_from_composition = comp_idx });
+                    try property_list.pushWidgets(name_label, delete_button);
                 }
             },
             .shader => |s| {
                 const shader = self.app.shaders.get(s.program);
-                try addShaderParamsToPropertyList(self.app, property_list, self.widget_factory, shader.uniforms);
+                try addShaderParamsToPropertyList(self.app, property_list, self.removable_content_widget_factory, shader.uniforms);
             },
             .drawing => |d| {
                 {
-                    const source_label = try self.widget_factory.makeLabel("Source object");
-                    errdefer source_label.deinit(self.widget_factory.alloc);
-
+                    const source_label = try self.removable_content_widget_factory.makeLabel("Source object");
                     const RetrieverCtx = struct {
                         pub fn selectedObject(_: @This(), a: *App) ?ObjectId {
                             var obj = a.selectedObject();
@@ -353,39 +300,33 @@ pub const Handle = struct {
                         }
                     };
 
-                    const value_widget = try self.widget_factory.makeComboBox(
+                    const value_widget = try self.removable_content_widget_factory.makeComboBox(
                         list_io.objectListRetriever(RetrieverCtx{}, self.app),
                         list_io.itListAction(&self.app.objects, &sphimp.object.Objects.idIter, .update_drawing_source),
                     );
-                    errdefer value_widget.deinit(self.widget_factory.alloc);
-
-                    try property_list.pushWidgets(self.widget_factory.alloc, source_label, value_widget);
+                    try property_list.pushWidgets(source_label, value_widget);
                 }
 
                 {
-                    const source_label = try self.widget_factory.makeLabel("Brush");
+                    const source_label = try self.removable_content_widget_factory.makeLabel("Brush");
 
-                    const value_widget = try self.widget_factory.makeComboBox(
+                    const value_widget = try self.removable_content_widget_factory.makeComboBox(
                         list_io.BrushRetriever.init(self.app),
                         list_io.itListAction(&self.app.brushes, &shader_storage.ShaderStorage(BrushId).idIter, .update_brush),
                     );
-                    errdefer value_widget.deinit(self.widget_factory.alloc);
-
-                    try property_list.pushWidgets(self.widget_factory.alloc, source_label, value_widget);
+                    try property_list.pushWidgets(source_label, value_widget);
                 }
 
                 const brush = self.app.brushes.get(d.brush);
                 try addShaderParamsToPropertyList(
                     self.app,
                     property_list,
-                    self.widget_factory,
+                    self.removable_content_widget_factory,
                     brush.uniforms,
                 );
             },
             .path => {
-                const source_label = try self.widget_factory.makeLabel("Source object");
-                errdefer source_label.deinit(self.widget_factory.alloc);
-
+                const source_label = try self.removable_content_widget_factory.makeLabel("Source object");
                 const RetrieverCtx = struct {
                     pub fn selectedObject(_: @This(), a: *App) ?ObjectId {
                         var obj = a.selectedObject();
@@ -394,54 +335,40 @@ pub const Handle = struct {
                     }
                 };
 
-                const value_widget = try self.widget_factory.makeComboBox(
+                const value_widget = try self.removable_content_widget_factory.makeComboBox(
                     list_io.objectListRetriever(RetrieverCtx{}, self.app),
                     list_io.itListAction(&self.app.objects, &sphimp.object.Objects.idIter, .update_path_source),
                 );
 
-                errdefer value_widget.deinit(self.widget_factory.alloc);
-
-                try property_list.pushWidgets(self.widget_factory.alloc, source_label, value_widget);
+                try property_list.pushWidgets(source_label, value_widget);
             },
             .text => |*t| {
                 {
-                    const key = try self.widget_factory.makeLabel("Text");
-                    errdefer key.deinit(self.widget_factory.alloc);
-
-                    const value_widget = try self.widget_factory.makeTextbox(
+                    const key = try self.removable_content_widget_factory.makeLabel("Text");
+                    const value_widget = try self.removable_content_widget_factory.makeTextbox(
                         label_adaptors.TextObjectContent.init(self.app),
                         &UiAction.makeTextObjChange,
                     );
-                    errdefer value_widget.deinit(self.widget_factory.alloc);
-
-                    try property_list.pushWidgets(self.widget_factory.alloc, key, value_widget);
+                    try property_list.pushWidgets(key, value_widget);
                 }
 
                 {
-                    const key = try self.widget_factory.makeLabel("Font");
-                    errdefer key.deinit(self.widget_factory.alloc);
-
-                    const value_widget = try self.widget_factory.makeComboBox(
+                    const key = try self.removable_content_widget_factory.makeLabel("Font");
+                    const value_widget = try self.removable_content_widget_factory.makeComboBox(
                         list_io.FontRetriever{ .app = self.app },
                         list_io.itListAction(&self.app.fonts, &FontStorage.idIter, .update_selected_font),
                     );
-                    errdefer value_widget.deinit(self.widget_factory.alloc);
-
-                    try property_list.pushWidgets(self.widget_factory.alloc, key, value_widget);
+                    try property_list.pushWidgets(key, value_widget);
                 }
 
                 {
-                    const key = try self.widget_factory.makeLabel("Font size");
-                    errdefer key.deinit(self.widget_factory.alloc);
-
-                    const value_widget = try self.widget_factory.makeDragFloat(
+                    const key = try self.removable_content_widget_factory.makeLabel("Font size");
+                    const value_widget = try self.removable_content_widget_factory.makeDragFloat(
                         &t.renderer.point_size,
                         &UiAction.makeChangeTextSize,
                         0.05,
                     );
-                    errdefer value_widget.deinit(self.widget_factory.alloc);
-
-                    try property_list.pushWidgets(self.widget_factory.alloc, key, value_widget);
+                    try property_list.pushWidgets(key, value_widget);
                 }
             },
         }
@@ -453,50 +380,49 @@ const Sidebar = struct {
     handle: Handle,
 };
 
-pub fn makeSidebar(app: *App, widget_factory: *gui.widget_factory.WidgetFactory(UiAction)) !Sidebar {
-    const sidebar_stack = try widget_factory.makeStack();
-    errdefer sidebar_stack.deinit(widget_factory.alloc);
+pub fn makeSidebar(sidebar_alloc: gui.GuiAlloc, app: *App, widget_state: *gui.widget_factory.WidgetState(UiAction)) !Sidebar {
+    const removable_content_alloc = try sidebar_alloc.makeSubAlloc("sidebar_content");
+
+    const full_factory = widget_state.factory(sidebar_alloc);
+    const removable_factory = widget_state.factory(removable_content_alloc);
+
+    const sidebar_stack = try full_factory.makeStack(2);
 
     const sidebar_width = 300;
-    const sidebar_box = blk: {
-        errdefer sidebar_stack.deinit(widget_factory.alloc);
+    const sidebar_box = try full_factory.makeBox(
+        sidebar_stack.asWidget(),
+        .{ .width = sidebar_width, .height = 0 },
+        .fill_height,
+    );
 
-        break :blk try widget_factory.makeBox(
-            sidebar_stack.asWidget(),
-            .{ .width = sidebar_width, .height = 0 },
-            .fill_height,
-        );
-    };
-    errdefer sidebar_box.deinit(widget_factory.alloc);
-
-    const sidebar_background = try widget_factory.makeRect(
+    const sidebar_background = try full_factory.makeRect(
         gui.widget_factory.StyleColors.background_color,
     );
 
-    try sidebar_stack.pushWidgetOrDeinit(
-        widget_factory.alloc,
+    try sidebar_stack.pushWidget(
         sidebar_background,
         .{ .offset = .{ .x_offs = 0, .y_offs = 0 } },
     );
 
-    const sidebar_layout = try widget_factory.makeEvenVertLayout();
-    try sidebar_stack.pushWidgetOrDeinit(widget_factory.alloc, sidebar_layout.asWidget(), .centered);
+    const sidebar_layout = try full_factory.makeEvenVertLayout(3);
+    try sidebar_stack.pushWidget(sidebar_layout.asWidget(), .centered);
 
-    const obj_list = try makeObjList(app, widget_factory);
-    try sidebar_layout.pushOrDeinitWidget(widget_factory.alloc, obj_list);
+    const obj_list = try makeObjList(app, full_factory);
+    try sidebar_layout.pushWidget(obj_list);
 
-    const create_object = try makeCreateObject(app, widget_factory);
-    try sidebar_layout.pushOrDeinitWidget(widget_factory.alloc, create_object);
+    const create_object = try makeCreateObject(app, full_factory);
+    try sidebar_layout.pushWidget(create_object);
 
-    const properties = try makeObjectProperties(app, widget_factory);
-    try sidebar_layout.pushOrDeinitWidget(widget_factory.alloc, properties.widget);
+    const properties = try makeObjectProperties(app, full_factory);
+    try sidebar_layout.pushWidget(properties.widget);
 
     var handle = Handle{
+        .removable_content_alloc = removable_content_alloc,
         .object_properties = properties.widget,
         .specific_object_properties = properties.specific_properties,
 
         .app = app,
-        .widget_factory = widget_factory,
+        .removable_content_widget_factory = removable_factory,
     };
 
     try handle.updateObjectProperties();

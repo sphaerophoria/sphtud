@@ -7,7 +7,6 @@ const Objects = obj_mod.Objects;
 
 pub fn ensureNoDependencyLoops(alloc: Allocator, id: ObjectId, objects: *Objects) !void {
     var loop_checker = DependencyLoopChecker.init(alloc, objects);
-    defer loop_checker.deinit();
     try loop_checker.ensureNoDependencyLoops(id);
 }
 
@@ -20,10 +19,6 @@ const DependencyLoopChecker = struct {
             .seen_ids = std.AutoHashMap(ObjectId, void).init(alloc),
             .objects = objects,
         };
-    }
-
-    fn deinit(self: *DependencyLoopChecker) void {
-        self.seen_ids.deinit();
     }
 
     fn ensureNoDependencyLoops(self: *DependencyLoopChecker, id: ObjectId) !void {

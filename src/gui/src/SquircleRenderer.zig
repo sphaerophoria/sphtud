@@ -9,28 +9,25 @@ const PixelBBox = gui.PixelBBox;
 
 const Program = sphrender.xyuvt_program.Program(SquircleUniform);
 const Buffer = sphrender.xyuvt_program.Buffer;
+const GlAlloc = sphrender.GlAlloc;
 
 program: Program,
 buffer: Buffer,
 
 const SquircleRenderer = @This();
 
-pub fn init() !SquircleRenderer {
+pub fn init(gl_alloc: *GlAlloc) !SquircleRenderer {
     const program = try Program.init(
+        gl_alloc,
         fragment_shader,
     );
 
-    const buffer = program.makeFullScreenPlane();
+    const buffer = try program.makeFullScreenPlane(gl_alloc);
 
     return .{
         .program = program,
         .buffer = buffer,
     };
-}
-
-pub fn deinit(self: SquircleRenderer) void {
-    self.program.deinit();
-    self.buffer.deinit();
 }
 
 pub fn render(self: SquircleRenderer, color: Color, corner_radius_px: f32, widget_bounds: PixelBBox, transform: sphmath.Transform) void {

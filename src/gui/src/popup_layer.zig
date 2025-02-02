@@ -9,11 +9,11 @@ const InputState = gui.InputState;
 
 pub fn PopupLayer(comptime Action: type) type {
     return struct {
+        alloc: gui.GuiAlloc,
         inner: ?Data = null,
         container_size: PixelSize = .{ .width = 0, .height = 0 },
 
         const Data = struct {
-            alloc: Allocator,
             widget: Widget(Action),
             x_offs: i32,
             y_offs: i32,
@@ -34,7 +34,6 @@ pub fn PopupLayer(comptime Action: type) type {
         };
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.widgetDeinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .update = Self.update,
@@ -52,26 +51,18 @@ pub fn PopupLayer(comptime Action: type) type {
             };
         }
 
-        fn widgetDeinit(ctx: ?*anyopaque, _: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            self.reset();
-        }
-
-        pub fn reset(self: *Self) void {
-            if (self.inner) |*d| d.widget.deinit(d.alloc);
+        pub fn reset(self: *Self) !void {
+            try self.alloc.reset();
             self.inner = null;
         }
 
         pub fn set(
             self: *Self,
-            alloc: Allocator,
             widget: Widget(Action),
             x_offs: i32,
             y_offs: i32,
         ) void {
-            self.reset();
             self.inner = .{
-                .alloc = alloc,
                 .widget = widget,
                 .x_offs = x_offs,
                 .y_offs = y_offs,
@@ -103,7 +94,9 @@ pub fn PopupLayer(comptime Action: type) type {
 
             if (input_state.mouse_down_location) |loc| {
                 if (data.mouse_released and !item_bounds.containsMousePos(loc)) {
-                    self.reset();
+                    self.reset() catch {
+                        std.log.err("Failed to reset popup layer", .{});
+                    };
                 }
             }
             data.mouse_released = data.mouse_released or input_state.mouse_released;

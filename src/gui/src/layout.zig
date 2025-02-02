@@ -10,8 +10,9 @@ const InputState = gui.InputState;
 
 pub fn Layout(comptime Action: type) type {
     return struct {
+        alloc: Allocator,
         cursor: Cursor,
-        items: std.ArrayListUnmanaged(LayoutItem),
+        items: std.SegmentedList(LayoutItem, 32),
         item_pad: u31,
         focused_id: ?usize,
         // If layout is vertical, this is horizontal and vice versa
@@ -25,7 +26,6 @@ pub fn Layout(comptime Action: type) type {
         const Self = @This();
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.widgetDeinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .update = Self.update,
@@ -37,6 +37,7 @@ pub fn Layout(comptime Action: type) type {
         pub fn init(alloc: Allocator, item_pad: u31) !*Self {
             const layout = try alloc.create(Self);
             layout.* = .{
+                .alloc = alloc,
                 .cursor = .{},
                 .items = .{},
                 .item_pad = item_pad,
@@ -46,35 +47,17 @@ pub fn Layout(comptime Action: type) type {
             return layout;
         }
 
-        pub fn deinit(self: *Self, alloc: Allocator) void {
-            for (self.items.items) |item| {
-                item.widget.deinit(alloc);
-            }
-            self.items.deinit(alloc);
-            alloc.destroy(self);
-        }
-
-        pub fn clear(self: *Self, alloc: Allocator) void {
-            for (self.items.items) |item| {
-                item.widget.deinit(alloc);
-            }
-            self.items.clearAndFree(alloc);
+        pub fn clear(self: *Self) void {
+            self.items.clearRetainingCapacity();
             self.cursor.reset();
             self.focused_id = null;
             self.max_perpendicular_length = 0;
         }
 
-        fn widgetDeinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            self.deinit(alloc);
-        }
-
-        pub fn pushOrDeinitWidget(self: *Self, alloc: Allocator, widget: Widget(Action)) !void {
-            errdefer widget.deinit(alloc);
-
+        pub fn pushWidget(self: *Self, widget: Widget(Action)) !void {
             const size = widget.getSize();
             const bounds = self.cursor.push(size, self.item_pad);
-            try self.items.append(alloc, .{ .bounds = bounds, .widget = widget });
+            try self.items.append(self.alloc, .{ .bounds = bounds, .widget = widget });
             self.updatePerpendicularLength(size);
         }
 
@@ -89,7 +72,8 @@ pub fn Layout(comptime Action: type) type {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.cursor.reset();
 
-            for (self.items.items) |*item| {
+            var item_it = self.items.iterator(0);
+            while (item_it.next()) |item| {
                 try item.widget.update(self.availableSize(container_size));
                 const widget_size = item.widget.getSize();
                 item.bounds = self.cursor.push(widget_size, self.item_pad);
@@ -111,7 +95,10 @@ pub fn Layout(comptime Action: type) type {
                 .action = null,
             };
 
-            for (self.items.items, 0..) |item, idx| {
+            var item_it = self.items.iterator(0);
+            var idx: usize = 0;
+            while (item_it.next()) |item| {
+                defer idx += 1;
                 const child_bounds = childBounds(item.bounds, bounds);
 
                 const input_response = item.widget.setInputState(
@@ -122,7 +109,7 @@ pub fn Layout(comptime Action: type) type {
 
                 if (input_response.wants_focus) {
                     if (self.focused_id) |id| {
-                        self.items.items[id].widget.setFocused(false);
+                        self.items.at(id).widget.setFocused(false);
                     }
                     self.focused_id = idx;
                     ret.wants_focus = true;
@@ -138,7 +125,8 @@ pub fn Layout(comptime Action: type) type {
 
         fn render(ctx: ?*anyopaque, bounds: PixelBBox, window_bounds: PixelBBox) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
-            for (self.items.items) |item| {
+            var item_it = self.items.iterator(0);
+            while (item_it.next()) |item| {
                 const child_bounds = childBounds(item.bounds, bounds);
                 item.widget.render(child_bounds, window_bounds);
             }
@@ -165,7 +153,8 @@ pub fn Layout(comptime Action: type) type {
         fn resetWidgets(ctx: ?*anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
-            for (self.items.items) |*item| {
+            var item_it = self.items.iterator(0);
+            while (item_it.next()) |item| {
                 item.widget.reset();
             }
         }
@@ -173,7 +162,7 @@ pub fn Layout(comptime Action: type) type {
         fn setFocused(ctx: ?*anyopaque, focused: bool) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             if (self.focused_id) |id| {
-                self.items.items[id].widget.setFocused(focused);
+                self.items.at(id).widget.setFocused(focused);
             }
         }
 

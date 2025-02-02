@@ -2,6 +2,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const gui = @import("gui.zig");
 const util = @import("util.zig");
+const sphutil = @import("sphutil");
+const RuntimeBoundedArray = sphutil.RuntimeBoundedArray;
 const Widget = gui.Widget;
 const PixelBBox = gui.PixelBBox;
 const PixelSize = gui.PixelSize;
@@ -19,7 +21,8 @@ pub const Style = struct {
 // you replace this make sure each column can be individually justified
 pub fn PropertyList(comptime Action: type) type {
     return struct {
-        items: std.ArrayListUnmanaged(Item) = .{},
+        alloc: Allocator,
+        items: RuntimeBoundedArray(Item),
         // If key ever needs focus, this needs to be updated to indicate
         // whether the key/value is focused
         focused_id: ?usize = null,
@@ -34,7 +37,6 @@ pub fn PropertyList(comptime Action: type) type {
         };
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.widgetDeinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .update = Self.update,
@@ -43,34 +45,22 @@ pub fn PropertyList(comptime Action: type) type {
             .reset = Self.reset,
         };
 
-        pub fn init(alloc: Allocator, style: *const Style) !*Self {
+        pub fn init(alloc: Allocator, style: *const Style, max_items: usize) !*Self {
             const ret = try alloc.create(Self);
-            ret.* = .{ .style = style };
+            const items = try RuntimeBoundedArray(Item).init(alloc, max_items);
+            ret.* = .{ .alloc = alloc, .style = style, .items = items };
             return ret;
         }
 
-        pub fn deinit(self: *Self, alloc: Allocator) void {
-            for (self.items.items) |item| {
-                item.key.deinit(alloc);
-                item.value.deinit(alloc);
-            }
-            self.items.deinit(alloc);
-            alloc.destroy(self);
-        }
-
-        pub fn pushWidgets(self: *Self, alloc: Allocator, key: Widget(Action), value: Widget(Action)) !void {
-            try self.items.append(alloc, .{
+        pub fn pushWidgets(self: *Self, key: Widget(Action), value: Widget(Action)) !void {
+            try self.items.append(.{
                 .key = key,
                 .value = value,
             });
         }
 
-        pub fn clear(self: *Self, alloc: Allocator) void {
-            for (self.items.items) |item| {
-                item.key.deinit(alloc);
-                item.value.deinit(alloc);
-            }
-            self.items.clearAndFree(alloc);
+        pub fn clear(self: *Self) void {
+            self.items.clear();
             self.focused_id = null;
             self.size = .{ .width = 0, .height = 0 };
         }
@@ -80,11 +70,6 @@ pub fn PropertyList(comptime Action: type) type {
                 .ctx = self,
                 .vtable = &widget_vtable,
             };
-        }
-
-        fn widgetDeinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            self.deinit(alloc);
         }
 
         fn render(ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void {

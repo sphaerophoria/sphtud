@@ -7,9 +7,10 @@ const PixelBBox = gui.PixelBBox;
 const PixelSize = gui.PixelSize;
 const InputState = gui.InputState;
 
-pub fn Stack(comptime Action: type) type {
+pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
     return struct {
-        items: std.ArrayListUnmanaged(StackItem) = .{},
+        alloc: Allocator,
+        items: std.BoundedArray(StackItem, max_elems) = .{},
         total_size: PixelSize = .{ .width = 0, .height = 0 },
         focused_id: ?usize = null,
 
@@ -30,7 +31,6 @@ pub fn Stack(comptime Action: type) type {
         };
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.deinitWidget,
             .render = Self.render,
             .getSize = Self.getSize,
             .update = Self.update,
@@ -41,22 +41,14 @@ pub fn Stack(comptime Action: type) type {
 
         pub fn init(alloc: Allocator) !*Self {
             const stack = try alloc.create(Self);
-            stack.* = .{};
+            stack.* = .{
+                .alloc = alloc,
+            };
             return stack;
         }
 
-        pub fn deinit(self: *Self, alloc: Allocator) void {
-            for (self.items.items) |item| {
-                item.widget.deinit(alloc);
-            }
-            self.items.deinit(alloc);
-            alloc.destroy(self);
-        }
-
-        pub fn pushWidgetOrDeinit(self: *Self, alloc: Allocator, widget: Widget(Action), layout: Layout) !void {
-            errdefer widget.deinit(alloc);
-
-            try self.items.append(alloc, .{
+        pub fn pushWidget(self: *Self, widget: Widget(Action), layout: Layout) !void {
+            try self.items.append(.{
                 .layout = layout,
                 .widget = widget,
             });
@@ -72,14 +64,9 @@ pub fn Stack(comptime Action: type) type {
             };
         }
 
-        fn deinitWidget(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            self.deinit(alloc);
-        }
-
         fn render(ctx: ?*anyopaque, stack_bounds: PixelBBox, window_bounds: PixelBBox) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
-            for (self.items.items) |item| {
+            for (self.items.slice()) |item| {
                 item.widget.render(itemBounds(stack_bounds, item.layout, item.widget), window_bounds);
             }
         }
@@ -93,7 +80,7 @@ pub fn Stack(comptime Action: type) type {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.total_size = .{ .width = 0, .height = 0 };
 
-            for (self.items.items) |item| {
+            for (self.items.slice()) |item| {
                 if (item.layout == .fill) continue;
                 try item.widget.update(available_size);
 
@@ -101,7 +88,7 @@ pub fn Stack(comptime Action: type) type {
                 self.total_size = newTotalSize(self.total_size, item.layout, item_size);
             }
 
-            for (self.items.items) |item| {
+            for (self.items.slice()) |item| {
                 if (item.layout == .fill) {
                     try item.widget.update(self.total_size);
                 }
@@ -116,11 +103,12 @@ pub fn Stack(comptime Action: type) type {
                 .action = null,
             };
 
-            var i: usize = self.items.items.len;
+            const items = self.items.slice();
+            var i: usize = items.len;
             while (i > 0) {
                 i -= 1;
 
-                const item = self.items.items[i];
+                const item = items[i];
                 const item_bounds = itemBounds(stack_bounds, item.layout, item.widget);
                 const item_input_bounds = item_bounds.calcIntersection(input_bounds);
 
@@ -140,13 +128,13 @@ pub fn Stack(comptime Action: type) type {
         fn setFocused(ctx: ?*anyopaque, focused: bool) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             if (self.focused_id) |id| {
-                self.items.items[id].widget.setFocused(focused);
+                self.items.slice()[id].widget.setFocused(focused);
             }
         }
 
         fn reset(ctx: ?*anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
-            for (self.items.items) |item| {
+            for (self.items.slice()) |item| {
                 item.widget.reset();
             }
         }

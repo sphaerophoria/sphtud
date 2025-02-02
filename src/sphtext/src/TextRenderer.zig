@@ -3,7 +3,10 @@ const Allocator = std.mem.Allocator;
 const GlyphAtlas = @import("GlyphAtlas.zig");
 const sphmath = @import("sphmath");
 const ttf_mod = @import("ttf.zig");
+const sphalloc = @import("sphalloc");
+const ScratchAlloc = sphalloc.ScratchAlloc;
 const sphrender = @import("sphrender");
+const GlAlloc = sphrender.GlAlloc;
 
 const ShaderProgram = sphrender.xyuvt_program.Program(TextUniforms);
 pub const Buffer = sphrender.xyuvt_program.Buffer;
@@ -24,17 +27,13 @@ pub const TextLayout = struct {
         .max_y = 0,
     };
 
-    const GlyphLoc = struct {
+    pub const GlyphLoc = struct {
         char: u8,
         pixel_x1: i32,
         pixel_x2: i32,
         pixel_y1: i32,
         pixel_y2: i32,
     };
-
-    pub fn deinit(self: TextLayout, alloc: Allocator) void {
-        alloc.free(self.glyphs);
-    }
 
     pub fn width(self: TextLayout) u32 {
         return @intCast(self.max_x - self.min_x);
@@ -51,12 +50,9 @@ pub const TextLayout = struct {
     max_y: i32,
 };
 
-pub fn init(alloc: Allocator, point_size: f32) !TextRenderer {
-    const program = try ShaderProgram.init(text_fragment_shader);
-    errdefer program.deinit();
-
-    const glyph_atlas = try GlyphAtlas.init();
-    errdefer glyph_atlas.deinit(alloc);
+pub fn init(gpa: Allocator, gl_alloc: *GlAlloc, point_size: f32) !TextRenderer {
+    const program = try ShaderProgram.init(gl_alloc, text_fragment_shader);
+    const glyph_atlas = try GlyphAtlas.init(gpa, gl_alloc);
 
     return .{
         .program = program,
@@ -65,9 +61,8 @@ pub fn init(alloc: Allocator, point_size: f32) !TextRenderer {
     };
 }
 
-pub fn deinit(self: *TextRenderer, alloc: Allocator) void {
-    self.program.deinit();
-    self.glyph_atlas.deinit(alloc);
+pub fn resetAtlas(self: *TextRenderer) !void {
+    try self.glyph_atlas.reset();
 }
 
 const LayoutState = enum {
@@ -283,10 +278,14 @@ pub fn layoutText(self: *TextRenderer, alloc: Allocator, text: []const u8, ttf: 
 }
 
 test "layout text infinite loop" {
-    const alloc = std.testing.allocator;
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    const alloc = arena.allocator();
+
     const text = "bannister.jpgasdlfkjasdlkfjaslkdfjklasjf kl";
     var ttf = try ttf_mod.Ttf.init(alloc, @embedFile("res/Hack-Regular.ttf"));
-    defer ttf.deinit(alloc);
+
     const point_size = 11;
     const wrap_width_px = 284;
 
@@ -301,21 +300,21 @@ test "layout text infinite loop" {
     }
 }
 
-pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, ttf: ttf_mod.Ttf, distance_field_generator: sphrender.DistanceFieldGenerator) !Buffer {
+pub fn updateTextBuffer(self: *TextRenderer, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc, text: TextLayout, ttf: ttf_mod.Ttf, distance_field_generator: sphrender.DistanceFieldGenerator, buffer: *Buffer) !void {
+    const checkpoint = scratch_alloc.checkpoint();
+    defer scratch_alloc.restore(checkpoint);
+
     const num_points_per_plane = 6;
     const Vertex = sphrender.xyuvt_program.Vertex;
-    const new_buffer_data = try alloc.alloc(Vertex, text.glyphs.len * num_points_per_plane);
-    defer alloc.free(new_buffer_data);
-
-    var arena = std.heap.ArenaAllocator.init(alloc);
-    defer arena.deinit();
+    const new_buffer_data = try scratch_alloc.allocator().alloc(Vertex, text.glyphs.len * num_points_per_plane);
 
     var buffer_idx: usize = 0;
+    const loop_checkpoint = scratch_alloc.checkpoint();
     for (text.glyphs) |glyph| {
-        _ = arena.reset(.retain_capacity);
+        scratch_alloc.restore(loop_checkpoint);
         defer buffer_idx += num_points_per_plane;
 
-        const uv_loc = try self.glyph_atlas.getGlyphLocation(alloc, arena.allocator(), glyph.char, self.point_size, ttf, distance_field_generator);
+        const uv_loc = try self.glyph_atlas.getGlyphLocation(scratch_alloc, scratch_gl, glyph.char, self.point_size, ttf, distance_field_generator);
 
         // [0, width] -> [-1, 1]
         const clip_x_start = pixToClip(@intCast(glyph.pixel_x1 - text.min_x), text.width());
@@ -354,10 +353,7 @@ pub fn makeTextBuffer(self: *TextRenderer, alloc: Allocator, text: TextLayout, t
         new_buffer_data[buffer_idx + 5] = tr;
     }
 
-    var buf = self.program.makeFullScreenPlane();
-    buf.updateBuffer(new_buffer_data);
-
-    return buf;
+    buffer.updateBuffer(new_buffer_data);
 }
 
 pub fn render(self: TextRenderer, buf: Buffer, transform: sphmath.Transform) void {

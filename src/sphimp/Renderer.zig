@@ -11,6 +11,7 @@ const gl = sphrender.gl;
 const ShaderProgram = sphrender.shader_program.Program;
 const PlaneProgram = sphrender.xyuvt_program.Program;
 const PlaneBuffer = sphrender.xyuvt_program.Buffer;
+const GlAlloc = sphrender.GlAlloc;
 
 pub const ResolvedUniformValue = sphrender.ResolvedUniformValue;
 pub const UniformType = sphrender.UniformType;
@@ -56,75 +57,51 @@ fn glDebugCallback(source: gl.GLenum, typ: gl.GLenum, id: gl.GLuint, severity: g
     }
 }
 
-pub fn init() !Renderer {
+pub fn init(gl_alloc: *GlAlloc) !Renderer {
     gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA);
     gl.glEnable(gl.GL_BLEND);
 
     gl.glDebugMessageCallback(glDebugCallback, null);
 
-    const sampler_program = try PlaneProgram(sphrender.xyuvt_program.ImageSamplerUniforms).init(sphrender.xyuvt_program.image_sampler_frag);
-    errdefer sampler_program.deinit();
+    const sampler_program = try PlaneProgram(sphrender.xyuvt_program.ImageSamplerUniforms).init(gl_alloc, sphrender.xyuvt_program.image_sampler_frag);
 
-    const background_program = try PlaneProgram(BackgroundUniforms).init(checkerboard_fragment_shader);
-    errdefer background_program.deinit();
+    const background_program = try PlaneProgram(BackgroundUniforms).init(gl_alloc, checkerboard_fragment_shader);
 
-    const background_buffer = background_program.makeFullScreenPlane();
-    errdefer background_buffer.deinit();
+    const background_buffer = try background_program.makeFullScreenPlane(gl_alloc);
 
-    const path_program = try PathRenderProgram.init();
-    errdefer path_program.deinit();
+    const path_program = try PathRenderProgram.init(gl_alloc);
 
-    const distance_field_generator = try sphrender.DistanceFieldGenerator.init();
-    errdefer distance_field_generator.deinit();
+    const distance_field_generator = try sphrender.DistanceFieldGenerator.init(gl_alloc);
 
-    const comp_id_program = try PlaneProgram(IdUniforms).init(comp_id_frag);
-    errdefer comp_id_program.deinit();
+    const comp_id_program = try PlaneProgram(IdUniforms).init(gl_alloc, comp_id_frag);
 
-    const comp_id_buffer = comp_id_program.makeFullScreenPlane();
-    errdefer comp_id_buffer.deinit();
+    const comp_id_buffer = try comp_id_program.makeFullScreenPlane(gl_alloc);
 
-    const display_id_prog = try PlaneProgram(DisplayIdUniforms).init(display_id_frag);
-    errdefer display_id_prog.deinit();
+    const display_id_prog = try PlaneProgram(DisplayIdUniforms).init(gl_alloc, display_id_frag);
 
     return .{
         .sampler_program = sampler_program,
-        .sampler_buffer = sampler_program.makeFullScreenPlane(),
+        .sampler_buffer = try sampler_program.makeFullScreenPlane(gl_alloc),
         .background_program = background_program,
         .background_buffer = background_buffer,
         .path_program = path_program,
         .comp_id_program = comp_id_program,
         .comp_id_buffer = comp_id_buffer,
         .display_id_program = display_id_prog,
-        .display_id_buffer = display_id_prog.makeFullScreenPlane(),
+        .display_id_buffer = try display_id_prog.makeFullScreenPlane(gl_alloc),
         .distance_field_generator = distance_field_generator,
     };
 }
 
-pub fn deinit(self: *Renderer) void {
-    self.sampler_program.deinit();
-    self.sampler_buffer.deinit();
-    self.background_program.deinit();
-    self.background_buffer.deinit();
-    self.path_program.deinit();
-    self.distance_field_generator.deinit();
-    self.comp_id_program.deinit();
-    self.comp_id_buffer.deinit();
-    self.display_id_program.deinit();
-    self.display_id_buffer.deinit();
-}
-
 pub const FrameRenderer = struct {
     alloc: Allocator,
+    gl_alloc: *GlAlloc,
     renderer: *Renderer,
     objects: *Objects,
     shaders: *const ShaderStorage(ShaderId),
     brushes: *const ShaderStorage(BrushId),
     texture_cache: TextureCache,
     mouse_pos: sphmath.Vec2,
-
-    pub fn deinit(self: *FrameRenderer) void {
-        self.texture_cache.deinit();
-    }
 
     pub fn render(self: *FrameRenderer, selected_object: ObjectId, transform: Transform) !void {
         gl.glClearColor(0.0, 0.0, 0.0, 1.0);
@@ -162,8 +139,7 @@ pub const FrameRenderer = struct {
         const composition_object_dims = composition_obj.dims(self.objects);
         const composition_object_aspect = sphmath.calcAspect(composition_object_dims[0], composition_object_dims[1]);
 
-        const output_tex = sphrender.makeTextureOfSize(size, size, .ri32);
-        errdefer output_tex.deinit();
+        const output_tex = try sphrender.makeTextureOfSize(self.gl_alloc, size, size, .ri32);
 
         const render_context = try FramebufferRenderContext.init(output_tex, null);
         defer render_context.reset();
@@ -231,7 +207,6 @@ pub const FrameRenderer = struct {
                 if (c.debug_masks) {
                     // Res?
                     const output_tex = try self.renderCompositionIdMask(object, 50, self.mouse_pos);
-                    defer output_tex.deinit();
 
                     const preview_scale = 0.2;
 
@@ -305,9 +280,7 @@ pub const FrameRenderer = struct {
                 }
             },
             .text => |t| {
-                if (t.buffer) |b| {
-                    t.renderer.render(b, transform);
-                }
+                t.renderer.render(t.buffer, transform);
             },
         }
     }
@@ -315,8 +288,7 @@ pub const FrameRenderer = struct {
     pub fn renderObjectToTexture(self: *FrameRenderer, input: Object) anyerror!Texture {
         const dep_width, const dep_height = input.dims(self.objects);
 
-        const texture = sphrender.makeTextureOfSize(@intCast(dep_width), @intCast(dep_height), .rgbaf32);
-        errdefer texture.deinit();
+        const texture = try sphrender.makeTextureOfSize(self.gl_alloc, @intCast(dep_width), @intCast(dep_height), .rgbaf32);
 
         const render_context = try FramebufferRenderContext.init(texture, null);
         defer render_context.reset();
@@ -359,9 +331,10 @@ pub const FrameRenderer = struct {
     }
 };
 
-pub fn makeFrameRenderer(self: *Renderer, alloc: Allocator, objects: *Objects, shaders: *const ShaderStorage(ShaderId), brushes: *const ShaderStorage(BrushId), mouse_pos: sphmath.Vec2) FrameRenderer {
+pub fn makeFrameRenderer(self: *Renderer, alloc: Allocator, gl_alloc: *GlAlloc, objects: *Objects, shaders: *const ShaderStorage(ShaderId), brushes: *const ShaderStorage(BrushId), mouse_pos: sphmath.Vec2) FrameRenderer {
     return .{
         .alloc = alloc,
+        .gl_alloc = gl_alloc,
         .renderer = self,
         .objects = objects,
         .shaders = shaders,
@@ -418,15 +391,6 @@ const TextureCache = struct {
         };
     }
 
-    fn deinit(self: *TextureCache) void {
-        var texture_it = self.inner.valueIterator();
-        while (texture_it.next()) |t| {
-            t.deinit();
-        }
-
-        self.inner.deinit();
-    }
-
     fn get(self: *TextureCache, id: ObjectId) ?Texture {
         const object = self.objects.get(id);
 
@@ -448,14 +412,9 @@ pub const PathRenderBuffer = struct {
     vertex_array: gl.GLuint,
     vertex_buffer: gl.GLuint,
 
-    fn init(vpos_location: gl.GLuint) PathRenderBuffer {
-        var vertex_buffer: gl.GLuint = 0;
-        gl.glCreateBuffers(1, &vertex_buffer);
-        errdefer gl.glDeleteBuffers(1, &vertex_buffer);
-
-        var vertex_array: gl.GLuint = 0;
-        gl.glCreateVertexArrays(1, &vertex_array);
-        errdefer gl.glDeleteVertexArrays(1, &vertex_array);
+    fn init(gl_alloc: *GlAlloc, vpos_location: gl.GLuint) !PathRenderBuffer {
+        const vertex_buffer = try gl_alloc.createBuffer();
+        const vertex_array = try gl_alloc.createArray();
 
         gl.glVertexArrayVertexBuffer(vertex_array, 0, vertex_buffer, 0, 8);
 
@@ -466,11 +425,6 @@ pub const PathRenderBuffer = struct {
             .vertex_array = vertex_array,
             .vertex_buffer = vertex_buffer,
         };
-    }
-
-    pub fn deinit(self: PathRenderBuffer) void {
-        gl.glDeleteBuffers(1, &self.vertex_buffer);
-        gl.glDeleteVertexArrays(1, &self.vertex_array);
     }
 
     pub fn setData(self: PathRenderBuffer, points: []const sphmath.Vec2) void {
@@ -487,9 +441,8 @@ pub const PathRenderProgram = struct {
     vpos_location: gl.GLuint,
     transform_location: gl.GLint,
 
-    fn init() !PathRenderProgram {
-        const program = try sphrender.compileLinkProgram(path_vertex_shader, path_fragment_shader);
-        errdefer gl.glDeleteProgram(program);
+    fn init(gl_alloc: *GlAlloc) !PathRenderProgram {
+        const program = try sphrender.compileLinkProgram(gl_alloc, path_vertex_shader, path_fragment_shader);
 
         const vpos_location: gl.GLuint = @intCast(gl.glGetAttribLocation(program, "vPos"));
         const transform_location = gl.glGetUniformLocation(program, "transform");
@@ -501,12 +454,11 @@ pub const PathRenderProgram = struct {
         };
     }
 
-    fn deinit(self: PathRenderProgram) void {
-        gl.glDeleteProgram(self.program);
-    }
-
-    pub fn makeBuffer(self: PathRenderProgram) PathRenderBuffer {
-        return PathRenderBuffer.init(self.vpos_location);
+    pub fn makeBuffer(
+        self: PathRenderProgram,
+        gl_alloc: *GlAlloc,
+    ) !PathRenderBuffer {
+        return try PathRenderBuffer.init(gl_alloc, self.vpos_location);
     }
 
     fn render(self: PathRenderProgram, render_buffer: PathRenderBuffer, transform: Transform, num_points: usize) void {

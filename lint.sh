@@ -16,6 +16,15 @@ pushd src/gui/
 zig build test
 popd
 
+pushd src/sphutil/
+zig build test
+popd
+
+pushd src/sphalloc/
+zig build test
+popd
+
+
 zig build test
 zig build
 

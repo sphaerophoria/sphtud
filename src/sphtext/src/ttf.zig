@@ -171,14 +171,6 @@ pub const CmapTable = struct {
         id_range_offset: []const u16,
         glyph_indices: []const u16,
 
-        pub fn deinit(self: *SubtableFormat4, alloc: Allocator) void {
-            alloc.free(self.end_code);
-            alloc.free(self.start_code);
-            alloc.free(self.id_delta);
-            alloc.free(self.id_range_offset);
-            alloc.free(self.glyph_indices);
-        }
-
         fn getGlyphIndex(self: SubtableFormat4, c: u16) u16 {
             // This won't make sense if you don't read the spec...
             var i: usize = 0;
@@ -244,21 +236,11 @@ pub const CmapTable = struct {
         const range_shift = runtime_parser.readVal(u16);
 
         const end_code: []const u16 = try runtime_parser.readArray(u16, alloc, seg_count_x2 / 2);
-        errdefer alloc.free(end_code);
-
         const reserved_pad = runtime_parser.readVal(u16);
-
         const start_code: []const u16 = try runtime_parser.readArray(u16, alloc, seg_count_x2 / 2);
-        errdefer alloc.free(start_code);
-
         const id_delta: []const u16 = try runtime_parser.readArray(u16, alloc, seg_count_x2 / 2);
-        errdefer alloc.free(id_delta);
-
         const id_range_offset: []const u16 = try runtime_parser.readArray(u16, alloc, seg_count_x2 / 2);
-        errdefer alloc.free(id_range_offset);
-
         const glyph_indices: []const u16 = try runtime_parser.readArray(u16, alloc, (runtime_parser.data.len - runtime_parser.idx) / 2);
-        errdefer alloc.free(glyph_indices);
 
         return .{
             .format = format,
@@ -357,14 +339,6 @@ pub const GlyphTable = struct {
         flags: []SimpleGlyphFlag,
         x_coordinates: []i16,
         y_coordinates: []i16,
-
-        pub fn deinit(self: *SimpleGlyph, alloc: Allocator) void {
-            alloc.free(self.end_pts_of_contours);
-            alloc.free(self.instructions);
-            alloc.free(self.flags);
-            alloc.free(self.x_coordinates);
-            alloc.free(self.y_coordinates);
-        }
     };
 
     fn getGlyphCommon(self: GlyphTable, start: usize) GlyphCommon {
@@ -376,17 +350,10 @@ pub const GlyphTable = struct {
         const common = runtime_parser.readVal(GlyphCommon);
 
         const end_pts_of_contours = try runtime_parser.readArray(u16, alloc, @intCast(common.number_of_contours));
-        errdefer alloc.free(end_pts_of_contours);
-
         const instruction_length = runtime_parser.readVal(u16);
-
         const instructions = try runtime_parser.readArray(u8, alloc, instruction_length);
-        errdefer alloc.free(instructions);
-
         const num_contours = end_pts_of_contours[end_pts_of_contours.len - 1] + 1;
-
         const flags = try alloc.alloc(SimpleGlyphFlag, num_contours);
-        errdefer alloc.free(flags);
 
         var i: usize = 0;
         while (i < num_contours) {
@@ -405,7 +372,6 @@ pub const GlyphTable = struct {
         }
 
         const x_coords = try alloc.alloc(i16, num_contours);
-        errdefer alloc.free(x_coords);
         for (flags, 0..) |flag, idx| {
             const parse_variant = GlyphParseVariant.fromBools(flag.x_short_vector, flag.x_is_same_or_positive_x_short_vector);
             switch (parse_variant) {
@@ -417,7 +383,6 @@ pub const GlyphTable = struct {
         }
 
         const y_coords = try alloc.alloc(i16, num_contours);
-        errdefer alloc.free(y_coords);
         for (flags, 0..) |flag, idx| {
             const parse_variant = GlyphParseVariant.fromBools(flag.y_short_vector, flag.y_is_same_or_positive_y_short_vector);
             switch (parse_variant) {
@@ -522,11 +487,6 @@ pub const Ttf = struct {
             .hhea = hhea orelse return error.NoHhea,
             .hmtx = hmtx orelse return error.NoHmtx,
         };
-    }
-
-    pub fn deinit(self: *Ttf, alloc: Allocator) void {
-        alloc.free(self.loca);
-        self.cmap_subtable.deinit(alloc);
     }
 };
 
@@ -1303,10 +1263,6 @@ const Canvas = struct {
         };
     }
 
-    pub fn deinit(self: *Canvas, alloc: Allocator) void {
-        alloc.free(self.pixels);
-    }
-
     pub fn iWidth(self: Canvas) i64 {
         return @intCast(self.width);
     }
@@ -1348,7 +1304,6 @@ pub fn renderGlyphAt1PxPerFunit(alloc: Allocator, glyph: GlyphTable.SimpleGlyph)
     }
 
     var canvas = try Canvas.init(alloc, ((total_bbox.width() + 7) / 8) * 8, total_bbox.height());
-    errdefer canvas.deinit(alloc);
 
     @memset(canvas.pixels, 0);
 

@@ -14,6 +14,15 @@ const shader_storage = @import("shader_storage.zig");
 const stbiw = @cImport({
     @cInclude("stb_image_write.h");
 });
+const sphrender = @import("sphrender");
+const sphutil = @import("sphutil");
+const memory_limits = @import("memory_limits.zig");
+const RuntimeBoundedArray = sphutil.RuntimeBoundedArray;
+const RenderAlloc = sphrender.RenderAlloc;
+const GlAlloc = sphrender.GlAlloc;
+const sphalloc = @import("sphalloc");
+const ScratchAlloc = sphalloc.ScratchAlloc;
+const Sphalloc = sphalloc.Sphalloc;
 
 const Object = obj_mod.Object;
 const ObjectId = obj_mod.ObjectId;
@@ -30,38 +39,44 @@ const BrushId = shader_storage.BrushId;
 
 const App = @This();
 
-alloc: Allocator,
-objects: Objects = .{},
+alloc: RenderAlloc,
+scratch: Scratch,
+objects: Objects,
 shaders: ShaderStorage(ShaderId),
 brushes: ShaderStorage(BrushId),
 fonts: FontStorage,
 renderer: Renderer,
 view_state: ViewState,
 input_state: InputState = .{},
+io_alloc: *Sphalloc,
 io_thread: *IoThread,
 io_thread_handle: std.Thread,
 
 mul_fragment_shader: ShaderId,
 
-pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
-    var objects = Objects{};
-    errdefer objects.deinit(alloc);
+const shader_alloc_name = "shaders";
+const brush_alloc_name = "brushes";
 
-    var renderer = try Renderer.init();
-    errdefer renderer.deinit();
+pub fn init(alloc: RenderAlloc, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc, window_width: usize, window_height: usize) !App {
+    const objects = Objects.init(try alloc.makeSubAlloc("object storage"));
 
-    var shaders = ShaderStorage(ShaderId){};
-    errdefer shaders.deinit(alloc);
+    const renderer = try Renderer.init(alloc.gl);
 
-    const mul_fragment_shader_id = try shaders.addShader(alloc, "mask_mul", Renderer.mul_fragment_shader);
+    var shaders = try ShaderStorage(ShaderId).init(
+        try alloc.makeSubAlloc(shader_alloc_name),
+    );
 
-    var brushes = ShaderStorage(BrushId){};
-    errdefer brushes.deinit(alloc);
+    const mul_fragment_shader_id = try shaders.addShader("mask_mul", Renderer.mul_fragment_shader, scratch_alloc);
 
-    var fonts = FontStorage{};
-    errdefer fonts.deinit(alloc);
+    const brushes = try ShaderStorage(BrushId).init(
+        try alloc.makeSubAlloc(brush_alloc_name),
+    );
 
-    const io_thread = try alloc.create(IoThread);
+    const fonts = try FontStorage.init(try alloc.heap.makeSubAlloc("fonts"));
+
+    const io_alloc = try alloc.heap.makeSubAlloc("io");
+
+    const io_thread = try alloc.heap.arena().create(IoThread);
     io_thread.* = .{};
 
     const io_thread_handle = try std.Thread.spawn(.{}, IoThread.run, .{io_thread});
@@ -72,6 +87,10 @@ pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
 
     return .{
         .alloc = alloc,
+        .scratch = .{
+            .heap = scratch_alloc,
+            .gl = scratch_gl,
+        },
         .objects = objects,
         .shaders = shaders,
         .brushes = brushes,
@@ -82,6 +101,7 @@ pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
             .window_height = window_height,
         },
         .mul_fragment_shader = mul_fragment_shader_id,
+        .io_alloc = io_alloc,
         .io_thread = io_thread,
         .io_thread_handle = io_thread_handle,
     };
@@ -90,25 +110,18 @@ pub fn init(alloc: Allocator, window_width: usize, window_height: usize) !App {
 pub fn deinit(self: *App) void {
     self.io_thread.shutdown();
     self.io_thread_handle.join();
-    self.alloc.destroy(self.io_thread);
-
-    self.objects.deinit(self.alloc);
-    self.renderer.deinit();
-    self.shaders.deinit(self.alloc);
-    self.brushes.deinit(self.alloc);
-    self.fonts.deinit(self.alloc);
 }
 
 pub fn save(self: *App, path: []const u8) !void {
-    var arena = std.heap.ArenaAllocator.init(self.alloc);
-    defer arena.deinit();
+    const checkpoint = self.scratch.heap.checkpoint();
+    defer self.scratch.heap.restore(checkpoint);
 
-    const arena_alloc = arena.allocator();
+    const alloc = self.scratch.heap.allocator();
 
-    const object_saves = try self.objects.saveLeaky(arena_alloc);
-    const shader_saves = try self.shaders.save(arena_alloc);
-    const brush_saves = try self.brushes.save(arena_alloc);
-    const font_saves = try self.fonts.saveLeaky(arena_alloc);
+    const object_saves = try self.objects.saveLeaky(alloc);
+    const shader_saves = try self.shaders.save(alloc);
+    const brush_saves = try self.brushes.save(alloc);
+    const font_saves = try self.fonts.saveLeaky(alloc);
 
     const out_f = try std.fs.cwd().createFile(path, .{});
     defer out_f.close();
@@ -126,23 +139,40 @@ pub fn save(self: *App, path: []const u8) !void {
 }
 
 pub fn exportImage(self: *App, path: [:0]const u8) !void {
+    {
+        self.io_thread.mutex.lock();
+        defer self.io_thread.mutex.unlock();
+        if (self.io_thread.protected.save_request != null) return;
+    }
+
     const dims = self.selectedDims();
 
-    var fr = self.renderer.makeFrameRenderer(self.alloc, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
-    defer fr.deinit();
+    // All allocations are freed in App.step() if the save request is complete.
+    // This allows us to have an allocator that is only accessed from this
+    // thread, but doesn't hold memory forever
+    const alloc = self.io_alloc.arena();
+
+    const checkpoint = self.scratch.checkpoint();
+    defer self.scratch.restore(checkpoint);
+
+    var fr = self.renderer.makeFrameRenderer(
+        self.scratch.heap.allocator(),
+        self.scratch.gl,
+        &self.objects,
+        &self.shaders,
+        &self.brushes,
+        self.input_state.mouse_pos,
+    );
 
     const texture = try fr.renderObjectToTexture(self.selectedObject().*);
 
-    const out_buf = try self.alloc.alloc(u8, dims[0] * dims[1] * 4);
-    errdefer self.alloc.free(out_buf);
+    const out_buf = try alloc.alloc(u8, dims[0] * dims[1] * 4);
 
     gl.glGetTextureImage(texture.inner, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, @intCast(out_buf.len), out_buf.ptr);
 
-    const duped_path = try self.alloc.dupeZ(u8, path);
-    errdefer self.alloc.free(duped_path);
+    const duped_path = try alloc.dupeZ(u8, path);
 
     self.io_thread.requestSave(.{
-        .alloc = self.alloc,
         .data = out_buf,
         .width = @intCast(dims[0]),
         .height = @intCast(dims[1]),
@@ -151,43 +181,68 @@ pub fn exportImage(self: *App, path: [:0]const u8) !void {
     });
 }
 
+pub fn step(self: *App) !void {
+    self.io_thread.mutex.lock();
+    defer self.io_thread.mutex.unlock();
+
+    if (self.io_thread.protected.save_request) |req| {
+        if (req.finished) {
+            self.io_thread.protected.save_request = null;
+            try self.io_alloc.reset();
+        }
+    }
+}
+
 pub fn load(self: *App, path: []const u8) !void {
     const in_f = try std.fs.cwd().openFile(path, .{});
     defer in_f.close();
 
-    var json_reader = std.json.reader(self.alloc, in_f.reader());
-    defer json_reader.deinit();
+    const checkpoint = self.scratch.checkpoint();
+    defer self.scratch.restore(checkpoint);
 
-    const parsed = try std.json.parseFromTokenSource(SaveData, self.alloc, &json_reader, .{});
-    defer parsed.deinit();
+    const scratch = self.scratch.heap.allocator();
 
-    var new_shaders = ShaderStorage(ShaderId){};
+    var json_reader = std.json.reader(scratch, in_f.reader());
+
+    const parsed = try std.json.parseFromTokenSourceLeaky(SaveData, scratch, &json_reader, .{});
+
+    var new_shaders = try ShaderStorage(ShaderId).init(
+        try self.alloc.makeSubAlloc(shader_alloc_name),
+    );
     // Note that shaders gets swapped in and is freed by this defer
-    defer new_shaders.deinit(self.alloc);
+    defer new_shaders.alloc.deinit();
 
-    for (parsed.value.shaders) |saved_shader| {
-        _ = try new_shaders.addShader(self.alloc, saved_shader.name, saved_shader.fs_source);
+    for (parsed.shaders) |saved_shader| {
+        _ = try new_shaders.addShader(saved_shader.name, saved_shader.fs_source, self.scratch.heap);
     }
 
-    var new_brushes = ShaderStorage(BrushId){};
+    var new_brushes = try ShaderStorage(BrushId).init(
+        try self.alloc.makeSubAlloc(brush_alloc_name),
+    );
     // Note that shaders gets swapped in and is freed by this defer
-    defer new_brushes.deinit(self.alloc);
+    defer new_brushes.alloc.deinit();
 
-    for (parsed.value.brushes) |saved_brush| {
-        _ = try new_brushes.addShader(self.alloc, saved_brush.name, saved_brush.fs_source);
+    for (parsed.brushes) |saved_brush| {
+        _ = try new_brushes.addShader(saved_brush.name, saved_brush.fs_source, self.scratch.heap);
     }
 
-    var new_fonts = FontStorage{};
+    var new_fonts = try FontStorage.init(try self.alloc.heap.makeSubAlloc("fonts"));
     // Note that shaders gets swapped in and is freed by this defer
-    defer new_fonts.deinit(self.alloc);
+    defer new_fonts.alloc.deinit();
 
-    for (parsed.value.fonts) |p| {
-        _ = try loadFontIntoStorage(self.alloc, p, &new_fonts);
+    for (parsed.fonts) |p| {
+        _ = try loadFontIntoStorage(self.scratch.heap, p, &new_fonts);
     }
 
-    var new_objects = try Objects.load(self.alloc, parsed.value.objects, new_shaders, new_brushes, self.renderer.path_program);
+    var new_objects = try Objects.load(
+        try self.alloc.makeSubAlloc("object storage"),
+        parsed.objects,
+        new_shaders,
+        new_brushes,
+        self.renderer.path_program,
+    );
     // Note that objects gets swapped in and is freed by this defer
-    defer new_objects.deinit(self.alloc);
+    defer new_objects.alloc.deinit();
 
     // Swap objects so the old ones get deinited
     std.mem.swap(ShaderStorage(ShaderId), &new_shaders, &self.shaders);
@@ -216,29 +271,32 @@ pub fn load(self: *App, path: []const u8) !void {
 }
 
 pub fn render(self: *App) !void {
+    const checkpoint = self.scratch.checkpoint();
+    defer self.scratch.restore(checkpoint);
     var frame_renderer = self.renderer.makeFrameRenderer(
-        self.alloc,
+        self.scratch.heap.allocator(),
+        self.scratch.gl,
         &self.objects,
         &self.shaders,
         &self.brushes,
         self.input_state.mouse_pos,
     );
-    defer frame_renderer.deinit();
 
     try frame_renderer.render(self.input_state.selected_object, self.view_state.objectToClipTransform(self.selectedDims()));
 }
 
 pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {
-    var fr = self.renderer.makeFrameRenderer(self.alloc, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
-    defer fr.deinit();
+    const checkpoint = self.scratch.checkpoint();
+    defer self.scratch.restore(checkpoint);
+
+    var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
 
     const action = try self.input_state.setKeyDown(key, ctrl, &self.objects, &fr);
     try self.handleInputAction(action);
 }
 
 pub fn setMouseDown(self: *App) !void {
-    var fr = self.renderer.makeFrameRenderer(self.alloc, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
-    defer fr.deinit();
+    var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
 
     const action = try self.input_state.setMouseDown(&self.objects, &fr);
     try self.handleInputAction(action);
@@ -287,55 +345,85 @@ pub fn createPath(self: *App) !ObjectId {
     };
 
     const path_id = self.objects.nextId();
-    const path_obj = try obj_mod.PathObject.init(
-        self.alloc,
-        initial_positions,
-        self.input_state.selected_object,
-        self.renderer.path_program.makeBuffer(),
-    );
-    try self.objects.append(self.alloc, .{
-        .name = try self.alloc.dupe(u8, "new path"),
-        .data = .{
-            .path = path_obj,
-        },
-    });
+    {
+        const obj_alloc = try self.objects.alloc.makeSubAlloc(obj_mod.getAllocName(.path));
+        errdefer obj_alloc.deinit();
 
-    const selected_dims = self.objects.get(self.input_state.selected_object).dims(&self.objects);
+        const path_obj = try obj_mod.PathObject.init(
+            obj_alloc.heap.general(),
+            initial_positions,
+            self.input_state.selected_object,
+            try self.renderer.path_program.makeBuffer(obj_alloc.gl),
+        );
+
+        try self.objects.append(.{
+            .alloc = obj_alloc,
+            .name = try obj_alloc.heap.general().dupe(u8, "new path"),
+            .data = .{
+                .path = path_obj,
+            },
+        });
+    }
+
     const mask_id = self.objects.nextId();
-    try self.objects.append(self.alloc, .{
-        .name = try self.alloc.dupe(u8, "new mask"),
-        .data = .{
-            .generated_mask = try obj_mod.GeneratedMaskObject.generate(self.alloc, path_id, selected_dims[0], selected_dims[1], path_obj.points.items),
-        },
-    });
+    {
+        const selected_dims = self.objects.get(self.input_state.selected_object).dims(&self.objects);
 
-    var shader_obj = try obj_mod.ShaderObject.init(self.alloc, self.mul_fragment_shader, self.shaders, 0);
-    try shader_obj.setUniform(0, .{ .image = self.input_state.selected_object });
-    try shader_obj.setUniform(1, .{ .image = mask_id });
+        const obj_alloc = try self.objects.alloc.makeSubAlloc(obj_mod.getAllocName(.generated_mask));
+        errdefer obj_alloc.deinit();
 
-    try self.objects.append(self.alloc, .{
-        .name = try self.alloc.dupe(u8, "masked obj"),
-        .data = .{
-            .shader = shader_obj,
-        },
-    });
+        const mask_obj = try obj_mod.GeneratedMaskObject.generate(
+            self.scratch.heap,
+            obj_alloc.gl,
+            path_id,
+            selected_dims[0],
+            selected_dims[1],
+            initial_positions,
+        );
+
+        try self.objects.append(.{
+            .alloc = obj_alloc,
+            .name = try obj_alloc.heap.general().dupe(u8, "new mask"),
+            .data = .{
+                .generated_mask = mask_obj,
+            },
+        });
+    }
+
+    {
+        const obj_alloc = try self.objects.alloc.makeSubAlloc(obj_mod.getAllocName(.shader));
+        errdefer obj_alloc.deinit();
+
+        var shader_obj = try obj_mod.ShaderObject.init(obj_alloc.heap.general(), self.mul_fragment_shader, self.shaders, 0);
+        try shader_obj.setUniform(0, .{ .image = self.input_state.selected_object });
+        try shader_obj.setUniform(1, .{ .image = mask_id });
+        try self.objects.append(.{
+            .alloc = obj_alloc,
+            .name = try obj_alloc.heap.general().dupe(u8, "masked obj"),
+            .data = .{
+                .shader = shader_obj,
+            },
+        });
+    }
 
     return path_id;
 }
 
 pub fn updateSelectedObjectName(self: *App, name: []const u8) !void {
     const selected_object = self.selectedObject();
-    try selected_object.updateName(self.alloc, name);
+    try selected_object.updateName(name);
 }
 
 pub fn updateTextObjectContent(self: *App, text: []const u8) !void {
-    const text_obj = self.selectedObject().asText() orelse return error.NotText;
-    try text_obj.update(self.alloc, text, self.fonts, self.renderer.distance_field_generator);
+    const selected_obj = self.selectedObject();
+    const text_obj = selected_obj.asText() orelse return error.NotText;
+    try text_obj.update(selected_obj.alloc.heap.general(), self.scratch.heap, self.scratch.gl, text, self.fonts, self.renderer.distance_field_generator);
 }
 
 pub fn updateFontId(self: *App, id: FontStorage.FontId) !void {
-    const text_obj = self.selectedObject().asText() orelse return error.NotText;
-    try text_obj.updateFont(self.alloc, id, self.fonts, self.renderer.distance_field_generator);
+    const selected_obj = self.selectedObject();
+    const text_obj = selected_obj.asText() orelse return error.NotText;
+    try text_obj.updateFont(self.scratch.heap, self.scratch.gl, id, self.fonts, self.renderer.distance_field_generator);
 }
 
 pub fn updateFontSize(self: *App, requested_size: f32) !void {
@@ -347,8 +435,9 @@ pub fn updateFontSize(self: *App, requested_size: f32) !void {
     // We also don't error as UI will spam us with these requests. Heal and move on
     const size = @max(requested_size, 6.0);
 
-    const text_obj = self.selectedObject().asText() orelse return error.NotText;
-    try text_obj.updateFontSize(self.alloc, size, self.fonts, self.renderer.distance_field_generator);
+    const selected_obj = self.selectedObject();
+    const text_obj = selected_obj.asText() orelse return error.NotText;
+    try text_obj.updateFontSize(self.scratch.heap, self.scratch.gl, size, self.fonts, self.renderer.distance_field_generator);
 }
 
 pub fn deleteSelectedObject(self: *App) !void {
@@ -369,7 +458,7 @@ pub fn deleteSelectedObject(self: *App) !void {
 
     const next: ?ObjectId = object_ids.next();
 
-    self.objects.remove(self.alloc, self.input_state.selected_object);
+    self.objects.remove(self.input_state.selected_object);
 
     if (next) |v| {
         self.input_state.selectObject(v, &self.objects);
@@ -405,10 +494,10 @@ pub fn addToComposition(self: *App, id: obj_mod.ObjectId) !obj_mod.CompositionId
         return error.SelectedItemNotComposition;
     }
 
-    const new_idx = try selected_object.data.composition.addObj(self.alloc, id);
+    const new_idx = try selected_object.data.composition.addObj(selected_object.alloc.heap.general(), id);
     errdefer selected_object.data.composition.removeObj(new_idx);
 
-    try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
+    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), self.input_state.selected_object, &self.objects);
     return new_idx;
 }
 
@@ -430,13 +519,13 @@ pub fn toggleCompositionDebug(self: *App) !void {
 }
 
 pub fn addComposition(self: *App) !ObjectId {
+    const obj_alloc = try self.objects.alloc.makeSubAlloc(obj_mod.getAllocName(.composition));
+    errdefer obj_alloc.deinit();
+
     const id = self.objects.nextId();
-
-    const name = try self.alloc.dupe(u8, "composition");
-    errdefer self.alloc.free(name);
-
-    try self.objects.append(self.alloc, .{
-        .name = name,
+    try self.objects.append(.{
+        .alloc = obj_alloc,
+        .name = try obj_alloc.heap.general().dupe(u8, "composition"),
         .data = .{ .composition = obj_mod.CompositionObject{} },
     });
 
@@ -450,7 +539,7 @@ pub fn updatePathDisplayObj(self: *App, id: ObjectId) !void {
     path_data.display_object = id;
     errdefer path_data.display_object = prev;
 
-    try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
+    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), self.input_state.selected_object, &self.objects);
 }
 
 pub fn setShaderFloat(self: *App, uniform_idx: usize, float_idx: usize, val: f32) !void {
@@ -491,7 +580,7 @@ pub fn setShaderImage(self: *App, idx: usize, image: ObjectId) !void {
     bindings[idx] = .{ .image = image };
     errdefer bindings[idx] = prev_val;
 
-    try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
+    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), self.input_state.selected_object, &self.objects);
 }
 
 pub fn setBrushDependency(self: *App, idx: usize, val: Renderer.UniformValue) !void {
@@ -505,30 +594,36 @@ pub fn setBrushDependency(self: *App, idx: usize, val: Renderer.UniformValue) !v
     try drawing_data.setUniform(idx, val);
     errdefer drawing_data.bindings[idx] = prev_val;
 
-    try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
+    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), self.input_state.selected_object, &self.objects);
 }
 
 pub fn setDrawingObjectBrush(self: *App, id: BrushId) !void {
-    const drawing_data = self.selectedObject().asDrawing() orelse return error.SelectedItemNotDrawing;
-    try drawing_data.updateBrush(self.alloc, id, self.brushes);
+    const selected_object = self.selectedObject();
+    const drawing_data = selected_object.asDrawing() orelse return error.SelectedItemNotDrawing;
+    try drawing_data.updateBrush(selected_object.alloc.heap.general(), id, self.brushes);
 }
 
 pub fn addDrawing(self: *App) !ObjectId {
     const id = self.objects.nextId();
 
-    const name = try self.alloc.dupe(u8, "drawing");
-    errdefer self.alloc.free(name);
+    const obj_alloc = try self.objects.alloc.makeSubAlloc(obj_mod.getAllocName(.drawing));
+    errdefer obj_alloc.deinit();
 
     var brush_iter = self.brushes.idIter();
     const first_brush = brush_iter.next() orelse return error.NoBrushes;
-    try self.objects.append(self.alloc, .{
-        .name = name,
-        .data = .{ .drawing = try obj_mod.DrawingObject.init(
-            self.alloc,
-            self.input_state.selected_object,
-            first_brush,
-            self.brushes,
-        ) },
+
+    try self.objects.append(.{
+        .alloc = obj_alloc,
+        .name = try obj_alloc.heap.general().dupe(u8, "drawing"),
+        .data = .{
+            .drawing = try obj_mod.DrawingObject.init(
+                obj_alloc.heap.general(),
+                obj_alloc.gl,
+                self.input_state.selected_object,
+                first_brush,
+                self.brushes,
+            ),
+        },
     });
 
     return id;
@@ -537,16 +632,17 @@ pub fn addDrawing(self: *App) !ObjectId {
 pub fn addText(self: *App) !ObjectId {
     const id = self.objects.nextId();
 
-    const name = try self.alloc.dupe(u8, "text");
-    errdefer self.alloc.free(name);
+    const obj_alloc = try self.objects.alloc.makeSubAlloc(obj_mod.getAllocName(.text));
+    errdefer obj_alloc.deinit();
 
     var font_id_it = self.fonts.idIter();
     const font_id = font_id_it.next() orelse return error.NoFonts;
 
-    try self.objects.append(self.alloc, .{
-        .name = name,
+    try self.objects.append(.{
+        .alloc = obj_alloc,
+        .name = try obj_alloc.heap.general().dupe(u8, "text"),
         .data = .{
-            .text = try obj_mod.TextObject.init(self.alloc, font_id),
+            .text = try obj_mod.TextObject.init(obj_alloc.heap.general(), obj_alloc.gl, font_id),
         },
     });
 
@@ -568,22 +664,23 @@ pub fn updateDrawingDisplayObj(self: *App, id: ObjectId) !void {
     drawing_data.display_object = id;
     errdefer drawing_data.display_object = previous_id;
 
-    try dependency_loop.ensureNoDependencyLoops(self.alloc, self.input_state.selected_object, &self.objects);
+    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), self.input_state.selected_object, &self.objects);
 }
 
 pub fn loadImage(self: *App, path: [:0]const u8) !ObjectId {
+    const obj_alloc = try self.objects.alloc.makeSubAlloc(obj_mod.getAllocName(.filesystem));
+    errdefer obj_alloc.deinit();
+
+    const alloc = obj_alloc.heap.arena();
+
+    const fs = try obj_mod.FilesystemObject.load(alloc, obj_alloc.gl, path);
+
     const id = self.objects.nextId();
-
-    const obj = try obj_mod.FilesystemObject.load(self.alloc, path);
-    errdefer obj.deinit(self.alloc);
-
-    const name = try self.alloc.dupe(u8, path);
-    errdefer self.alloc.free(name);
-
-    try self.objects.append(self.alloc, .{
-        .name = name,
+    try self.objects.append(.{
+        .alloc = obj_alloc,
+        .name = try obj_alloc.heap.general().dupe(u8, path),
         .data = .{
-            .filesystem = obj,
+            .filesystem = fs,
         },
     });
 
@@ -591,74 +688,82 @@ pub fn loadImage(self: *App, path: [:0]const u8) !ObjectId {
 }
 
 pub fn loadShader(self: *App, path: [:0]const u8) !ShaderId {
+    const checkpoint = self.scratch.heap.checkpoint();
+    defer self.scratch.heap.restore(checkpoint);
+
     const f = try std.fs.cwd().openFile(path, .{});
     defer f.close();
 
-    const fragment_source = try f.readToEndAllocOptions(self.alloc, 1 << 20, null, 4, 0);
-    defer self.alloc.free(fragment_source);
+    const fragment_source = try f.readToEndAllocOptions(self.scratch.heap.allocator(), 1 << 20, null, 4, 0);
 
     return self.addShaderFromFragmentSource(path, fragment_source);
 }
 
 pub fn loadBrush(self: *App, path: [:0]const u8) !BrushId {
+    const checkpoint = self.scratch.heap.checkpoint();
+    defer self.scratch.heap.restore(checkpoint);
+
     const f = try std.fs.cwd().openFile(path, .{});
     defer f.close();
 
-    const fragment_source = try f.readToEndAllocOptions(self.alloc, 1 << 20, null, 4, 0);
-    defer self.alloc.free(fragment_source);
+    const fragment_source = try f.readToEndAllocOptions(self.scratch.heap.allocator(), 1 << 20, null, 4, 0);
 
-    return self.brushes.addShader(self.alloc, path, fragment_source);
+    return self.brushes.addShader(path, fragment_source, self.scratch.heap);
 }
 
 pub fn loadFont(self: *App, path: [:0]const u8) !FontStorage.FontId {
-    return loadFontIntoStorage(self.alloc, path, &self.fonts);
+    return loadFontIntoStorage(self.scratch.heap, path, &self.fonts);
 }
 
-fn loadFontIntoStorage(alloc: Allocator, path: []const u8, fonts: *FontStorage) !FontStorage.FontId {
+fn loadFontIntoStorage(scratch_alloc: *ScratchAlloc, path: []const u8, fonts: *FontStorage) !FontStorage.FontId {
+    const checkpoint = scratch_alloc.checkpoint();
+    defer scratch_alloc.restore(checkpoint);
+
+    // readToEndAlloc uses an ArrayList under the hood. No go for our arena.
+    // Instead read into scratch, then copy out
     const f = try std.fs.cwd().openFile(path, .{});
     defer f.close();
 
-    const ttf_data = try f.readToEndAlloc(alloc, 1 << 20);
-    errdefer alloc.free(ttf_data);
+    const font_alloc = try fonts.alloc.makeSubAlloc(obj_mod.getAllocName(.text));
+    errdefer font_alloc.deinit();
+
+    const alloc = font_alloc.arena();
+
+    const scratch_ttf_data = try f.readToEndAlloc(scratch_alloc.allocator(), 1 << 20);
+    const ttf_data = try alloc.dupe(u8, scratch_ttf_data);
 
     const path_duped = try alloc.dupeZ(u8, path);
-    errdefer alloc.free(path_duped);
-
-    var ttf = try ttf_mod.Ttf.init(alloc, ttf_data);
-    errdefer ttf.deinit(alloc);
-
-    return try fonts.append(alloc, ttf_data, path_duped, ttf);
+    const ttf = try ttf_mod.Ttf.init(alloc, ttf_data);
+    return try fonts.append(ttf_data, path_duped, ttf);
 }
 
 pub fn addShaderFromFragmentSource(self: *App, name: []const u8, fs_source: [:0]const u8) !ShaderId {
-    return try self.shaders.addShader(self.alloc, name, fs_source);
+    return try self.shaders.addShader(name, fs_source, self.scratch.heap);
 }
 
 pub fn addBrushFromFragmnetSource(self: *App, name: []const u8, fs_source: [:0]const u8) !BrushId {
-    return try self.brushes.addShader(self.alloc, name, fs_source);
+    return try self.brushes.addShader(name, fs_source, self.scratch.heap);
 }
 
 pub fn addShaderObject(self: *App, name: []const u8, shader_id: ShaderId) !ObjectId {
-    const object_id = self.objects.nextId();
+    const obj_alloc = try self.objects.alloc.makeSubAlloc(obj_mod.getAllocName(.shader));
+    errdefer obj_alloc.deinit();
 
-    const duped_name = try self.alloc.dupe(u8, name);
-    errdefer self.alloc.free(duped_name);
-
-    var obj = try obj_mod.ShaderObject.init(
-        self.alloc,
+    const shader_obj = try obj_mod.ShaderObject.init(
+        obj_alloc.heap.general(),
         shader_id,
         self.shaders,
         0,
     );
-    errdefer obj.deinit(self.alloc);
 
-    try self.objects.append(self.alloc, .{
-        .name = duped_name,
+    const object_id = self.objects.nextId();
+    try self.objects.append(.{
+        .alloc = obj_alloc,
+        .name = try obj_alloc.heap.general().dupe(u8, name),
         .data = .{
-            .shader = obj,
+            .shader = shader_obj,
         },
     });
-
     return object_id;
 }
 
@@ -1135,7 +1240,6 @@ const InputState = struct {
         const obj = objects.get(self.selected_object);
 
         const tex = try frame_renderer.renderCompositionIdMask(obj.*, 1, self.mouse_pos);
-        defer tex.deinit();
 
         const composition_idx = try tex.sample(u32, 0, 0);
 
@@ -1169,7 +1273,7 @@ fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
         .add_path_elem => |obj_loc| {
             const selected_object = self.selectedObject();
             if (selected_object.asPath()) |p| {
-                try p.addPoint(self.alloc, obj_loc);
+                try p.addPoint(selected_object.alloc.heap.general(), obj_loc);
                 try self.regeneratePathMasks(self.input_state.selected_object);
             }
         },
@@ -1192,13 +1296,13 @@ fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
         .add_draw_stroke => |pos| {
             const selected_object = self.selectedObject();
             if (selected_object.asDrawing()) |d| {
-                try d.addStroke(self.alloc, pos, &self.objects, self.renderer.distance_field_generator);
+                try d.addStroke(selected_object.alloc.heap.general(), self.scratch.heap, self.scratch.gl, pos, &self.objects, self.renderer.distance_field_generator);
             }
         },
         .add_stroke_sample => |pos| {
             const selected_object = self.selectedObject();
             if (selected_object.asDrawing()) |d| {
-                try d.addSample(self.alloc, pos, &self.objects, self.renderer.distance_field_generator);
+                try d.addSample(selected_object.alloc.heap.general(), self.scratch.heap, self.scratch.gl, pos, &self.objects, self.renderer.distance_field_generator);
             }
         },
         .save => {
@@ -1221,10 +1325,7 @@ fn regenerateMask(self: *App, mask: *obj_mod.GeneratedMaskObject) !void {
     };
 
     const width, const height = path_obj.dims(&self.objects);
-    var tmp = try obj_mod.GeneratedMaskObject.generate(self.alloc, mask.source, width, height, path.points.items);
-    defer tmp.deinit();
-
-    std.mem.swap(obj_mod.GeneratedMaskObject, mask, &tmp);
+    try mask.regenerate(self.scratch.heap, width, height, path.points.items);
 }
 
 fn regeneratePathMasks(self: *App, path_id: ObjectId) !void {
@@ -1247,7 +1348,7 @@ fn regenerateDistanceFields(self: *App) !void {
     while (obj_it.next()) |obj_id| {
         const obj = self.objects.get(obj_id);
         const drawing_obj = obj.asDrawing() orelse continue;
-        try drawing_obj.generateDistanceField(self.alloc, &self.objects, self.renderer.distance_field_generator);
+        try drawing_obj.generateDistanceField(self.scratch.heap, self.scratch.gl, &self.objects, self.renderer.distance_field_generator);
     }
 }
 
@@ -1256,7 +1357,7 @@ fn regenerateAllTextObjects(self: *App) !void {
     while (obj_it.next()) |obj_id| {
         const obj = self.objects.get(obj_id);
         const text_obj = obj.asText() orelse continue;
-        try text_obj.regenerate(self.alloc, self.fonts, self.renderer.distance_field_generator);
+        try text_obj.regenerate(self.scratch.heap, self.scratch.gl, self.fonts, self.renderer.distance_field_generator);
     }
 }
 
@@ -1275,17 +1376,12 @@ pub const SaveData = struct {
 };
 
 const SaveRequest = struct {
-    alloc: Allocator,
     data: []const u8,
     width: c_int,
     height: c_int,
     stride: c_int,
     path: [:0]const u8,
-
-    fn deinit(self: SaveRequest) void {
-        self.alloc.free(self.data);
-        self.alloc.free(self.path);
-    }
+    finished: bool = false,
 };
 
 const IoThread = struct {
@@ -1296,6 +1392,20 @@ const IoThread = struct {
     const Data = struct {
         save_request: ?SaveRequest = null,
         shutdown: bool = false,
+
+        fn needsAction(self: Data) bool {
+            if (self.shutdown) {
+                return true;
+            }
+
+            if (self.save_request) |req| {
+                if (!req.finished) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     };
 
     fn run(self: *IoThread) void {
@@ -1304,8 +1414,8 @@ const IoThread = struct {
             if (data.shutdown) {
                 break;
             }
+
             if (data.save_request) |*req| {
-                defer req.deinit();
                 stbiw.stbi_flip_vertically_on_write(1);
                 _ = stbiw.stbi_write_png(
                     req.path.ptr,
@@ -1315,6 +1425,10 @@ const IoThread = struct {
                     req.data.ptr,
                     req.stride,
                 );
+
+                self.mutex.lock();
+                defer self.mutex.unlock();
+                self.protected.save_request.?.finished = true;
             }
         }
     }
@@ -1331,9 +1445,8 @@ const IoThread = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        if (self.protected.save_request) |*v| {
-            v.deinit();
-        }
+        std.debug.assert(self.protected.save_request == null);
+
         self.protected.save_request = req;
         self.cv.signal();
     }
@@ -1343,16 +1456,33 @@ const IoThread = struct {
         defer self.mutex.unlock();
 
         while (true) {
-            var data: Data = .{
-                .save_request = null,
-                .shutdown = self.protected.shutdown,
-            };
-            std.mem.swap(Data, &self.protected, &data);
-            if (data.save_request != null or data.shutdown) {
-                return data;
+            if (self.protected.needsAction()) {
+                return self.protected;
             }
             self.cv.wait(&self.mutex);
         }
+    }
+};
+
+const Scratch = struct {
+    heap: *ScratchAlloc,
+    gl: *GlAlloc,
+
+    const Checkpoint = struct {
+        heap: ScratchAlloc.Checkpoint,
+        gl: GlAlloc.Checkpoint,
+    };
+
+    fn checkpoint(self: Scratch) Checkpoint {
+        return .{
+            .heap = self.heap.checkpoint(),
+            .gl = self.gl.checkpoint(),
+        };
+    }
+
+    fn restore(self: *Scratch, from: Checkpoint) void {
+        self.heap.restore(from.heap);
+        self.gl.restore(from.gl);
     }
 };
 

@@ -5,7 +5,6 @@ const Widget = gui.Widget;
 
 pub fn makeNull(comptime Action: type) Widget(Action) {
     const vtable = Widget(Action).VTable{
-        .deinit = nullDeinit,
         .render = nullRender,
         .getSize = nullSize,
         .update = null,
@@ -20,7 +19,6 @@ pub fn makeNull(comptime Action: type) Widget(Action) {
     };
 }
 
-fn nullDeinit(_: ?*anyopaque, _: Allocator) void {}
 fn nullRender(_: ?*anyopaque, _: gui.PixelBBox, _: gui.PixelBBox) void {}
 fn nullSize(_: ?*anyopaque) gui.PixelSize {
     return .{

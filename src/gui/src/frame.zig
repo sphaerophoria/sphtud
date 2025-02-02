@@ -39,7 +39,6 @@ pub fn Frame(comptime Action: type) type {
         shared: *const Shared,
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.deinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .update = Self.update,
@@ -49,12 +48,6 @@ pub fn Frame(comptime Action: type) type {
         };
 
         const Self = @This();
-
-        fn deinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            self.inner.deinit(alloc);
-            alloc.destroy(self);
-        }
 
         fn render(ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void {
             const self: *Self = @ptrCast(@alignCast(ctx));

@@ -24,29 +24,19 @@ pub const SharedState = struct {
     style: Style,
 };
 
-pub fn selectableList(comptime Action: type, alloc: Allocator, retriever: anytype, generator: anytype, shared: *const SharedState) !Widget(Action) {
+pub fn selectableList(comptime Action: type, alloc: gui.GuiAlloc, retriever: anytype, generator: anytype, shared: *const SharedState) !Widget(Action) {
     const S = SelectableList(Action, @TypeOf(retriever), @TypeOf(generator));
 
-    const ret = try alloc.create(S);
-    errdefer alloc.destroy(ret);
+    const ret = try alloc.heap.arena().create(S);
 
-    var item_labels = std.ArrayListUnmanaged(S.TextItem){};
-    errdefer freeTextItems(S.TextItem, alloc, &item_labels);
-
-    const num_items = retriever.numItems();
-    for (0..num_items) |i| {
-        const text = try gui_text.guiText(alloc, shared.gui_text_state, labelAdaptor(retriever, i));
-        errdefer text.deinit(alloc);
-
-        try item_labels.append(alloc, text);
-    }
+    const list_alloc = try alloc.makeSubAlloc("selectable_list_content");
 
     ret.* = .{
-        .alloc = alloc,
+        .list_alloc = list_alloc,
         .retriever = retriever,
         .parent_width = 0,
         .action_generator = generator,
-        .item_labels = item_labels,
+        .item_labels = &.{},
         .shared = shared,
     };
 
@@ -58,10 +48,11 @@ pub fn selectableList(comptime Action: type, alloc: Allocator, retriever: anytyp
 
 pub fn SelectableList(comptime Action: type, comptime Retriever: type, comptime GenerateSelect: type) type {
     return struct {
-        alloc: Allocator,
+        list_alloc: gui.GuiAlloc,
+
         retriever: Retriever,
         action_generator: GenerateSelect,
-        item_labels: std.ArrayListUnmanaged(TextItem),
+        item_labels: []TextItem,
         parent_width: u31,
         shared: *const SharedState,
         hover_idx: ?usize = null,
@@ -75,7 +66,6 @@ pub fn SelectableList(comptime Action: type, comptime Retriever: type, comptime 
         const Self = @This();
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.deinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .update = Self.update,
@@ -83,12 +73,6 @@ pub fn SelectableList(comptime Action: type, comptime Retriever: type, comptime 
             .setFocused = null,
             .reset = null,
         };
-
-        fn deinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            freeTextItems(TextItem, alloc, &self.item_labels);
-            alloc.destroy(self);
-        }
 
         fn render(ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
@@ -98,7 +82,7 @@ pub fn SelectableList(comptime Action: type, comptime Retriever: type, comptime 
             const squircle_renderer = ListSquircleRenderer{ .shared = self.shared, .window_bounds = window_bounds };
             squircle_renderer.render(widget_bounds, self.shared.style.background_color);
 
-            var label_bounds_it = LabelBoundsIt.init(widget_bounds, &self.shared.style, self.item_labels.items);
+            var label_bounds_it = LabelBoundsIt.init(widget_bounds, &self.shared.style, self.item_labels);
             while (label_bounds_it.next()) |item| {
                 if (self.getItemColor(item.idx, selected)) |item_color| {
                     squircle_renderer.render(item.full_bounds, item_color);
@@ -119,7 +103,7 @@ pub fn SelectableList(comptime Action: type, comptime Retriever: type, comptime 
                 .right = self.parent_width,
             };
 
-            var it = LabelBoundsIt.init(widget_bounds, &self.shared.style, self.item_labels.items);
+            var it = LabelBoundsIt.init(widget_bounds, &self.shared.style, self.item_labels);
 
             while (it.next()) |_| {}
 
@@ -135,11 +119,15 @@ pub fn SelectableList(comptime Action: type, comptime Retriever: type, comptime 
 
             self.parent_width = available_space.width;
 
-            try appendMissingTextItems(TextItem, self.alloc, self.shared, self.retriever, &self.item_labels, num_items);
-            removeExtraTextItems(TextItem, self.alloc, &self.item_labels, num_items);
+            if (num_items != self.item_labels.len) {
+                self.item_labels = &.{};
+                try self.list_alloc.reset();
 
-            for (self.item_labels.items) |*item| {
-                try item.update(self.alloc, self.parent_width);
+                self.item_labels = try makeTextLabels(TextItem, self.list_alloc, self.shared, self.retriever, num_items);
+            }
+
+            for (self.item_labels) |*item| {
+                try item.update(self.parent_width);
             }
         }
 
@@ -155,7 +143,7 @@ pub fn SelectableList(comptime Action: type, comptime Retriever: type, comptime 
 
             var hover_idx: ?usize = null;
 
-            var label_bounds_it = LabelBoundsIt.init(widget_bounds, &self.shared.style, self.item_labels.items);
+            var label_bounds_it = LabelBoundsIt.init(widget_bounds, &self.shared.style, self.item_labels);
             while (label_bounds_it.next()) |item| {
                 const item_input_bounds = item.full_bounds.calcIntersection(input_bounds);
 
@@ -291,42 +279,24 @@ fn labelAdaptor(retriever: anytype, idx: usize) LabelAdaptor(@TypeOf(retriever))
     };
 }
 
-fn freeTextItems(comptime T: type, alloc: Allocator, items: *std.ArrayListUnmanaged(T)) void {
-    for (items.items) |item| {
-        item.deinit(alloc);
-    }
-    items.deinit(alloc);
-}
-
-fn appendMissingTextItems(
+fn makeTextLabels(
     comptime TextItem: type,
-    alloc: Allocator,
+    alloc: gui.GuiAlloc,
     shared: *const SharedState,
     retriever: anytype,
-    item_labels: *std.ArrayListUnmanaged(TextItem),
     num_items: usize,
-) !void {
-    if (item_labels.items.len >= num_items) {
-        return;
-    }
-
-    for (item_labels.items.len..num_items) |i| {
+) ![]TextItem {
+    const ret = try alloc.heap.arena().alloc(TextItem, num_items);
+    for (0..ret.len) |i| {
         const text = try gui_text.guiText(
             alloc,
             shared.gui_text_state,
             labelAdaptor(retriever, i),
         );
-        errdefer text.deinit(alloc);
 
-        try item_labels.append(alloc, text);
+        ret[i] = text;
     }
-}
-
-fn removeExtraTextItems(comptime TextItem: type, alloc: Allocator, item_labels: *std.ArrayListUnmanaged(TextItem), num_items: usize) void {
-    while (item_labels.items.len > num_items) {
-        const item = item_labels.pop();
-        item.deinit(alloc);
-    }
+    return ret;
 }
 
 fn generateAction(comptime Action: type, action_generator: anytype, idx: usize) Action {

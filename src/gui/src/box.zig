@@ -36,7 +36,6 @@ pub fn Box(comptime Action: type) type {
 
         const Self = @This();
         const vtable = Widget(Action).VTable{
-            .deinit = Self.deinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .update = Self.update,
@@ -44,12 +43,6 @@ pub fn Box(comptime Action: type) type {
             .setFocused = Self.setFocused,
             .reset = Self.reset,
         };
-
-        fn deinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            self.inner.deinit(alloc);
-            alloc.destroy(self);
-        }
 
         fn render(ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void {
             const self: *Self = @ptrCast(@alignCast(ctx));

@@ -21,7 +21,6 @@ pub fn ScrollView(comptime Action: type) type {
         const Self = @This();
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.widgetDeinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .update = Self.update,
@@ -50,16 +49,6 @@ pub fn ScrollView(comptime Action: type) type {
                 .ctx = view,
                 .vtable = &widget_vtable,
             };
-        }
-
-        pub fn deinit(self: *Self, alloc: Allocator) void {
-            self.inner.deinit(alloc);
-            alloc.destroy(self);
-        }
-
-        fn widgetDeinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            self.deinit(alloc);
         }
 
         fn getSize(ctx: ?*anyopaque) PixelSize {

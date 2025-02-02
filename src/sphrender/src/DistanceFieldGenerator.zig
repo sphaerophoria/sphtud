@@ -4,6 +4,9 @@ const sphmath = @import("sphmath");
 const gl = @import("gl.zig");
 const geometry = @import("geometry.zig");
 const sphrender = @import("sphrender.zig");
+const sphalloc = @import("sphalloc");
+const ScratchAlloc = sphalloc.ScratchAlloc;
+const GlAlloc = sphrender.GlAlloc;
 const Texture = sphrender.Texture;
 
 program: gl.GLuint,
@@ -18,9 +21,8 @@ const DistanceFieldGenerator = @This();
 const num_cone_points = 20;
 const depth_radius = 2 * std.math.sqrt2;
 
-pub fn init() !DistanceFieldGenerator {
-    const program = try sphrender.compileLinkProgram(distance_field_vertex_shader, distance_field_fragment_shader);
-    errdefer gl.glDeleteProgram(program);
+pub fn init(gl_alloc: *GlAlloc) !DistanceFieldGenerator {
+    const program = try sphrender.compileLinkProgram(gl_alloc, distance_field_vertex_shader, distance_field_fragment_shader);
 
     const df_scale_loc = gl.glGetUniformLocation(program, "scale");
     const sign_loc = gl.glGetUniformLocation(program, "sign");
@@ -31,8 +33,8 @@ pub fn init() !DistanceFieldGenerator {
     const stretch_loc = gl.glGetAttribLocation(program, "stretch");
     const rot_loc = gl.glGetAttribLocation(program, "rotation");
 
-    const cone_buf = try genCone(@bitCast(vpos_loc), @bitCast(cone_offs_loc), @bitCast(stretch_loc), @bitCast(rot_loc));
-    const tent_buf = try genTent(@bitCast(vpos_loc), @bitCast(cone_offs_loc), @bitCast(stretch_loc), @bitCast(rot_loc));
+    const cone_buf = try genCone(gl_alloc, @bitCast(vpos_loc), @bitCast(cone_offs_loc), @bitCast(stretch_loc), @bitCast(rot_loc));
+    const tent_buf = try genTent(gl_alloc, @bitCast(vpos_loc), @bitCast(cone_offs_loc), @bitCast(stretch_loc), @bitCast(rot_loc));
 
     return .{
         .program = program,
@@ -44,18 +46,13 @@ pub fn init() !DistanceFieldGenerator {
     };
 }
 
-pub fn deinit(self: DistanceFieldGenerator) void {
-    self.cone_buf.deinit();
-    self.tent_buf.deinit();
-    gl.glDeleteProgram(self.program);
-}
+pub fn renderDistanceFieldToTexture(self: DistanceFieldGenerator, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc, point_it: anytype, sign_texture: Texture, width: u31, height: u31, out_texture: Texture) !void {
+    sphrender.setTextureSize(out_texture, width, height, .rf32);
 
-pub fn generateDistanceField(self: DistanceFieldGenerator, alloc: Allocator, point_it: anytype, sign_texture: Texture, width: u31, height: u31) !Texture {
-    const color_texture = sphrender.makeTextureOfSize(width, height, .rf32);
-    errdefer color_texture.deinit();
+    const gl_checkpoint = scratch_gl.checkpoint();
+    defer scratch_gl.restore(gl_checkpoint);
 
-    const depth_texture = sphrender.makeTextureCommon();
-    defer depth_texture.deinit();
+    const depth_texture = try sphrender.makeTextureCommon(scratch_gl);
 
     gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_DEPTH24_STENCIL8, width, height, 0, gl.GL_DEPTH_STENCIL, gl.GL_UNSIGNED_INT_24_8, null);
 
@@ -64,7 +61,7 @@ pub fn generateDistanceField(self: DistanceFieldGenerator, alloc: Allocator, poi
     defer gl.glDisable(gl.GL_DEPTH_TEST);
 
     {
-        const fb = try sphrender.FramebufferRenderContext.init(color_texture, depth_texture);
+        const fb = try sphrender.FramebufferRenderContext.init(out_texture, depth_texture);
         defer fb.reset();
 
         // Output texture size is not the same as input size
@@ -90,7 +87,7 @@ pub fn generateDistanceField(self: DistanceFieldGenerator, alloc: Allocator, poi
         gl.glUniform1i(self.sign_loc, 0);
         gl.glUniform1i(self.sign_valid_loc, @intFromBool(sign_texture.inner != Texture.invalid.inner));
 
-        const lens = try self.updateBuffers(alloc, point_it, aspect_correction);
+        const lens = try self.updateBuffers(scratch_alloc.allocator(), point_it, aspect_correction);
 
         gl.glBindVertexArray(self.cone_buf.vao);
         gl.glDrawArraysInstanced(gl.GL_TRIANGLE_FAN, 0, num_cone_points, @intCast(lens.cones));
@@ -98,8 +95,6 @@ pub fn generateDistanceField(self: DistanceFieldGenerator, alloc: Allocator, poi
         gl.glBindVertexArray(self.tent_buf.vao);
         gl.glDrawArraysInstanced(gl.GL_TRIANGLE_STRIP, 0, 6, @intCast(lens.tents));
     }
-
-    return color_texture;
 }
 
 // Abstraction around inputs for the distance field generator program. A
@@ -117,15 +112,10 @@ const InstancedRenderBuffer = struct {
     const mesh_binding_index = 0;
     const offsets_binding_index = 1;
 
-    fn init(vpos_location: gl.GLuint, offs_location: gl.GLuint, stretch_location: gl.GLuint, rot_loc: gl.GLuint) InstancedRenderBuffer {
-        var vertex_buffer: gl.GLuint = 0;
-        gl.glCreateBuffers(1, &vertex_buffer);
-
-        var offsets_vbo: gl.GLuint = 0;
-        gl.glCreateBuffers(1, &offsets_vbo);
-
-        var vertex_array: gl.GLuint = 0;
-        gl.glCreateVertexArrays(1, &vertex_array);
+    fn init(gl_alloc: *GlAlloc, vpos_location: gl.GLuint, offs_location: gl.GLuint, stretch_location: gl.GLuint, rot_loc: gl.GLuint) !InstancedRenderBuffer {
+        const vertex_buffer = try gl_alloc.createBuffer();
+        const offsets_vbo = try gl_alloc.createBuffer();
+        const vertex_array = try gl_alloc.createArray();
 
         gl.glEnableVertexArrayAttrib(vertex_array, vpos_location);
 
@@ -149,12 +139,6 @@ const InstancedRenderBuffer = struct {
             .stretch_loc = stretch_location,
             .rot_loc = rot_loc,
         };
-    }
-
-    fn deinit(self: InstancedRenderBuffer) void {
-        gl.glDeleteBuffers(1, &self.mesh_vbo);
-        gl.glDeleteBuffers(1, &self.offsets_vbo);
-        gl.glDeleteVertexArrays(1, &self.vao);
     }
 
     fn setMeshData(self: InstancedRenderBuffer, points: []const sphmath.Vec3) void {
@@ -233,7 +217,7 @@ const InstancedRenderBuffer = struct {
     }
 };
 
-fn genCone(vpos_location: gl.GLuint, offs_location: gl.GLuint, stretch_location: gl.GLuint, rot_loc: gl.GLuint) !InstancedRenderBuffer {
+fn genCone(gl_alloc: *GlAlloc, vpos_location: gl.GLuint, offs_location: gl.GLuint, stretch_location: gl.GLuint, rot_loc: gl.GLuint) !InstancedRenderBuffer {
     var cone_points: [num_cone_points]sphmath.Vec3 = undefined;
     var i: usize = 0;
     var cone_it = geometry.ConeGenerator.init(depth_radius, 1.0, cone_points.len);
@@ -242,13 +226,13 @@ fn genCone(vpos_location: gl.GLuint, offs_location: gl.GLuint, stretch_location:
         i += 1;
     }
 
-    var ret = InstancedRenderBuffer.init(vpos_location, offs_location, stretch_location, rot_loc);
+    var ret = try InstancedRenderBuffer.init(gl_alloc, vpos_location, offs_location, stretch_location, rot_loc);
     ret.setMeshData(&cone_points);
 
     return ret;
 }
 
-fn genTent(vpos_location: gl.GLuint, offs_location: gl.GLuint, stretch_location: gl.GLuint, rot_loc: gl.GLuint) !InstancedRenderBuffer {
+fn genTent(gl_alloc: *GlAlloc, vpos_location: gl.GLuint, offs_location: gl.GLuint, stretch_location: gl.GLuint, rot_loc: gl.GLuint) !InstancedRenderBuffer {
     var tent_points: [6]sphmath.Vec3 = undefined;
     var i: usize = 0;
     var tent_it = geometry.TentGenerator{
@@ -262,7 +246,7 @@ fn genTent(vpos_location: gl.GLuint, offs_location: gl.GLuint, stretch_location:
         i += 1;
     }
 
-    var ret = InstancedRenderBuffer.init(vpos_location, offs_location, stretch_location, rot_loc);
+    var ret = try InstancedRenderBuffer.init(gl_alloc, vpos_location, offs_location, stretch_location, rot_loc);
     ret.setMeshData(&tent_points);
 
     return ret;

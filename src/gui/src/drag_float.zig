@@ -25,21 +25,18 @@ pub const Style = struct {
     corner_radius: f32,
 };
 
-pub fn dragFloat(comptime Action: type, alloc: Allocator, val_retriever: anytype, on_drag: anytype, drag_speed: f32, shared: *const Shared) !Widget(Action) {
+pub fn dragFloat(comptime Action: type, alloc: gui.GuiAlloc, val_retriever: anytype, on_drag: anytype, drag_speed: f32, shared: *const Shared) !Widget(Action) {
     const T = DragFloat(Action, @TypeOf(val_retriever), @TypeOf(on_drag));
 
-    const ctx = try alloc.create(T);
-    errdefer alloc.destroy(ctx);
+    const ctx = try alloc.heap.arena().create(T);
 
     const gui_text = try gui.gui_text.guiText(
         alloc,
         shared.guitext_state,
         LabelAdaptor(@TypeOf(val_retriever)){ .val_retriever = val_retriever },
     );
-    errdefer gui_text.deinit(alloc);
 
     ctx.* = .{
-        .alloc = alloc,
         .val_retriever = val_retriever,
         .gui_text = gui_text,
         .on_drag = on_drag,
@@ -55,7 +52,6 @@ pub fn dragFloat(comptime Action: type, alloc: Allocator, val_retriever: anytype
 
 pub fn DragFloat(comptime Action: type, comptime ValRetriever: type, comptime ActionGenerator: type) type {
     return struct {
-        alloc: Allocator,
         val_retriever: ValRetriever,
         gui_text: gui.gui_text.GuiText(LabelAdaptor(ValRetriever)),
         drag_speed: f32,
@@ -70,7 +66,6 @@ pub fn DragFloat(comptime Action: type, comptime ValRetriever: type, comptime Ac
         const Self = @This();
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.deinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .setInputState = Self.setInputState,
@@ -78,12 +73,6 @@ pub fn DragFloat(comptime Action: type, comptime ValRetriever: type, comptime Ac
             .setFocused = null,
             .reset = null,
         };
-
-        pub fn deinit(ctx: ?*anyopaque, _: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            self.gui_text.deinit(self.alloc);
-            self.alloc.destroy(self);
-        }
 
         fn render(ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
@@ -112,7 +101,7 @@ pub fn DragFloat(comptime Action: type, comptime ValRetriever: type, comptime Ac
             // Float label content should be sized so that it doesn't exceed
             // the bounds of the widget. Wrapping the text would just go out of
             // bounds anyways... Pretend we have infinite space
-            try self.gui_text.update(self.alloc, std.math.maxInt(u31));
+            try self.gui_text.update(std.math.maxInt(u31));
         }
 
         fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: InputState) gui.InputResponse(Action) {

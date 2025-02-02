@@ -7,6 +7,7 @@ const gui = @import("sphui");
 const ui_action = @import("ui_action.zig");
 const UiAction = ui_action.UiAction;
 const logError = @import("util.zig").logError;
+const GlAlloc = sphrender.GlAlloc;
 
 size: gui.PixelSize,
 app: *sphimp.App,
@@ -14,7 +15,6 @@ app: *sphimp.App,
 const AppWidget = @This();
 
 const widget_vtable = gui.Widget(UiAction).VTable{
-    .deinit = AppWidget.deinit,
     .render = AppWidget.render,
     .getSize = AppWidget.getSize,
     .update = AppWidget.update,
@@ -52,11 +52,6 @@ pub fn init(alloc: Allocator, app: *App, size: gui.PixelSize) !gui.Widget(UiActi
         .vtable = &widget_vtable,
         .ctx = ctx,
     };
-}
-
-fn deinit(ctx: ?*anyopaque, alloc: Allocator) void {
-    const self: *AppWidget = @ptrCast(@alignCast(ctx));
-    alloc.destroy(self);
 }
 
 fn render(ctx: ?*anyopaque, widget_bounds: gui.PixelBBox, window_bounds: gui.PixelBBox) void {

@@ -4,49 +4,74 @@ const sphmath = @import("sphmath");
 const gui = @import("gui.zig");
 const sphtext = @import("sphtext");
 const sphrender = @import("sphrender");
+const sphutil = @import("sphutil");
+const RuntimeSegmentedList = sphutil.RuntimeSegmentedList;
 const PixelSize = gui.PixelSize;
 const TextRenderer = sphtext.TextRenderer;
+const sphalloc = @import("sphalloc");
+const ScratchAlloc = sphalloc.ScratchAlloc;
+const GlAlloc = sphrender.GlAlloc;
 
 pub const SharedState = struct {
+    scratch_alloc: *ScratchAlloc,
+    scratch_gl: *GlAlloc,
     text_renderer: *TextRenderer,
     ttf: *const sphtext.ttf.Ttf,
     distance_field_generator: *const sphrender.DistanceFieldGenerator,
 };
 
-pub fn guiText(alloc: Allocator, shared: *const SharedState, text_retriever_const: anytype) !GuiText(@TypeOf(text_retriever_const)) {
-    // Ideally we don't layout now, because the layout is likely going to
-    // change when we put whatever widget we are rendering in into whatever
-    // container it belongs to.
-    //
-    // Its convenient for users of us to have a valid layout though, so we just
-    // layout nothing for now
-    const text_layout = TextRenderer.TextLayout.empty;
-    errdefer text_layout.deinit(alloc);
+pub fn guiText(alloc: gui.GuiAlloc, shared: *const SharedState, text_retriever_const: anytype) !GuiText(@TypeOf(text_retriever_const)) {
+    const text_buffer = try shared.text_renderer.program.makeFullScreenPlane(alloc.gl);
 
-    const text_buffer = shared.text_renderer.program.makeFullScreenPlane();
-    errdefer text_buffer.deinit();
+    const typical_max_glyphs = 128;
+    const max_glyph_capacity = 1 << 20;
 
-    // Callers still may want to look at the text
-    var text_retriever = text_retriever_const;
-    const text = getText(&text_retriever);
+    const text = try RuntimeSegmentedList(u8).init(
+        alloc.heap.general(),
+        alloc.heap.block_alloc.allocator(),
+        typical_max_glyphs,
+        max_glyph_capacity,
+    );
 
-    const duped_text = try alloc.dupe(u8, text);
-    errdefer alloc.free(duped_text);
+    const glyph_locations = try RuntimeSegmentedList(TextRenderer.TextLayout.GlyphLoc).init(
+        alloc.heap.general(),
+        alloc.heap.block_alloc.allocator(),
+        typical_max_glyphs,
+        max_glyph_capacity,
+    );
 
     return .{
-        .layout = text_layout,
-        .text = duped_text,
+        .alloc = alloc,
+        .glyph_locations = glyph_locations,
+        .text = text,
         .buffer = text_buffer,
         .shared = shared,
-        .text_retriever = text_retriever,
+        .text_retriever = text_retriever_const,
     };
 }
 
+pub const LayoutBounds = struct {
+    min_x: i32 = 0,
+    min_y: i32 = 0,
+    max_x: i32 = 0,
+    max_y: i32 = 0,
+
+    fn width(self: LayoutBounds) u31 {
+        return @intCast(self.max_x - self.min_x);
+    }
+
+    fn height(self: LayoutBounds) u31 {
+        return @intCast(self.max_y - self.min_y);
+    }
+};
+
 pub fn GuiText(comptime TextRetriever: type) type {
     return struct {
-        layout: TextRenderer.TextLayout,
+        alloc: gui.GuiAlloc,
+        glyph_locations: RuntimeSegmentedList(TextRenderer.TextLayout.GlyphLoc),
+        layout_bounds: LayoutBounds = .{},
         buffer: TextRenderer.Buffer,
-        text: []const u8,
+        text: RuntimeSegmentedList(u8),
         wrap_width: u31 = 0,
         shared: *const SharedState,
 
@@ -54,29 +79,23 @@ pub fn GuiText(comptime TextRetriever: type) type {
 
         const Self = @This();
 
-        pub fn deinit(self: Self, alloc: Allocator) void {
-            self.layout.deinit(alloc);
-            alloc.free(self.text);
-            self.buffer.deinit();
-        }
-
-        pub fn update(self: *Self, alloc: Allocator, wrap_width: u31) !void {
+        pub fn update(self: *Self, wrap_width: u31) !void {
             if (self.wrap_width != wrap_width) {
-                try self.regenerate(alloc, wrap_width);
+                try self.regenerate(wrap_width);
                 return;
             }
 
             const new_text = getText(&self.text_retriever);
-            if (!std.mem.eql(u8, new_text, self.text)) {
-                try self.regenerate(alloc, wrap_width);
+            if (!self.text.contentMatches(new_text)) {
+                try self.regenerate(wrap_width);
                 return;
             }
         }
 
         pub fn size(self: Self) PixelSize {
             return .{
-                .width = @intCast(self.layout.width()),
-                .height = @intCast(self.layout.height()),
+                .width = @intCast(self.layout_bounds.width()),
+                .height = @intCast(self.layout_bounds.height()),
             };
         }
 
@@ -93,34 +112,33 @@ pub fn GuiText(comptime TextRetriever: type) type {
             return getText(&self.text_retriever);
         }
 
-        fn regenerate(self: *Self, alloc: Allocator, wrap_width: u31) !void {
+        fn regenerate(self: *Self, wrap_width: u31) !void {
             const text = getText(&self.text_retriever);
             const text_layout = try self.shared.text_renderer.layoutText(
-                alloc,
+                self.shared.scratch_alloc.allocator(),
                 text,
                 self.shared.ttf.*,
                 wrap_width,
             );
-            errdefer text_layout.deinit(alloc);
 
-            const text_buffer = try self.shared.text_renderer.makeTextBuffer(
-                alloc,
+            try self.shared.text_renderer.updateTextBuffer(
+                self.shared.scratch_alloc,
+                self.shared.scratch_gl,
                 text_layout,
                 self.shared.ttf.*,
                 self.shared.distance_field_generator.*,
+                &self.buffer,
             );
-            errdefer text_buffer.deinit();
 
-            const duped_text = try alloc.dupe(u8, text);
-            errdefer alloc.free(duped_text);
+            self.layout_bounds = .{
+                .min_x = text_layout.min_x,
+                .min_y = text_layout.min_y,
+                .max_x = text_layout.max_x,
+                .max_y = text_layout.max_y,
+            };
 
-            self.layout.deinit(alloc);
-            self.buffer.deinit();
-            alloc.free(self.text);
-
-            self.layout = text_layout;
-            self.buffer = text_buffer;
-            self.text = duped_text;
+            try self.glyph_locations.setContents(text_layout.glyphs);
+            try self.text.setContents(text);
             self.wrap_width = wrap_width;
         }
     };

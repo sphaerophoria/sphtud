@@ -4,6 +4,9 @@ const sphrender = @import("sphrender");
 const ttf_mod = @import("ttf.zig");
 const sphmath = @import("sphmath");
 const gl = sphrender.gl;
+const GlAlloc = sphrender.GlAlloc;
+const sphalloc = @import("sphalloc");
+const ScratchAlloc = sphalloc.ScratchAlloc;
 
 const Texture = sphrender.Texture;
 
@@ -13,10 +16,10 @@ const PlaneRenderBuffer = sphrender.xyuvt_program.Buffer;
 program: PlaneRenderProgram,
 glyph_buffer: PlaneRenderBuffer,
 texture: Texture,
-tex_width: usize,
-tex_height: usize,
+tex_width: u31,
+tex_height: u31,
 //FIXME: Utf8 codepoints
-glyph_locations: std.AutoHashMapUnmanaged(u8, UVBBox) = .{},
+glyph_locations: std.AutoHashMap(u8, UVBBox),
 x_cursor_px: u16 = 0,
 y_cursor_px: u16 = 0,
 row_max_height: u16 = 0,
@@ -54,9 +57,8 @@ pub const PixelBBox = struct {
     }
 };
 
-pub fn init() !GlyphAtlas {
-    const program = try PlaneRenderProgram.init(sphrender.xyuvt_program.image_sampler_frag);
-    errdefer program.deinit();
+pub fn init(gpa: Allocator, gl_alloc: *GlAlloc) !GlyphAtlas {
+    const program = try PlaneRenderProgram.init(gl_alloc, sphrender.xyuvt_program.image_sampler_frag);
 
     var c_max_texture_size: c_int = 0;
     gl.glGetIntegerv(gl.GL_MAX_TEXTURE_SIZE, &c_max_texture_size);
@@ -64,80 +66,70 @@ pub fn init() !GlyphAtlas {
     const tex_width: u31 = @intCast(c_max_texture_size);
     const tex_height: u31 = @intCast(c_max_texture_size);
 
-    const texture = sphrender.makeTextureOfSize(tex_width, tex_height, .rf32);
-
-    const render_context = try sphrender.FramebufferRenderContext.init(texture, null);
-    defer render_context.reset();
-
-    const temp_viewport = sphrender.TemporaryViewport.init();
-    defer temp_viewport.reset();
-
-    temp_viewport.setViewport(tex_width, tex_height);
-
-    const temp_scissor = sphrender.TemporaryScissor.init();
-    defer temp_scissor.reset();
-
-    temp_scissor.setAbsolute(0, 0, tex_width, tex_height);
-
-    gl.glClearColor(
-        -std.math.inf(f32),
-        -std.math.inf(f32),
-        -std.math.inf(f32),
-        -std.math.inf(f32),
-    );
-    gl.glClear(gl.GL_COLOR_BUFFER_BIT);
+    const texture = try sphrender.makeTextureOfSize(gl_alloc, tex_width, tex_height, .rf32);
+    try clearTexture(texture, tex_width, tex_height);
 
     return .{
         .program = program,
-        .glyph_buffer = program.makeFullScreenPlane(),
+        .glyph_locations = std.AutoHashMap(u8, UVBBox).init(gpa),
+        .glyph_buffer = try program.makeFullScreenPlane(gl_alloc),
         .texture = texture,
         .tex_width = tex_width,
         .tex_height = tex_height,
     };
 }
 
-pub fn deinit(self: *GlyphAtlas, alloc: Allocator) void {
-    self.texture.deinit();
-    self.program.deinit();
-    self.glyph_locations.deinit(alloc);
-    self.glyph_buffer.deinit();
+pub fn reset(self: *GlyphAtlas) !void {
+    self.glyph_locations.clearRetainingCapacity();
+    try clearTexture(self.texture, self.tex_width, self.tex_height);
 }
 
 pub fn getGlyphLocation(
     self: *GlyphAtlas,
-    alloc: Allocator,
-    temp_alloc: Allocator,
+    scratch_alloc: *ScratchAlloc,
+    scratch_gl: *GlAlloc,
     char: u8,
     point_size: f32,
     ttf: ttf_mod.Ttf,
     distance_field_renderer: sphrender.DistanceFieldGenerator,
 ) !UVBBox {
-    const gop = try self.glyph_locations.getOrPut(alloc, char);
+    const gop = try self.glyph_locations.getOrPut(char);
     if (!gop.found_existing) {
-        gop.value_ptr.* = try self.addCharToAtlas(alloc, temp_alloc, char, point_size, ttf, distance_field_renderer);
+        gop.value_ptr.* = try self.addCharToAtlas(
+            scratch_alloc,
+            scratch_gl,
+            char,
+            point_size,
+            ttf,
+            distance_field_renderer,
+        );
     }
     return gop.value_ptr.*;
 }
 
-fn addCharToAtlas(self: *GlyphAtlas, alloc: Allocator, temp_alloc: Allocator, char: u8, point_size: f32, ttf: ttf_mod.Ttf, distance_field_renderer: sphrender.DistanceFieldGenerator) !UVBBox {
-    var glyph = try ttf_mod.glyphForChar(alloc, ttf, char) orelse return UVBBox.empty;
-    defer glyph.deinit(alloc);
+fn addCharToAtlas(self: *GlyphAtlas, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc, char: u8, point_size: f32, ttf: ttf_mod.Ttf, distance_field_renderer: sphrender.DistanceFieldGenerator) !UVBBox {
+    const gl_checkpoint = scratch_gl.checkpoint();
+    defer scratch_gl.restore(gl_checkpoint);
 
-    var canvas, const bbox = try ttf_mod.renderGlyphAt1PxPerFunit(temp_alloc, glyph);
-    defer canvas.deinit(temp_alloc);
+    const heap_checkpoint = scratch_alloc.checkpoint();
+    defer scratch_alloc.restore(heap_checkpoint);
+
+    const glyph = try ttf_mod.glyphForChar(scratch_alloc.allocator(), ttf, char) orelse return UVBBox.empty;
+
+    var canvas, const bbox = try ttf_mod.renderGlyphAt1PxPerFunit(scratch_alloc.allocator(), glyph);
 
     const width = canvas.width;
     const height: usize = @intCast(canvas.calcHeight());
 
-    const mask = sphrender.makeTextureFromR(canvas.pixels, canvas.width);
-    defer mask.deinit();
+    const mask = try sphrender.makeTextureFromR(scratch_gl, canvas.pixels, canvas.width);
 
     // NOTE: This is rendered at 1px/funit. This is probably unnecessary, but
     // early attempts at rendering directly at the atlas resolution resulted in
     // mis-matched mask/distance fields. Likely solvable, but not bothering for
     // now
     const distance_field = try makeDistanceField(
-        alloc,
+        scratch_alloc,
+        scratch_gl,
         ttf,
         char,
         width,
@@ -146,7 +138,6 @@ fn addCharToAtlas(self: *GlyphAtlas, alloc: Allocator, temp_alloc: Allocator, ch
         bbox,
         distance_field_renderer,
     );
-    defer distance_field.deinit();
 
     const bounds = try self.allocateGlyphSpace(point_size, @floatFromInt(ttf.head.units_per_em), glyph.common);
 
@@ -296,7 +287,8 @@ const LinePointIter = struct {
 };
 
 fn makeDistanceField(
-    alloc: Allocator,
+    scratch_alloc: *ScratchAlloc,
+    gl_alloc: *GlAlloc,
     ttf: ttf_mod.Ttf,
     c: u8,
     width: usize,
@@ -305,20 +297,45 @@ fn makeDistanceField(
     bbox: ttf_mod.BBox,
     distance_field_renderer: sphrender.DistanceFieldGenerator,
 ) !sphrender.Texture {
-    var simple_glyph = try ttf_mod.glyphForChar(alloc, ttf, c) orelse return sphrender.Texture.invalid;
-    defer simple_glyph.deinit(alloc);
+    const simple_glyph = try ttf_mod.glyphForChar(scratch_alloc.allocator(), ttf, c) orelse return sphrender.Texture.invalid;
 
     const iter = ttf_mod.GlyphSegmentIter.init(simple_glyph);
     var line_iter = LinePointIter.init(iter, width, height, bbox);
 
-    const ret = try distance_field_renderer.generateDistanceField(
-        alloc,
+    const ret = try sphrender.makeTextureCommon(gl_alloc);
+    try distance_field_renderer.renderDistanceFieldToTexture(
+        scratch_alloc,
+        gl_alloc,
         &line_iter,
         mask_texture,
         @intCast(width),
         @intCast(height),
+        ret,
     );
     gl.glTextureParameteri(ret.inner, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR);
     gl.glTextureParameteri(ret.inner, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR);
     return ret;
+}
+
+fn clearTexture(texture: Texture, tex_width: u31, tex_height: u31) !void {
+    const render_context = try sphrender.FramebufferRenderContext.init(texture, null);
+    defer render_context.reset();
+
+    const temp_viewport = sphrender.TemporaryViewport.init();
+    defer temp_viewport.reset();
+
+    temp_viewport.setViewport(tex_width, tex_height);
+
+    const temp_scissor = sphrender.TemporaryScissor.init();
+    defer temp_scissor.reset();
+
+    temp_scissor.setAbsolute(0, 0, tex_width, tex_height);
+
+    gl.glClearColor(
+        -std.math.inf(f32),
+        -std.math.inf(f32),
+        -std.math.inf(f32),
+        -std.math.inf(f32),
+    );
+    gl.glClear(gl.GL_COLOR_BUFFER_BIT);
 }

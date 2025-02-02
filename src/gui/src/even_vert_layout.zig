@@ -15,9 +15,9 @@ pub const Shared = struct {
     squircle_renderer: *const gui.SquircleRenderer,
 };
 
-pub fn EvenVertLayout(comptime Action: type) type {
+pub fn EvenVertLayout(comptime Action: type, comptime max_size: comptime_int) type {
     return struct {
-        items: std.ArrayListUnmanaged(Widget(Action)) = .{},
+        items: std.BoundedArray(Widget(Action), max_size) = .{},
         container_size: PixelSize = .{ .width = 0, .height = 0 },
         focused_id: ?usize = null,
         shared: *const Shared,
@@ -25,7 +25,6 @@ pub fn EvenVertLayout(comptime Action: type) type {
         const Self = @This();
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.widgetDeinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .update = Self.update,
@@ -42,9 +41,8 @@ pub fn EvenVertLayout(comptime Action: type) type {
             return ret;
         }
 
-        pub fn pushOrDeinitWidget(self: *Self, alloc: Allocator, widget: Widget(Action)) !void {
-            errdefer widget.deinit(alloc);
-            try self.items.append(alloc, widget);
+        pub fn pushWidget(self: *Self, widget: Widget(Action)) !void {
+            try self.items.append(widget);
         }
 
         pub fn asWidget(self: *Self) Widget(Action) {
@@ -54,28 +52,17 @@ pub fn EvenVertLayout(comptime Action: type) type {
             };
         }
 
-        pub fn deinit(self: *Self, alloc: Allocator) void {
-            for (self.items.items) |item| {
-                item.deinit(alloc);
-            }
-            self.items.deinit(alloc);
-            alloc.destroy(self);
-        }
-
-        fn widgetDeinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            self.deinit(alloc);
-        }
-
         fn render(ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
-            for (1..self.items.items.len) |i| {
+            const items = self.items.slice();
+
+            for (1..items.len) |i| {
                 const border_bounds = borderBounds(
                     widget_bounds,
                     self.shared.border_size,
                     i,
-                    self.items.items.len,
+                    items.len,
                 );
                 const transform = util.widgetToClipTransform(border_bounds, window_bounds);
                 self.shared.squircle_renderer.render(
@@ -86,14 +73,14 @@ pub fn EvenVertLayout(comptime Action: type) type {
                 );
             }
 
-            for (0..self.items.items.len) |i| {
-                const item = self.items.items[i];
+            for (0..items.len) |i| {
+                const item = items[i];
                 const child_bounds = childBounds(
                     widget_bounds,
                     self.shared.border_size,
                     item.getSize(),
                     i,
-                    self.items.items.len,
+                    items.len,
                 );
 
                 item.render(child_bounds, window_bounds);
@@ -109,12 +96,13 @@ pub fn EvenVertLayout(comptime Action: type) type {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.container_size = available_size;
 
+            const items = self.items.slice();
             const child_size = calcChildSize(
-                self.items.items.len,
+                items.len,
                 self.container_size,
                 self.shared.border_size,
             );
-            for (self.items.items) |item| {
+            for (items) |item| {
                 try item.update(child_size);
             }
         }
@@ -127,18 +115,19 @@ pub fn EvenVertLayout(comptime Action: type) type {
                 .action = null,
             };
 
-            for (self.items.items, 0..) |item, i| {
+            const items = self.items.slice();
+            for (items, 0..) |item, i| {
                 const child_bounds = childBounds(
                     widget_bounds,
                     self.shared.border_size,
                     item.getSize(),
                     i,
-                    self.items.items.len,
+                    items.len,
                 );
 
                 const frame_area = PixelBBox{
                     .top = child_bounds.top,
-                    .bottom = child_bounds.top + @as(i32, @intCast(self.container_size.height / self.items.items.len)),
+                    .bottom = child_bounds.top + @as(i32, @intCast(self.container_size.height / items.len)),
                     .left = widget_bounds.left,
                     .right = widget_bounds.right,
                 };
@@ -162,14 +151,16 @@ pub fn EvenVertLayout(comptime Action: type) type {
 
         fn setFocused(ctx: ?*anyopaque, focused: bool) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
+            const items = self.items.slice();
             if (self.focused_id) |id| {
-                self.items.items[id].setFocused(focused);
+                items[id].setFocused(focused);
             }
         }
 
         fn reset(ctx: ?*anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
-            for (self.items.items) |item| {
+            const items = self.items.slice();
+            for (items) |item| {
                 item.reset();
             }
         }

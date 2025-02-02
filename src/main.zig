@@ -1,4 +1,5 @@
 const std = @import("std");
+const sphalloc = @import("sphalloc");
 const Allocator = std.mem.Allocator;
 const sphrender = @import("sphrender");
 const sphmath = @import("sphmath");
@@ -105,20 +106,6 @@ const Args = struct {
         };
     }
 
-    fn deinit(self: *Args, alloc: Allocator) void {
-        switch (self.action) {
-            .load => {},
-            .new => |items| {
-                alloc.free(items.images);
-                alloc.free(items.brushes);
-                alloc.free(items.shaders);
-                alloc.free(items.fonts);
-            },
-        }
-
-        self.it.deinit();
-    }
-
     fn help(process_name: []const u8) noreturn {
         const stderr = std.io.getStdErr().writer();
 
@@ -145,14 +132,34 @@ const background_fragment_shader =
     \\}
 ;
 
+const Allocators = struct {
+    page: sphalloc.TinyPageAllocator(100),
+    root: sphalloc.Sphalloc,
+    scratch: sphalloc.ScratchAlloc,
+
+    fn initPinned(self: *Allocators) !void {
+        self.page = .{ .page_allocator = std.heap.page_allocator };
+        try self.root.initPinned(self.page.allocator(), "root");
+
+        const scratch_tracker = try self.root.makeSubAlloc("scratch");
+        const scratch_buf = try scratch_tracker.arena().alloc(u8, 10 * 1024 * 1024);
+        self.scratch = sphalloc.ScratchAlloc.init(scratch_buf);
+    }
+
+    fn deinit(self: *Allocators) void {
+        self.root.deinit();
+    }
+};
+
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+    var allocators: Allocators = undefined;
+    try allocators.initPinned();
+    defer allocators.deinit();
 
-    const alloc = gpa.allocator();
+    const root_gpa = allocators.root.general();
+    const root_arena = allocators.root.arena();
 
-    var args = try Args.parse(alloc);
-    defer args.deinit(alloc);
+    const args = try Args.parse(root_gpa);
 
     const window_width = 1024;
     const window_height = 600;
@@ -167,7 +174,14 @@ pub fn main() !void {
     sphrender.gl.glBlendFunc(sphrender.gl.GL_SRC_ALPHA, sphrender.gl.GL_ONE_MINUS_SRC_ALPHA);
     sphrender.gl.glEnable(sphrender.gl.GL_BLEND);
 
-    var app = try App.init(alloc, window_width, window_height);
+    var root_gl_alloc = try sphrender.GlAlloc.init(&allocators.root);
+    defer root_gl_alloc.reset();
+
+    const root_render_alloc = sphrender.RenderAlloc.init(&allocators.root, &root_gl_alloc);
+
+    var scratch_gl = try root_gl_alloc.makeSubAlloc(&allocators.root);
+
+    var app = try App.init(try root_render_alloc.makeSubAlloc("App"), &allocators.scratch, scratch_gl, window_width, window_height);
     defer app.deinit();
 
     const background_shader_id = try app.addShaderFromFragmentSource("constant color", background_fragment_shader);
@@ -201,23 +215,27 @@ pub fn main() !void {
         },
     }
 
-    const widget_factory = try gui.widget_factory.widgetFactory(UiAction, alloc);
-    defer widget_factory.deinit();
+    const gui_alloc = try root_render_alloc.makeSubAlloc("gui");
+
+    const widget_state = try gui.widget_factory.widgetState(UiAction, gui_alloc, &allocators.scratch, scratch_gl);
+
+    const widget_factory = widget_state.factory(gui_alloc);
 
     const toplevel_layout = try widget_factory.makeLayout();
     toplevel_layout.cursor.direction = .horizontal;
     toplevel_layout.item_pad = 0;
 
-    const sidebar = try sidebar_mod.makeSidebar(&app, widget_factory);
-    try toplevel_layout.pushOrDeinitWidget(widget_factory.alloc, sidebar.widget);
+    const sidebar = try sidebar_mod.makeSidebar(gui_alloc, &app, widget_state);
+    try toplevel_layout.pushWidget(sidebar.widget);
 
-    const app_widget = try AppWidget.init(alloc, &app, .{ .width = window_width, .height = window_height });
-    try toplevel_layout.pushOrDeinitWidget(widget_factory.alloc, app_widget);
+    const app_widget = try AppWidget.init(root_arena, &app, .{ .width = window_width, .height = window_height });
+    try toplevel_layout.pushWidget(app_widget);
 
-    var gui_runner = try widget_factory.makeRunnerOrDeinit(toplevel_layout.asWidget());
-    defer gui_runner.deinit();
+    var gui_runner = try widget_factory.makeRunner(toplevel_layout.asWidget());
 
     while (!window.closed()) {
+        allocators.scratch.reset();
+        scratch_gl.reset();
         const width, const height = window.getWindowSize();
 
         sphrender.gl.glViewport(0, 0, @intCast(width), @intCast(height));
@@ -286,11 +304,10 @@ pub fn main() !void {
                 .edit_selected_object_name => |params| {
                     const name = app.objects.get(app.input_state.selected_object).name;
                     var edit_name = std.ArrayListUnmanaged(u8){};
-                    defer edit_name.deinit(alloc);
 
                     // FIXME: Should we crash on failure?
-                    try edit_name.appendSlice(alloc, name);
-                    try gui.textbox.executeTextEditOnArrayList(alloc, &edit_name, params.pos, params.notifier, params.items);
+                    try edit_name.appendSlice(allocators.scratch.allocator(), name);
+                    try gui.textbox.executeTextEditOnArrayList(allocators.scratch.allocator(), &edit_name, params.pos, params.notifier, params.items);
 
                     try app.updateSelectedObjectName(edit_name.items);
                 },
@@ -339,12 +356,12 @@ pub fn main() !void {
                 },
                 .update_text_obj_name => |params| text_update: {
                     const text = app.selectedObject().asText() orelse break :text_update;
+
                     var edit = std.ArrayListUnmanaged(u8){};
-                    defer edit.deinit(alloc);
 
                     // FIXME: Should we crash on failure?
-                    try edit.appendSlice(alloc, text.current_text);
-                    try gui.textbox.executeTextEditOnArrayList(alloc, &edit, params.pos, params.notifier, params.items);
+                    try edit.appendSlice(allocators.scratch.allocator(), text.current_text);
+                    try gui.textbox.executeTextEditOnArrayList(allocators.scratch.allocator(), &edit, params.pos, params.notifier, params.items);
 
                     app.updateTextObjectContent(edit.items) catch |e| {
                         logError("Failed to set text content", e, @errorReturnTrace());
@@ -380,6 +397,8 @@ pub fn main() !void {
                 },
             }
         }
+
+        try app.step();
 
         if (selected_object.value != app.input_state.selected_object.value) {
             try sidebar.handle.updateObjectProperties();

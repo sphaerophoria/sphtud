@@ -13,6 +13,8 @@ const InputState = gui.InputState;
 const PopupLayer = gui.popup_layer.PopupLayer;
 const Color = gui.Color;
 const SquircleRenderer = @import("SquircleRenderer.zig");
+const sphalloc = @import("sphalloc");
+const GlAlloc = sphrender.GlAlloc;
 
 const HexagonProgram = sphrender.xyuvt_program.Program(HexagonUniform);
 const LightnessProgram = sphrender.xyuvt_program.Program(LightnessUniform);
@@ -39,6 +41,7 @@ pub const SharedColorPickerState = struct {
     property_list_style: *const gui.property_list.Style,
 
     pub fn init(
+        gl_alloc: *GlAlloc,
         style: ColorStyle,
         drag_shared: *const gui.drag_float.Shared,
         guitext_state: *const gui.gui_text.SharedState,
@@ -47,48 +50,40 @@ pub const SharedColorPickerState = struct {
         property_list_style: *const gui.property_list.Style,
     ) !SharedColorPickerState {
         const hexagon_renderer = try HexagonProgram.init(
+            gl_alloc,
             hexagon_color_frag,
         );
-        errdefer hexagon_renderer.deinit();
 
         const lightness_renderer = try LightnessProgram.init(
+            gl_alloc,
             lightness_slider_frag,
         );
-        errdefer lightness_renderer.deinit();
 
         return .{
             .style = style,
             .hexagon_renderer = hexagon_renderer,
-            .hexagon_buffer = hexagon_renderer.makeFullScreenPlane(),
+            .hexagon_buffer = try hexagon_renderer.makeFullScreenPlane(gl_alloc),
             .drag_shared = drag_shared,
             .lightness_renderer = lightness_renderer,
-            .lightness_buffer = lightness_renderer.makeFullScreenPlane(),
+            .lightness_buffer = try lightness_renderer.makeFullScreenPlane(gl_alloc),
             .guitext_state = guitext_state,
             .squircle_renderer = squircle_renderer,
             .frame = frame_shared,
             .property_list_style = property_list_style,
         };
     }
-
-    pub fn deinit(self: *SharedColorPickerState) void {
-        self.hexagon_renderer.deinit();
-        self.hexagon_buffer.deinit();
-        self.lightness_renderer.deinit();
-        self.lightness_buffer.deinit();
-    }
 };
 
 pub fn ColorPicker(comptime Action: type, comptime ColorRetriever: type, comptime ColorGenerator: type) type {
     return struct {
         const Self = @This();
-        alloc: Allocator,
+
         color_retriever: ColorRetriever,
         color_generator: ColorGenerator,
         overlay: *PopupLayer(Action),
         shared: *const SharedColorPickerState,
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.deinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .setInputState = Self.setInputState,
@@ -96,11 +91,6 @@ pub fn ColorPicker(comptime Action: type, comptime ColorRetriever: type, comptim
             .setFocused = null,
             .reset = null,
         };
-
-        fn deinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            alloc.destroy(self);
-        }
 
         fn getSize(ctx: ?*anyopaque) PixelSize {
             const self: *Self = @ptrCast(@alignCast(ctx));
@@ -111,17 +101,16 @@ pub fn ColorPicker(comptime Action: type, comptime ColorRetriever: type, comptim
         }
 
         fn generateOverlayWidget(self: Self) !Widget(Action) {
-            const layout = try Layout(Action).init(self.alloc, self.shared.style.item_pad);
-            errdefer layout.deinit(self.alloc);
+            const layout = try Layout(Action).init(self.overlay.alloc.heap.arena(), self.shared.style.item_pad);
 
-            const title = try gui.label.makeLabel(Action, self.alloc, "Color picker", self.shared.guitext_state);
-            try layout.pushOrDeinitWidget(self.alloc, title);
+            const title = try gui.label.makeLabel(Action, self.overlay.alloc, "Color picker", self.shared.guitext_state);
+            try layout.pushWidget(title);
 
-            const picker = try makeHexagon(Action, self.alloc, self.color_retriever, self.color_generator, self.shared);
-            try layout.pushOrDeinitWidget(self.alloc, picker);
+            const picker = try makeHexagon(Action, self.overlay.alloc.heap.arena(), self.color_retriever, self.color_generator, self.shared);
+            try layout.pushWidget(picker);
 
             const widget_gen = WidgetGenerator(Action, ColorRetriever, ColorGenerator){
-                .alloc = self.alloc,
+                .alloc = self.overlay.alloc,
                 .guitext_state = self.shared.guitext_state,
                 .squircle_renderer = self.shared.squircle_renderer,
                 .shared = self.shared,
@@ -129,79 +118,63 @@ pub fn ColorPicker(comptime Action: type, comptime ColorRetriever: type, comptim
                 .generator = self.color_generator,
             };
 
-            const property_list = try gui.property_list.PropertyList(Action).init(self.alloc, self.shared.property_list_style);
-            const box = blk: {
-                errdefer property_list.deinit(self.alloc);
-
-                break :blk try gui.box.box(
-                    Action,
-                    self.alloc,
-                    property_list.asWidget(),
-                    .{ .width = self.shared.style.popup_width, .height = 0 },
-                    gui.box.FillStyle.fill_height,
-                );
-            };
-            try layout.pushOrDeinitWidget(self.alloc, box);
+            const property_list = try gui.property_list.PropertyList(Action).init(self.overlay.alloc.heap.arena(), self.shared.property_list_style, 3);
+            const box = try gui.box.box(
+                Action,
+                self.overlay.alloc.heap.arena(),
+                property_list.asWidget(),
+                .{ .width = self.shared.style.popup_width, .height = 0 },
+                gui.box.FillStyle.fill_height,
+            );
+            try layout.pushWidget(box);
 
             {
                 const label = try widget_gen.makeLabel("red");
-                errdefer label.deinit(self.alloc);
-
                 const drag = try widget_gen.makeRGBDrag("r");
-                errdefer drag.deinit(self.alloc);
-
-                try property_list.pushWidgets(self.alloc, label, drag);
+                try property_list.pushWidgets(label, drag);
             }
 
             {
                 const label = try widget_gen.makeLabel("green");
-                errdefer label.deinit(self.alloc);
-
                 const drag = try widget_gen.makeRGBDrag("g");
-                errdefer drag.deinit(self.alloc);
-
-                try property_list.pushWidgets(self.alloc, label, drag);
+                try property_list.pushWidgets(label, drag);
             }
 
             {
                 const label = try widget_gen.makeLabel("blue");
-                errdefer label.deinit(self.alloc);
-
                 const drag = try widget_gen.makeRGBDrag("b");
-                errdefer drag.deinit(self.alloc);
-
-                try property_list.pushWidgets(self.alloc, label, drag);
+                try property_list.pushWidgets(label, drag);
             }
 
-            return try gui.frame.makeFrame(Action, self.alloc, .{
+            return try gui.frame.makeFrame(Action, self.overlay.alloc.heap.arena(), .{
                 .inner = layout.asWidget(),
                 .shared = self.shared.frame,
             });
         }
 
         fn makeOverlayStack(self: *Self) !Widget(Action) {
-            const stack = try gui.stack.Stack(Action).init(self.alloc);
-            errdefer stack.deinit(self.alloc);
+            const stack = try gui.stack.Stack(Action, 2).init(self.overlay.alloc.heap.arena());
 
             const rect = try gui.rect.Rect(Action).init(
-                self.alloc,
+                self.overlay.alloc.heap.arena(),
                 self.shared.style.corner_radius,
                 self.shared.style.popup_background,
                 self.shared.squircle_renderer,
             );
-            try stack.pushWidgetOrDeinit(self.alloc, rect, .fill);
+            try stack.pushWidget(rect, .fill);
 
             const overlay_widget = try self.generateOverlayWidget();
-            try stack.pushWidgetOrDeinit(self.alloc, overlay_widget, .centered);
+            try stack.pushWidget(overlay_widget, .centered);
 
             return stack.asWidget();
         }
 
         fn spawnOverlay(self: *Self, overlay_pos: MousePos) !void {
+            try self.overlay.reset();
+
             const stack = try self.makeOverlayStack();
 
             self.overlay.set(
-                self.alloc,
                 stack,
                 @intFromFloat(overlay_pos.x),
                 @intFromFloat(overlay_pos.y),
@@ -240,18 +213,16 @@ pub fn ColorPicker(comptime Action: type, comptime ColorRetriever: type, comptim
 
 pub fn makeColorPicker(
     comptime Action: type,
-    alloc: Allocator,
+    alloc: gui.GuiAlloc,
     color_retriever: anytype,
     color_generator: anytype,
     shared: *const SharedColorPickerState,
     overlay: *PopupLayer(Action),
 ) !Widget(Action) {
     const T = ColorPicker(Action, @TypeOf(color_retriever), @TypeOf(color_generator));
-    const preview = try alloc.create(T);
-    errdefer alloc.destroy(preview);
+    const preview = try alloc.heap.arena().create(T);
 
     preview.* = .{
-        .alloc = alloc,
         .color_retriever = color_retriever,
         .color_generator = color_generator,
         .shared = shared,
@@ -266,7 +237,7 @@ pub fn makeColorPicker(
 
 fn WidgetGenerator(comptime Action: type, comptime ColorRetriever: type, comptime ColorGenerator: type) type {
     return struct {
-        alloc: Allocator,
+        alloc: gui.GuiAlloc,
         guitext_state: *const gui.gui_text.SharedState,
         squircle_renderer: *const SquircleRenderer,
         shared: *const SharedColorPickerState,
@@ -380,7 +351,6 @@ fn ColorHexagon(comptime Action: type, comptime ColorRetriever: type, comptime C
         shared: *const SharedColorPickerState,
 
         const widget_vtable = Widget(Action).VTable{
-            .deinit = Self.deinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .setInputState = Self.setInputState,
@@ -388,11 +358,6 @@ fn ColorHexagon(comptime Action: type, comptime ColorRetriever: type, comptime C
             .setFocused = null,
             .reset = null,
         };
-
-        fn deinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            alloc.destroy(self);
-        }
 
         fn getSize(ctx: ?*anyopaque) PixelSize {
             const self: *Self = @ptrCast(@alignCast(ctx));
@@ -536,7 +501,6 @@ fn ColorHexagon(comptime Action: type, comptime ColorRetriever: type, comptime C
 fn makeHexagon(comptime Action: type, alloc: Allocator, color_retriever: anytype, color_generator: anytype, shared: *const SharedColorPickerState) !Widget(Action) {
     const T = ColorHexagon(Action, @TypeOf(color_retriever), @TypeOf(color_generator));
     const ctx = try alloc.create(T);
-    errdefer alloc.destroy(ctx);
 
     ctx.* = .{
         .color_retriever = color_retriever,

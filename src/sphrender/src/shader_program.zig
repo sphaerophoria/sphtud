@@ -6,6 +6,10 @@ const sphmath = @import("sphmath");
 const Uniform = sphrender.Uniform;
 const ResolvedUniformValue = sphrender.ResolvedUniformValue;
 const ReservedUniformValue = sphrender.ReservedUniformValue;
+const GlAlloc = @import("GlAlloc.zig");
+const sphutil = @import("sphutil");
+const sphalloc = @import("sphalloc");
+const ScratchAlloc = sphalloc.ScratchAlloc;
 
 pub fn Program(comptime Vertex: type, comptime KnownUniforms: type) type {
     const num_known_uniforms = std.meta.fields(KnownUniforms).len;
@@ -18,9 +22,8 @@ pub fn Program(comptime Vertex: type, comptime KnownUniforms: type) type {
 
         const Self = @This();
 
-        pub fn init(vs: [:0]const u8, fs: [:0]const u8) !Self {
-            const program = try sphrender.compileLinkProgram(vs, fs);
-            errdefer gl.glDeleteProgram(program);
+        pub fn init(gl_alloc: *GlAlloc, vs: [:0]const u8, fs: [:0]const u8) !Self {
+            const program = try sphrender.compileLinkProgram(gl_alloc, vs, fs);
 
             var uniform_it = try sphrender.ProgramUniformIt.init(program);
             var known_uniform_locations: UniformLocations = .{null} ** num_known_uniforms;
@@ -39,31 +42,25 @@ pub fn Program(comptime Vertex: type, comptime KnownUniforms: type) type {
             };
         }
 
-        pub fn deinit(self: Self) void {
-            gl.glDeleteProgram(self.program);
+        pub fn makeBuffer(self: Self, gl_alloc: *GlAlloc, initial_data: []const Vertex) !Buffer(Vertex) {
+            return try Buffer(Vertex).init(gl_alloc, self.program, initial_data);
         }
 
-        pub fn makeBuffer(self: Self, initial_data: []const Vertex) Buffer(Vertex) {
-            return Buffer(Vertex).init(self.program, initial_data);
-        }
-
-        pub fn unknownUniforms(self: Self, alloc: Allocator) !UnknownUniforms {
+        pub fn unknownUniforms(self: Self, scratch: *ScratchAlloc) !UnknownUniforms {
             var uniform_it = try sphrender.ProgramUniformIt.init(self.program);
-            var items = std.ArrayList(UnknownUniforms.Item).init(alloc);
-            defer {
-                for (items.items) |*item| {
-                    item.deinit(alloc);
-                }
-                items.deinit();
-            }
+
+            var ret = try sphutil.RuntimeBoundedArray(UnknownUniforms.Item).init(
+                scratch.allocator(),
+                uniform_it.num_uniforms,
+            );
 
             while (uniform_it.next()) |uniform| {
                 if (knownUniformIdx(KnownUniforms, uniform.name)) |_| {
                     continue;
                 }
 
-                const duped_name = try alloc.dupe(u8, uniform.name);
-                try items.append(.{
+                const duped_name = try scratch.allocator().dupe(u8, uniform.name);
+                try ret.append(.{
                     .loc = uniform.loc,
                     .default = uniform.default,
                     .name = duped_name,
@@ -71,7 +68,7 @@ pub fn Program(comptime Vertex: type, comptime KnownUniforms: type) type {
             }
 
             return .{
-                .items = try items.toOwnedSlice(),
+                .items = ret.items,
             };
         }
 
@@ -129,7 +126,7 @@ pub fn Buffer(comptime Elem: type) type {
 
         const binding_index = 0;
 
-        pub fn init(program: gl.GLuint, initial_data: []const Elem) Self {
+        pub fn init(gl_alloc: *GlAlloc, program: gl.GLuint, initial_data: []const Elem) !Self {
             const fields = std.meta.fields(Elem);
             var field_locs: [fields.len]gl.GLint = undefined;
 
@@ -137,13 +134,11 @@ pub fn Buffer(comptime Elem: type) type {
                 field_locs[i] = gl.glGetAttribLocation(program, elem.name);
             }
 
-            var vertex_buffer: gl.GLuint = 0;
-            gl.glCreateBuffers(1, &vertex_buffer);
+            const vertex_buffer = try gl_alloc.createBuffer();
 
             gl.glNamedBufferData(vertex_buffer, @intCast(initial_data.len * elem_stride), initial_data.ptr, gl.GL_STATIC_DRAW);
 
-            var vertex_array: gl.GLuint = 0;
-            gl.glCreateVertexArrays(1, &vertex_array);
+            const vertex_array = try gl_alloc.createArray();
 
             gl.glVertexArrayVertexBuffer(vertex_array, binding_index, vertex_buffer, 0, elem_stride);
 
@@ -174,11 +169,6 @@ pub fn Buffer(comptime Elem: type) type {
             };
         }
 
-        pub fn deinit(self: Self) void {
-            gl.glDeleteBuffers(1, &self.vertex_buffer);
-            gl.glDeleteVertexArrays(1, &self.vertex_array);
-        }
-
         pub fn updateBuffer(self: *Self, points: []const Elem) void {
             gl.glNamedBufferData(self.vertex_buffer, @intCast(points.len * elem_stride), points.ptr, gl.GL_STATIC_DRAW);
             self.len = points.len;
@@ -203,8 +193,12 @@ pub const UnknownUniforms = struct {
         default: sphrender.UniformDefault,
         name: []const u8,
 
-        fn deinit(self: Item, alloc: Allocator) void {
-            alloc.free(self.name);
+        fn clone(self: Item, alloc: Allocator) !Item {
+            return .{
+                .loc = self.loc,
+                .default = self.default,
+                .name = try alloc.dupe(u8, self.name),
+            };
         }
     };
 
@@ -212,10 +206,13 @@ pub const UnknownUniforms = struct {
 
     items: []Item,
 
-    pub fn deinit(self: UnknownUniforms, alloc: Allocator) void {
-        for (self.items) |item| {
-            item.deinit(alloc);
+    pub fn clone(self: UnknownUniforms, alloc: Allocator) !UnknownUniforms {
+        const items = try alloc.alloc(Item, self.items.len);
+        for (items, self.items) |*dst, *src| {
+            dst.* = try src.clone(alloc);
         }
-        alloc.free(self.items);
+        return .{
+            .items = items,
+        };
     }
 };

@@ -13,6 +13,7 @@ const InputState = gui.InputState;
 const PopupLayer = gui.popup_layer.PopupLayer;
 const GuiText = gui.gui_text.GuiText;
 const SquircleRenderer = @import("SquircleRenderer.zig");
+const GlAlloc = sphrender.GlAlloc;
 
 const TriangleProgram = sphrender.shader_program.Program(TriangleVertex, TriangleUniform);
 
@@ -43,6 +44,7 @@ pub const Shared = struct {
     frame: *const gui.frame.Shared,
 
     const Options = struct {
+        gl_alloc: *GlAlloc,
         style: Style,
         guitext_state: *const gui.gui_text.SharedState,
         squircle_renderer: *const SquircleRenderer,
@@ -52,17 +54,18 @@ pub const Shared = struct {
     };
 
     pub fn init(options: Options) !Shared {
-        const triangle_program = try TriangleProgram.init(triangle_vertex_shader, triangle_fragment_shader);
-        errdefer triangle_program.deinit();
+        const triangle_program = try TriangleProgram.init(options.gl_alloc, triangle_vertex_shader, triangle_fragment_shader);
 
-        var triangle_buf = triangle_program.makeBuffer(&.{
-            // Make a triangle that is pointing down and taking up the full
-            // clip space
-            .{ .vPos = .{ -1.0, 1.0 } },
-            .{ .vPos = .{ 1.0, 1.0 } },
-            .{ .vPos = .{ 0.0, -1.0 } },
-        });
-        errdefer triangle_buf.deinit();
+        const triangle_buf = try triangle_program.makeBuffer(
+            options.gl_alloc,
+            &.{
+                // Make a triangle that is pointing down and taking up the full
+                // clip space
+                .{ .vPos = .{ -1.0, 1.0 } },
+                .{ .vPos = .{ 1.0, 1.0 } },
+                .{ .vPos = .{ 0.0, -1.0 } },
+            },
+        );
 
         return .{
             .triangle_program = triangle_program,
@@ -75,23 +78,15 @@ pub const Shared = struct {
             .frame = options.frame,
         };
     }
-
-    pub fn deinit(self: *Shared) void {
-        self.triangle_buf.deinit();
-        self.triangle_program.deinit();
-    }
 };
 
-pub fn makeComboBox(comptime Action: type, alloc: Allocator, retriever: anytype, on_select: anytype, popup_layer: *PopupLayer(Action), shared: *const Shared) !Widget(Action) {
+pub fn makeComboBox(comptime Action: type, alloc: gui.GuiAlloc, retriever: anytype, on_select: anytype, popup_layer: *PopupLayer(Action), shared: *const Shared) !Widget(Action) {
     const T = ComboBox(Action, @TypeOf(retriever), @TypeOf(on_select));
-    const ctx = try alloc.create(T);
-    errdefer alloc.destroy(ctx);
+    const ctx = try alloc.heap.arena().create(T);
 
     const gui_text = try gui.gui_text.guiText(alloc, shared.guitext_state, selectedTextRetriever(retriever));
-    errdefer gui_text.deinit(alloc);
 
     ctx.* = .{
-        .alloc = alloc,
         .shared = shared,
         .popup_layer = popup_layer,
         .retriever = retriever,
@@ -107,7 +102,6 @@ pub fn makeComboBox(comptime Action: type, alloc: Allocator, retriever: anytype,
 
 pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime ListActionGenerator: type) type {
     return struct {
-        alloc: Allocator,
         shared: *const Shared,
         popup_layer: *gui.popup_layer.PopupLayer(Action),
         retriever: ListRetriever,
@@ -121,7 +115,6 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
 
         const Self = @This();
         const widget_vtable = gui.Widget(Action).VTable{
-            .deinit = Self.deinit,
             .render = Self.render,
             .getSize = Self.getSize,
             .update = Self.update,
@@ -129,12 +122,6 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
             .reset = null,
             .setFocused = null,
         };
-
-        fn deinit(ctx: ?*anyopaque, alloc: Allocator) void {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            self.gui_text.deinit(alloc);
-            alloc.destroy(self);
-        }
 
         fn render(ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
@@ -196,7 +183,7 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             const sub_bounds = SubSizes.calc(self.shared.style);
-            try self.gui_text.update(self.alloc, sub_bounds.text_wrap);
+            try self.gui_text.update(sub_bounds.text_wrap);
         }
 
         fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
@@ -220,73 +207,69 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
         }
 
         fn spawnOverlay(self: *Self, loc: gui.MousePos) !void {
-            const stack = try gui.stack.Stack(Action).init(self.alloc);
-            errdefer stack.deinit(self.alloc);
+            try self.popup_layer.reset();
+            const overlay_alloc = self.popup_layer.alloc.heap.arena();
 
+            const stack = try gui.stack.Stack(Action, 2).init(overlay_alloc);
             const rect = try gui.rect.Rect(Action).init(
-                self.alloc,
+                overlay_alloc,
                 self.shared.style.corner_radius,
                 self.shared.style.popup_background,
                 self.shared.squircle_renderer,
             );
-            try stack.pushWidgetOrDeinit(self.alloc, rect, .fill);
+            try stack.pushWidget(rect, .fill);
 
-            const frame = blk: {
-                const list = try gui.selectable_list.selectableList(
-                    Action,
-                    self.alloc,
-                    self.retriever,
-                    self.on_select,
-                    self.shared.selectable,
-                );
-                errdefer list.deinit(self.alloc);
+            const list = try gui.selectable_list.selectableList(
+                Action,
+                self.popup_layer.alloc,
+                self.retriever,
+                self.on_select,
+                self.shared.selectable,
+            );
 
-                const frame = try gui.frame.makeFrame(
-                    Action,
-                    self.alloc,
-                    .{
-                        .inner = list,
-                        .shared = self.shared.frame,
-                    },
-                );
+            const frame = try gui.frame.makeFrame(
+                Action,
+                overlay_alloc,
+                .{
+                    .inner = list,
+                    .shared = self.shared.frame,
+                },
+            );
 
-                break :blk frame;
-            };
+            const scroll = try gui.scroll_view.ScrollView(Action).init(
+                overlay_alloc,
+                frame,
+                self.shared.scroll_style,
+                self.shared.squircle_renderer,
+            );
 
-            const scroll = blk: {
-                errdefer frame.deinit(self.alloc);
+            // We need to know the height of the content, but the content is
+            // lazily added on first update. Give the frame our max width and
+            // height to see if it's smaller
+            try frame.update(.{
+                .width = self.shared.style.popup_width - self.shared.style.layout_pad,
+                .height = self.shared.style.popup_height - self.shared.style.layout_pad,
+            });
 
-                break :blk try gui.scroll_view.ScrollView(Action).init(
-                    self.alloc,
-                    frame,
-                    self.shared.scroll_style,
-                    self.shared.squircle_renderer,
-                );
-            };
+            const height = @min(
+                self.shared.style.popup_height - self.shared.style.layout_pad,
+                frame.getSize().height,
+            );
 
-            const box = blk: {
-                errdefer scroll.deinit(self.alloc);
+            const box = try gui.box.box(
+                Action,
+                overlay_alloc,
+                scroll,
+                .{
+                    .width = self.shared.style.popup_width - self.shared.style.layout_pad,
+                    .height = height,
+                },
+                .fill_none,
+            );
 
-                const height = @min(
-                    self.shared.style.popup_height - self.shared.style.layout_pad,
-                    frame.getSize().height,
-                );
+            try stack.pushWidget(box, .centered);
 
-                break :blk try gui.box.box(
-                    Action,
-                    self.alloc,
-                    scroll,
-                    .{
-                        .width = self.shared.style.popup_width - self.shared.style.layout_pad,
-                        .height = height,
-                    },
-                    .fill_none,
-                );
-            };
-
-            try stack.pushWidgetOrDeinit(self.alloc, box, .centered);
-
-            self.popup_layer.set(self.alloc, stack.asWidget(), @intFromFloat(loc.x), @intFromFloat(loc.y));
+            self.popup_layer.set(stack.asWidget(), @intFromFloat(loc.x), @intFromFloat(loc.y));
         }
     };
 }
