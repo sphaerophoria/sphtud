@@ -15,6 +15,9 @@
         .sphui = .{
             .path = "src/gui",
         },
+        .sphwindow = .{
+            .path = "src/sphwindow",
+        },
     },
     .paths = .{
         "res",

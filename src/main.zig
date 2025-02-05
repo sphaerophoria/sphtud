@@ -3,172 +3,14 @@ const Allocator = std.mem.Allocator;
 const sphrender = @import("sphrender");
 const sphmath = @import("sphmath");
 const sphimp = @import("sphimp");
+const sphwindow = @import("sphwindow");
 const App = sphimp.App;
-const obj_mod = sphimp.object;
-const shader_storage = sphimp.shader_storage;
-const Renderer = sphimp.Renderer;
-const ShaderStorage = shader_storage.ShaderStorage;
-const ShaderId = shader_storage.ShaderId;
-const FontStorage = sphimp.FontStorage;
-const BrushId = shader_storage.BrushId;
 const gui = @import("sphui");
 const ui_action = @import("sphimp_ui/ui_action.zig");
 const AppWidget = @import("sphimp_ui/AppWidget.zig");
 const logError = @import("sphimp_ui/util.zig").logError;
-const list_io = @import("sphimp_ui/list_io.zig");
-const label_adaptors = @import("sphimp_ui/label_adaptors.zig");
-const float_adaptors = @import("sphimp_ui/float_adaptors.zig");
-const color_adaptors = @import("sphimp_ui/color_adaptors.zig");
 const sidebar_mod = @import("sphimp_ui/sidebar.zig");
 const UiAction = ui_action.UiAction;
-const UiActionType = ui_action.UiActionType;
-const WindowAction = gui.WindowAction;
-const c = @cImport({
-    @cInclude("GLFW/glfw3.h");
-});
-const glfwb = c;
-const ObjectId = obj_mod.ObjectId;
-
-fn errorCallbackGlfw(_: c_int, description: [*c]const u8) callconv(.C) void {
-    std.log.err("Error: {s}\n", .{std.mem.span(description)});
-}
-
-fn keyCallbackGlfw(window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action: c_int, modifiers: c_int) callconv(.C) void {
-    if (action != glfwb.GLFW_PRESS) {
-        return;
-    }
-
-    const glfw: *Glfw = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(window)));
-
-    const key_char: gui.Key = switch (key) {
-        glfwb.GLFW_KEY_A...glfwb.GLFW_KEY_Z => .{ .ascii = @intCast(key - glfwb.GLFW_KEY_A + 'a') },
-        glfwb.GLFW_KEY_COMMA...glfwb.GLFW_KEY_9 => .{ .ascii = @intCast(key - glfwb.GLFW_KEY_COMMA + ',') },
-        glfwb.GLFW_KEY_SPACE => .{ .ascii = ' ' },
-        glfwb.GLFW_KEY_LEFT => .left_arrow,
-        glfwb.GLFW_KEY_RIGHT => .right_arrow,
-        glfwb.GLFW_KEY_BACKSPACE => .backspace,
-        glfwb.GLFW_KEY_DELETE => .delete,
-        else => return,
-    };
-
-    glfw.queue.writeItem(.{
-        .key_down = .{
-            .key = key_char,
-            .ctrl = (modifiers & glfwb.GLFW_MOD_CONTROL) != 0,
-        },
-    }) catch |e| {
-        logError("Failed to write key press", e, @errorReturnTrace());
-    };
-}
-
-fn cursorPositionCallbackGlfw(window: ?*glfwb.GLFWwindow, xpos: f64, ypos: f64) callconv(.C) void {
-    const glfw: *Glfw = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(window)));
-    glfw.queue.writeItem(.{
-        .mouse_move = .{
-            .x = @floatCast(xpos),
-            .y = @floatCast(ypos),
-        },
-    }) catch |e| {
-        logError("Failed to write mouse movement", e, @errorReturnTrace());
-    };
-}
-
-fn mouseButtonCallbackGlfw(window: ?*glfwb.GLFWwindow, button: c_int, action: c_int, _: c_int) callconv(.C) void {
-    const glfw: *Glfw = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(window)));
-    const is_down = action == glfwb.GLFW_PRESS;
-    var write_obj: ?WindowAction = null;
-
-    if (button == glfwb.GLFW_MOUSE_BUTTON_LEFT and is_down) {
-        write_obj = .mouse_down;
-    } else if (button == glfwb.GLFW_MOUSE_BUTTON_LEFT and !is_down) {
-        write_obj = .mouse_up;
-    } else if (button == glfwb.GLFW_MOUSE_BUTTON_MIDDLE and is_down) {
-        write_obj = .middle_down;
-    } else if (button == glfwb.GLFW_MOUSE_BUTTON_MIDDLE and !is_down) {
-        write_obj = .middle_up;
-    } else if (button == glfwb.GLFW_MOUSE_BUTTON_RIGHT and is_down) {
-        write_obj = .right_click;
-    }
-
-    if (write_obj) |w| {
-        glfw.queue.writeItem(w) catch |e| {
-            logError("Failed to write mouse press/release", e, @errorReturnTrace());
-        };
-    }
-}
-
-fn scrollCallbackGlfw(window: ?*glfwb.GLFWwindow, _: f64, y: f64) callconv(.C) void {
-    const glfw: *Glfw = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(window)));
-    glfw.queue.writeItem(.{
-        .scroll = @floatCast(y),
-    }) catch |e| {
-        logError("Failed to write scroll", e, @errorReturnTrace());
-    };
-}
-
-const Glfw = struct {
-    window: *glfwb.GLFWwindow = undefined,
-    queue: Fifo = undefined,
-
-    const Fifo = std.fifo.LinearFifo(WindowAction, .{ .Static = 1024 });
-
-    fn initPinned(self: *Glfw, window_width: comptime_int, window_height: comptime_int) !void {
-        _ = glfwb.glfwSetErrorCallback(errorCallbackGlfw);
-
-        if (glfwb.glfwInit() != glfwb.GLFW_TRUE) {
-            return error.GLFWInit;
-        }
-        errdefer glfwb.glfwTerminate();
-
-        glfwb.glfwWindowHint(glfwb.GLFW_CONTEXT_VERSION_MAJOR, 3);
-        glfwb.glfwWindowHint(glfwb.GLFW_CONTEXT_VERSION_MINOR, 3);
-        glfwb.glfwWindowHint(glfwb.GLFW_OPENGL_PROFILE, glfwb.GLFW_OPENGL_CORE_PROFILE);
-        glfwb.glfwWindowHint(glfwb.GLFW_OPENGL_DEBUG_CONTEXT, 1);
-        glfwb.glfwWindowHint(glfwb.GLFW_SAMPLES, 4);
-
-        const window = glfwb.glfwCreateWindow(window_width, window_height, "sphimp", null, null);
-        if (window == null) {
-            return error.CreateWindow;
-        }
-        errdefer glfwb.glfwDestroyWindow(window);
-
-        _ = glfwb.glfwSetKeyCallback(window, keyCallbackGlfw);
-        _ = glfwb.glfwSetCursorPosCallback(window, cursorPositionCallbackGlfw);
-        _ = glfwb.glfwSetMouseButtonCallback(window, mouseButtonCallbackGlfw);
-        _ = glfwb.glfwSetScrollCallback(window, scrollCallbackGlfw);
-
-        glfwb.glfwMakeContextCurrent(window);
-        glfwb.glfwSwapInterval(1);
-
-        glfwb.glfwSetWindowUserPointer(window, self);
-
-        self.* = .{
-            .window = window.?,
-            .queue = Fifo.init(),
-        };
-    }
-
-    fn deinit(self: *Glfw) void {
-        glfwb.glfwDestroyWindow(self.window);
-        glfwb.glfwTerminate();
-    }
-
-    fn closed(self: *Glfw) bool {
-        return glfwb.glfwWindowShouldClose(self.window) == glfwb.GLFW_TRUE;
-    }
-
-    fn getWindowSize(self: *Glfw) struct { usize, usize } {
-        var width: c_int = 0;
-        var height: c_int = 0;
-        glfwb.glfwGetFramebufferSize(self.window, &width, &height);
-        return .{ @intCast(width), @intCast(height) };
-    }
-
-    fn swapBuffers(self: *Glfw) void {
-        glfwb.glfwSwapBuffers(self.window);
-        glfwb.glfwPollEvents();
-    }
-};
 
 const Args = struct {
     action: Action,
@@ -315,10 +157,10 @@ pub fn main() !void {
     const window_width = 1024;
     const window_height = 600;
 
-    var glfw = Glfw{};
+    var window = sphwindow.Window{};
 
-    try glfw.initPinned(window_width, window_height);
-    defer glfw.deinit();
+    try window.initPinned("sphimp", window_width, window_height);
+    defer window.deinit();
 
     sphrender.gl.glEnable(sphrender.gl.GL_MULTISAMPLE);
     sphrender.gl.glEnable(sphrender.gl.GL_SCISSOR_TEST);
@@ -375,8 +217,8 @@ pub fn main() !void {
     var gui_runner = try widget_factory.makeRunnerOrDeinit(toplevel_layout.asWidget());
     defer gui_runner.deinit();
 
-    while (!glfw.closed()) {
-        const width, const height = glfw.getWindowSize();
+    while (!window.closed()) {
+        const width, const height = window.getWindowSize();
 
         sphrender.gl.glViewport(0, 0, @intCast(width), @intCast(height));
         sphrender.gl.glScissor(0, 0, @intCast(width), @intCast(height));
@@ -394,7 +236,7 @@ pub fn main() !void {
         };
 
         const selected_object = app.input_state.selected_object;
-        if (try gui_runner.step(window_bounds, window_size, &glfw.queue)) |action| exec_action: {
+        if (try gui_runner.step(window_bounds, window_size, &window.queue)) |action| exec_action: {
             switch (action) {
                 .update_selected_object => |id| {
                     app.setSelectedObject(id);
@@ -544,6 +386,6 @@ pub fn main() !void {
             sidebar.handle.notifyObjectChanged();
         }
 
-        glfw.swapBuffers();
+        window.swapBuffers();
     }
 }

@@ -12,6 +12,7 @@ const Builder = struct {
     sphtext: *std.Build.Module,
     sphimp: *std.Build.Module,
     sphui: *std.Build.Module,
+    sphwindow: *std.Build.Module,
 
     fn init(b: *std.Build) Builder {
         const target = b.standardTargetOptions(.{});
@@ -23,6 +24,7 @@ const Builder = struct {
         const sphrender = b.dependency("sphrender", .{}).module("sphrender");
         const sphtext = b.dependency("sphtext", .{}).module("sphtext");
         const sphui = b.dependency("sphui", .{}).module("sphui");
+        const sphwindow = b.dependency("sphwindow", .{}).module("sphwindow");
 
         const sphimp = b.createModule(.{
             .root_source_file = b.path("src/sphimp/sphimp.zig"),
@@ -46,6 +48,7 @@ const Builder = struct {
             .sphtext = sphtext,
             .sphimp = sphimp,
             .sphui = sphui,
+            .sphwindow = sphwindow,
         };
     }
 
@@ -63,8 +66,8 @@ const Builder = struct {
     }
 
     fn addGuiDependencies(self: *Builder, exe: *std.Build.Step.Compile) void {
-        exe.linkSystemLibrary("glfw");
         exe.root_module.addImport("sphui", self.sphui);
+        exe.root_module.addImport("sphwindow", self.sphwindow);
     }
 
     fn addExecutable(self: *Builder, name: []const u8, root_source_file: []const u8) *std.Build.Step.Compile {
