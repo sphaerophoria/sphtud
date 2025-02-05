@@ -223,9 +223,9 @@ fn Textbox(comptime Action: type, comptime TextRetriever: type, comptime TextAct
 
             var action: ?Action = null;
             if (self.focused) blk: {
-                if (input_state.frame_keys.items.len == 0) break :blk;
+                if (input_state.key_tracker.pressed_this_frame.items.len == 0) break :blk;
 
-                for (input_state.frame_keys.items) |key| {
+                for (input_state.key_tracker.pressed_this_frame.items) |key| {
                     switch (key.key) {
                         .left_arrow => self.cursor_pos_text_idx = self.cursor_pos_text_idx -| 1,
                         .right_arrow => {
@@ -235,7 +235,7 @@ fn Textbox(comptime Action: type, comptime TextRetriever: type, comptime TextAct
                         else => {},
                     }
                 }
-                action = generateAction(Action, &self.text_action, self.makeNotifier(), self.cursor_pos_text_idx, input_state.frame_keys.items);
+                action = generateAction(Action, &self.text_action, self.makeNotifier(), self.cursor_pos_text_idx, input_state.key_tracker.pressed_this_frame.items);
             }
 
             return .{

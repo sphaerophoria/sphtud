@@ -126,7 +126,7 @@ fn trySetInputState(self: *AppWidget, widget_bounds: gui.PixelBBox, input_bounds
     if (input_state.mouse_middle_pressed) self.app.setMiddleDown();
     if (input_state.mouse_pressed) try self.app.setMouseDown();
 
-    for (input_state.frame_keys.items) |key| {
+    for (input_state.key_tracker.pressed_this_frame.items) |key| {
         if (key.key == .ascii) {
             try self.app.setKeyDown(key.key.ascii, key.ctrl);
         }

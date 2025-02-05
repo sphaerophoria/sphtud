@@ -37,11 +37,23 @@ pub const Key = union(enum) {
     right_arrow,
     backspace,
     delete,
+
+    fn eql(self: Key, other: Key) bool {
+        return std.meta.eql(self, other);
+    }
+
+    fn toLower(self: Key) Key {
+        return switch (self) {
+            .ascii => |v| .{ .ascii = std.ascii.toLower(v) },
+            inline else => |_, t| t,
+        };
+    }
 };
 pub const KeyEvent = struct { key: Key, ctrl: bool };
 
 pub const WindowAction = union(enum) {
     key_down: KeyEvent,
+    key_up: Key,
     mouse_move: MousePos,
     mouse_down,
     mouse_up,
@@ -52,6 +64,60 @@ pub const WindowAction = union(enum) {
 };
 
 pub const MousePos = struct { x: f32, y: f32 };
+
+pub const KeyTracker = struct {
+    const max_pressed_keys = 16;
+
+    // always lower case
+    held_keys: std.BoundedArray(Key, max_pressed_keys) = .{},
+    pressed_this_frame: std.ArrayListUnmanaged(KeyEvent) = .{},
+
+    pub fn isKeyDown(self: KeyTracker, key: Key) bool {
+        const lower_key = key.toLower();
+        for (self.held_keys.slice()) |held| {
+            if (held.eql(lower_key)) return true;
+        }
+
+        return false;
+    }
+
+    fn deinit(self: *KeyTracker, alloc: Allocator) void {
+        self.pressed_this_frame.deinit(alloc);
+    }
+
+    fn startFrame(self: *KeyTracker) void {
+        self.pressed_this_frame.clearRetainingCapacity();
+    }
+
+    fn pushDown(self: *KeyTracker, alloc: Allocator, key: KeyEvent) !void {
+        try self.pressed_this_frame.append(alloc, key);
+
+        const lower_key = key.key.toLower();
+        for (self.held_keys.slice()) |held| {
+            if (held.eql(lower_key)) {
+                std.log.err("Duplicate key down", .{});
+                return;
+            }
+        }
+
+        self.held_keys.append(lower_key) catch {
+            std.log.warn("Too many keys pressed\n", .{});
+        };
+    }
+
+    fn pushUp(self: *KeyTracker, key: Key) void {
+        const lower_key = key.toLower();
+        var idx: usize = 0;
+        while (idx < self.held_keys.len) {
+            const held = self.held_keys.buffer[idx];
+            if (held.eql(lower_key)) {
+                _ = self.held_keys.swapRemove(idx);
+            } else {
+                idx += 1;
+            }
+        }
+    }
+};
 
 pub const InputState = struct {
     mouse_pos: MousePos = .{ .x = 0, .y = 0 },
@@ -65,10 +131,10 @@ pub const InputState = struct {
     mouse_pressed: bool = false,
     mouse_released: bool = false,
     frame_scroll: f32 = 0,
-    frame_keys: std.ArrayListUnmanaged(KeyEvent) = .{},
+    key_tracker: KeyTracker = .{},
 
     pub fn deinit(self: *InputState, alloc: Allocator) void {
-        self.frame_keys.deinit(alloc);
+        self.key_tracker.deinit(alloc);
     }
 
     pub fn startFrame(self: *InputState) void {
@@ -80,7 +146,7 @@ pub const InputState = struct {
         self.mouse_middle_pressed = false;
         self.mouse_middle_released = false;
         self.mouse_pressed = false;
-        self.frame_keys.clearRetainingCapacity();
+        self.key_tracker.startFrame();
         self.frame_scroll = 0;
     }
 
@@ -100,7 +166,10 @@ pub const InputState = struct {
                 self.frame_scroll += amount;
             },
             .key_down => |ev| {
-                try self.frame_keys.append(alloc, ev);
+                try self.key_tracker.pushDown(alloc, ev);
+            },
+            .key_up => |key| {
+                self.key_tracker.pushUp(key);
             },
             .middle_down => self.mouse_middle_pressed = true,
             .middle_up => self.mouse_middle_released = true,

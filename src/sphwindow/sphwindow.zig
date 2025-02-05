@@ -78,10 +78,6 @@ fn errorCallbackGlfw(_: c_int, description: [*c]const u8) callconv(.C) void {
 }
 
 fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action: c_int, modifiers: c_int) callconv(.C) void {
-    if (action != glfwb.GLFW_PRESS) {
-        return;
-    }
-
     const window: *Window = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(glfw_window)));
 
     const key_char: gui.Key = switch (key) {
@@ -98,14 +94,22 @@ fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action
         else => return,
     };
 
-    window.queue.writeItem(.{
-        .key_down = .{
-            .key = key_char,
-            .ctrl = (modifiers & glfwb.GLFW_MOD_CONTROL) != 0,
-        },
-    }) catch |e| {
-        logError("Failed to write key press", e, @errorReturnTrace());
-    };
+    if (action == glfwb.GLFW_PRESS) {
+        window.queue.writeItem(.{
+            .key_down = .{
+                .key = key_char,
+                .ctrl = (modifiers & glfwb.GLFW_MOD_CONTROL) != 0,
+            },
+        }) catch |e| {
+            logError("Failed to write key press", e, @errorReturnTrace());
+        };
+    } else if (action == glfwb.GLFW_RELEASE) {
+        window.queue.writeItem(.{
+            .key_up = key_char,
+        }) catch |e| {
+            logError("Failed to write key release", e, @errorReturnTrace());
+        };
+    }
 }
 
 fn cursorPositionCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, xpos: f64, ypos: f64) callconv(.C) void {
