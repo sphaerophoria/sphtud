@@ -600,6 +600,10 @@ pub const GeneratedMaskObject = struct {
             const a = points[i];
             const b = points[(i + 1) % points.len];
 
+            if (@abs(a[1] - b[1]) < 1e-7) {
+                continue;
+            }
+
             const t = (y_clip - b[1]) / (a[1] - b[1]);
             if (t > 1.0 or t < 0.0) {
                 continue;
