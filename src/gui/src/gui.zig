@@ -28,6 +28,7 @@ pub const combo_box = @import("combo_box.zig");
 pub const box = @import("box.zig");
 pub const checkbox = @import("checkbox.zig");
 pub const util = @import("util.zig");
+pub const memory_widget = @import("memory_widget.zig");
 
 test {
     std.testing.refAllDeclsRecursive(@This());

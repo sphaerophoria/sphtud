@@ -1,6 +1,11 @@
 .{
     .name = "sphalloc",
     .version = "0.0.0",
+    .dependencies = .{
+        .sphutil_noalloc = .{
+            .path = "../sphutil_noalloc",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

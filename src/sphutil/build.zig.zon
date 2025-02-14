@@ -2,6 +2,9 @@
     .name = "sphutil",
     .version = "0.0.0",
     .dependencies = .{
+        .sphutil_noalloc = .{
+            .path = "../sphutil_noalloc",
+        },
         .sphalloc = .{
             .path = "../sphalloc",
         },

@@ -91,6 +91,7 @@ fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action
         glfwb.GLFW_KEY_RIGHT => .right_arrow,
         glfwb.GLFW_KEY_BACKSPACE => .backspace,
         glfwb.GLFW_KEY_DELETE => .delete,
+        glfwb.GLFW_KEY_ESCAPE => .escape,
         else => return,
     };
 

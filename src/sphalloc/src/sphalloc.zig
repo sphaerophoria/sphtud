@@ -2,6 +2,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const buddy_impl = @import("buddy_impl.zig");
 
+pub const MemoryTracker = @import("MemoryTracker.zig");
+
 const Block = []u8;
 
 /// A simple bump allocator

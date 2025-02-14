@@ -1,5 +1,6 @@
 const std = @import("std");
 const sphalloc = @import("sphalloc");
+const MemoryTracker = sphalloc.MemoryTracker;
 const Allocator = std.mem.Allocator;
 const sphrender = @import("sphrender");
 const sphmath = @import("sphmath");
@@ -228,6 +229,13 @@ pub fn main() !void {
     const sidebar = try sidebar_mod.makeSidebar(gui_alloc, &app, widget_state);
     try toplevel_layout.pushWidget(sidebar.widget);
 
+    var memory_tracker = blk: {
+        const now = try std.time.Instant.now();
+        break :blk try MemoryTracker.init(root_arena, now, 1000, &allocators.root);
+    };
+
+    const memory_widget = try widget_factory.makeMemoryWidget(&memory_tracker);
+
     const app_widget = try AppWidget.init(root_arena, &app, .{ .width = window_width, .height = window_height });
     try toplevel_layout.pushWidget(app_widget);
 
@@ -237,6 +245,7 @@ pub fn main() !void {
         allocators.scratch.reset();
         scratch_gl.reset();
         const width, const height = window.getWindowSize();
+        const now = try std.time.Instant.now();
 
         sphrender.gl.glViewport(0, 0, @intCast(width), @intCast(height));
         sphrender.gl.glScissor(0, 0, @intCast(width), @intCast(height));
@@ -399,6 +408,15 @@ pub fn main() !void {
         }
 
         try app.step();
+        try memory_tracker.step(now);
+
+        for (gui_runner.input_state.key_tracker.pressed_this_frame.items) |key| {
+            if (key.ctrl and key.key == .ascii and key.key.ascii == 'd') {
+                widget_factory.state.overlay.set(memory_widget, 0, 0);
+            } else if (key.key == .escape) {
+                try widget_factory.state.overlay.reset();
+            }
+        }
 
         if (selected_object.value != app.input_state.selected_object.value) {
             try sidebar.handle.updateObjectProperties();

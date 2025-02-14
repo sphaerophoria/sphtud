@@ -20,6 +20,10 @@ pushd src/sphutil/
 zig build test
 popd
 
+pushd src/sphutil_noalloc/
+zig build test
+popd
+
 pushd src/sphalloc/
 zig build test
 popd

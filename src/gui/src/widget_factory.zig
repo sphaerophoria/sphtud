@@ -178,6 +178,15 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
         .squircle_renderer = &ret.squircle_renderer,
     };
 
+    ret.memory_widget_shared = try gui.memory_widget.Shared.init(
+        gui_alloc.gl,
+        scratch_alloc,
+        &ret.property_list_style,
+        &ret.guitext_state,
+        &ret.scroll_style,
+        &ret.squircle_renderer,
+    );
+
     ret.overlay = gui.popup_layer.PopupLayer(Action){
         .alloc = try gui_alloc.makeSubAlloc("overlay"),
     };
@@ -232,6 +241,7 @@ pub fn WidgetState(comptime Action: type) type {
         property_list_style: gui.property_list.Style,
         combo_box_shared: gui.combo_box.Shared,
         checkbox_shared: gui.checkbox.Shared,
+        memory_widget_shared: gui.memory_widget.Shared,
         overlay: gui.popup_layer.PopupLayer(Action),
 
         const Self = @This();
@@ -372,6 +382,10 @@ pub fn WidgetFactory(comptime Action: type) type {
             try root_stack.pushWidget(self.state.overlay.asWidget(), .{ .offset = .{ .x_offs = 0, .y_offs = 0 } });
 
             return gui.runner.Runner(Action).init(self.alloc.heap.general(), root_stack.asWidget());
+        }
+
+        pub fn makeMemoryWidget(self: *const Self, memory_tracker: *const sphalloc.MemoryTracker) !gui.Widget(Action) {
+            return gui.memory_widget.makeMemoryWidget(Action, self.alloc, memory_tracker, &self.state.memory_widget_shared);
         }
     };
 }
