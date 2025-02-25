@@ -104,21 +104,23 @@ pub fn ScrollView(comptime Action: type) type {
         fn setInputState(ctx: ?*anyopaque, bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) gui.InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
-            const new_scroll_ratio = self.scrollbar.handleInput(
-                input_state,
-                scrollAreaBounds(self.scrollbar, bounds),
-            );
+            if (self.scrollbar_present) {
+                const new_scroll_ratio = self.scrollbar.handleInput(
+                    input_state,
+                    scrollAreaBounds(self.scrollbar, bounds),
+                );
 
-            if (new_scroll_ratio) |scroll_loc| {
-                const content_height: f32 = @floatFromInt(self.contentHeight());
-                self.scroll_offs = @intFromFloat(content_height * scroll_loc);
+                if (new_scroll_ratio) |scroll_loc| {
+                    const content_height: f32 = @floatFromInt(self.contentHeight());
+                    self.scroll_offs = @intFromFloat(content_height * scroll_loc);
+                }
+
+                if (input_bounds.containsMousePos(input_state.mouse_pos)) {
+                    self.scroll_offs -= @intFromFloat(input_state.frame_scroll * 15);
+                }
+
+                self.clampScrollOffs();
             }
-
-            if (input_bounds.containsMousePos(input_state.mouse_pos)) {
-                self.scroll_offs -= @intFromFloat(input_state.frame_scroll * 15);
-            }
-
-            self.clampScrollOffs();
 
             const widget_bounds = self.innerBounds(bounds);
             return self.inner.setInputState(
