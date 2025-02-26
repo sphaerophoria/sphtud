@@ -85,6 +85,7 @@ fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action
             const base_char: u8 = if (modifiers & glfwb.GLFW_MOD_SHIFT != 0) 'A' else 'a';
             break :blk .{ .ascii = @intCast(key - glfwb.GLFW_KEY_A + base_char) };
         },
+        glfwb.GLFW_KEY_GRAVE_ACCENT => .{ .ascii = @intCast('`') },
         glfwb.GLFW_KEY_COMMA...glfwb.GLFW_KEY_9 => .{ .ascii = @intCast(key - glfwb.GLFW_KEY_COMMA + ',') },
         glfwb.GLFW_KEY_SPACE => .{ .ascii = ' ' },
         glfwb.GLFW_KEY_LEFT => .left_arrow,

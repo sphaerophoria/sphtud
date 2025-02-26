@@ -46,6 +46,8 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
 
     ret.squircle_renderer = try gui.SquircleRenderer.init(gui_alloc.gl);
 
+    ret.image_renderer = try sphrender.xyuvt_program.ImageRenderer.init(gui_alloc.gl);
+
     ret.guitext_state = gui.gui_text.SharedState{
         .scratch_alloc = scratch_alloc,
         .scratch_gl = scratch_gl,
@@ -189,6 +191,10 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
         &ret.squircle_renderer,
     );
 
+    ret.thumbnail_shared = .{
+        .image_renderer = &ret.image_renderer,
+    };
+
     ret.overlay = gui.popup_layer.PopupLayer(Action){
         .alloc = try gui_alloc.makeSubAlloc("overlay"),
     };
@@ -234,6 +240,7 @@ pub fn WidgetState(comptime Action: type) type {
         drag_shared: gui.drag_float.Shared,
         shared_button_state: gui.button.SharedButtonState,
         squircle_renderer: gui.SquircleRenderer,
+        image_renderer: sphrender.xyuvt_program.ImageRenderer,
         scroll_style: gui.scrollbar.Style,
         shared_color: gui.color_picker.SharedColorPickerState,
         shared_textbox_state: gui.textbox.SharedTextboxState,
@@ -244,6 +251,7 @@ pub fn WidgetState(comptime Action: type) type {
         combo_box_shared: gui.combo_box.Shared,
         checkbox_shared: gui.checkbox.Shared,
         memory_widget_shared: gui.memory_widget.Shared,
+        thumbnail_shared: gui.thumbnail.Shared,
         overlay: gui.popup_layer.PopupLayer(Action),
 
         const Self = @This();
@@ -370,6 +378,17 @@ pub fn WidgetFactory(comptime Action: type) type {
             return gui.stack.Stack(Action, max_elems).init(self.alloc.heap.arena());
         }
 
+        pub fn makeGrid(
+            self: *const Self,
+            column_ratios: []const f32,
+        ) !*gui.stack.Stack(Action) {
+            return gui.grid.Grid(Action).init(
+                self.alloc.heap.arena(),
+                column_ratios,
+                self.state.layout_pad,
+            );
+        }
+
         pub fn makeRect(self: *const Self, color: gui.Color) !gui.Widget(Action) {
             return gui.rect.Rect(Action).init(self.alloc.heap.arena(), 1.0, color, &self.state.squircle_renderer);
         }
@@ -388,6 +407,15 @@ pub fn WidgetFactory(comptime Action: type) type {
 
         pub fn makeMemoryWidget(self: *const Self, memory_tracker: *const sphalloc.MemoryTracker) !gui.Widget(Action) {
             return gui.memory_widget.makeMemoryWidget(Action, self.alloc, memory_tracker, &self.state.memory_widget_shared);
+        }
+
+        pub fn makeThumbnail(self: *const Self, retriever: anytype) !gui.Widget(Action) {
+            return gui.thumbnail.makeThumbnail(
+                Action,
+                self.alloc.heap.arena(),
+                retriever,
+                &self.state.thumbnail_shared,
+            );
         }
     };
 }

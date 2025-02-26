@@ -285,6 +285,17 @@ pub fn render(self: *App) !void {
     try frame_renderer.render(self.input_state.selected_object, self.view_state.objectToClipTransform(self.selectedDims()));
 }
 
+pub fn makeFrameRenderer(self: *App, alloc: RenderAlloc) Renderer.FrameRenderer {
+    return self.renderer.makeFrameRenderer(
+        alloc.heap.general(),
+        alloc.gl,
+        &self.objects,
+        &self.shaders,
+        &self.brushes,
+        self.input_state.mouse_pos,
+    );
+}
+
 pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {
     const checkpoint = self.scratch.checkpoint();
     defer self.scratch.restore(checkpoint);

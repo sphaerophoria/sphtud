@@ -29,6 +29,9 @@ pub const box = @import("box.zig");
 pub const checkbox = @import("checkbox.zig");
 pub const util = @import("util.zig");
 pub const memory_widget = @import("memory_widget.zig");
+pub const thumbnail = @import("thumbnail.zig");
+pub const grid = @import("grid.zig");
+pub const clickable = @import("clickable.zig");
 
 test {
     std.testing.refAllDeclsRecursive(@This());
@@ -42,7 +45,7 @@ pub const Key = union(enum) {
     delete,
     escape,
 
-    fn eql(self: Key, other: Key) bool {
+    pub fn eql(self: Key, other: Key) bool {
         return std.meta.eql(self, other);
     }
 
@@ -246,6 +249,15 @@ pub const PixelBBox = struct {
             .right = @min(a.right, b.right),
             .top = @max(a.top, b.top),
             .bottom = @min(a.bottom, b.bottom),
+        };
+    }
+
+    pub fn offset(self: PixelBBox, x: i32, y: i32) PixelBBox {
+        return .{
+            .top = self.top + y,
+            .bottom = self.bottom + y,
+            .left = self.left + x,
+            .right = self.right + x,
         };
     }
 };

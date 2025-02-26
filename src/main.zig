@@ -401,6 +401,8 @@ pub fn main() !void {
                 ui.state.overlay.set(ui.memory_widget, 0, 0);
             } else if (key.key == .escape) {
                 try ui.state.overlay.reset();
+            } else if (key.key.eql(.{ .ascii = '`' })) {
+                ui.drawer.toggleOpenState();
             }
         }
 

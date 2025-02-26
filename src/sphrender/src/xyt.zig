@@ -7,22 +7,6 @@ const GlAlloc = @import("GlAlloc.zig");
 const sphalloc = @import("sphalloc");
 const ScratchAlloc = sphalloc.ScratchAlloc;
 
-pub const ImageSamplerUniforms = struct {
-    input_image: sphrender.Texture,
-    transform: sphmath.Mat3x3 = sphmath.Transform.identity.inner,
-};
-
-pub const image_sampler_frag =
-    \\#version 330
-    \\in vec2 uv;
-    \\out vec4 fragment;
-    \\uniform sampler2D input_image;
-    \\void main()
-    \\{
-    \\    fragment = texture(input_image, vec2(uv.x, uv.y));
-    \\}
-;
-
 pub fn Program(comptime KnownUniforms: type) type {
     return struct {
         inner: InnerProgram,
@@ -63,30 +47,7 @@ pub fn Program(comptime KnownUniforms: type) type {
     };
 }
 
-pub const ImageRenderer = struct {
-    prog: Program(ImageSamplerUniforms),
-    buffer: Buffer,
-
-    pub fn init(alloc: *GlAlloc) !ImageRenderer {
-        const prog = try Program(ImageSamplerUniforms).init(alloc, image_sampler_frag);
-        const buffer = try prog.makeFullScreenPlane(alloc);
-
-        return .{
-            .prog = prog,
-            .buffer = buffer,
-        };
-    }
-
-    pub fn renderTexture(self: ImageRenderer, texture: sphrender.Texture, transform: sphmath.Transform) void {
-        self.prog.render(self.buffer, .{
-            .input_image = texture,
-            .transform = transform.inner,
-        });
-    }
-};
-
 pub const Vertex = struct {
-    vUv: sphmath.Vec2,
     vPos: sphmath.Vec2,
 };
 
@@ -94,9 +55,7 @@ pub const Buffer = shader_program.Buffer(Vertex);
 
 pub const vertex_shader =
     \\#version 330
-    \\in vec2 vUv;
     \\in vec2 vPos;
-    \\out vec2 uv;
     \\uniform mat3x3 transform = mat3x3(
     \\    1.0, 0.0, 0.0,
     \\    0.0, 1.0, 0.0,
@@ -106,6 +65,5 @@ pub const vertex_shader =
     \\{
     \\    vec3 transformed = transform * vec3(vPos, 1.0);
     \\    gl_Position = vec4(transformed.x, transformed.y, 0.0, transformed.z);
-    \\    uv = vUv;
     \\}
 ;

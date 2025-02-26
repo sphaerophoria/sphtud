@@ -3,6 +3,7 @@ pub const geometry = @import("geometry.zig");
 pub const DistanceFieldGenerator = @import("DistanceFieldGenerator.zig");
 pub const shader_program = @import("shader_program.zig");
 pub const xyuvt_program = @import("xyuvt.zig");
+pub const xyt_program = @import("xyt.zig");
 pub const GlAlloc = @import("GlAlloc.zig");
 
 const std = @import("std");

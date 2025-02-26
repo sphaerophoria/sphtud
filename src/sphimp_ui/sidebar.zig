@@ -28,32 +28,6 @@ fn wrapFrameScrollView(widget_factory: WidgetFactory, inner: gui.Widget(UiAction
     return try widget_factory.makeScrollView(frame);
 }
 
-fn makeObjList(app: *App, widget_factory: WidgetFactory) !gui.Widget(UiAction) {
-    const layout = blk: {
-        const layout = try widget_factory.makeLayout();
-
-        const label = try widget_factory.makeLabel("Object list");
-        try layout.pushWidget(label);
-
-        const RetrieverCtx = struct {
-            pub fn selectedObject(_: @This(), a: *App) ?ObjectId {
-                return a.selectedObjectId();
-            }
-        };
-
-        const retriever = list_io.objectListRetriever(RetrieverCtx{}, app);
-        const obj_list = try widget_factory.makeSelectableList(
-            retriever,
-            list_io.itListAction(&app.objects, &sphimp.object.Objects.idIter, .update_selected_object),
-        );
-        try layout.pushWidget(obj_list);
-
-        break :blk layout;
-    };
-
-    return wrapFrameScrollView(widget_factory, layout.asWidget());
-}
-
 fn makeCreateObject(app: *App, widget_factory: gui.widget_factory.WidgetFactory(UiAction)) !gui.Widget(UiAction) {
     const layout = blk: {
         const layout = try widget_factory.makeLayout();
@@ -375,12 +349,12 @@ pub const Handle = struct {
     }
 };
 
-const Sidebar = struct {
+pub const Sidebar = struct {
     widget: gui.Widget(UiAction),
     handle: Handle,
 };
 
-pub fn makeSidebar(sidebar_alloc: gui.GuiAlloc, app: *App, widget_state: *gui.widget_factory.WidgetState(UiAction)) !Sidebar {
+pub fn makeSidebar(sidebar_alloc: gui.GuiAlloc, app: *App, sidebar_width: u31, widget_state: *gui.widget_factory.WidgetState(UiAction)) !Sidebar {
     const removable_content_alloc = try sidebar_alloc.makeSubAlloc("sidebar_content");
 
     const full_factory = widget_state.factory(sidebar_alloc);
@@ -388,7 +362,6 @@ pub fn makeSidebar(sidebar_alloc: gui.GuiAlloc, app: *App, widget_state: *gui.wi
 
     const sidebar_stack = try full_factory.makeStack(2);
 
-    const sidebar_width = 300;
     const sidebar_box = try full_factory.makeBox(
         sidebar_stack.asWidget(),
         .{ .width = sidebar_width, .height = 0 },
@@ -404,11 +377,8 @@ pub fn makeSidebar(sidebar_alloc: gui.GuiAlloc, app: *App, widget_state: *gui.wi
         .{},
     );
 
-    const sidebar_layout = try full_factory.makeEvenVertLayout(3);
+    const sidebar_layout = try full_factory.makeEvenVertLayout(2);
     try sidebar_stack.pushWidget(sidebar_layout.asWidget(), gui.stack.Layout.centered());
-
-    const obj_list = try makeObjList(app, full_factory);
-    try sidebar_layout.pushWidget(obj_list);
 
     const create_object = try makeCreateObject(app, full_factory);
     try sidebar_layout.pushWidget(create_object);

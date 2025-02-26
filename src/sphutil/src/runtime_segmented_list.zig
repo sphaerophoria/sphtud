@@ -297,12 +297,32 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             current_slice: []T,
             slice_idx: usize = 0,
 
-            fn init(parent: *const Self) Iter {
-                var inner = parent.sliceIter();
-                const current_slice: []T = inner.next() orelse &.{};
+            fn init(parent: *const Self, idx: usize) Iter {
+                if (idx < parent.initial_block.len) {
+                    var inner = parent.sliceIter();
+                    const current_slice: []T = inner.next() orelse &.{};
+                    return .{
+                        .inner = inner,
+                        .current_slice = current_slice,
+                        .slice_idx = idx,
+                    };
+                }
+
+                const block = idxToExpansionSlot(parent.initial_block.len, idx, first_expansion_size);
+                const block_start = expansionSlotStart(parent.initial_block.len, block, first_expansion_size);
+                const block_len = expansionBlockSize(block, first_expansion_size);
+                const block_offs = idx - block_start;
+
+                const inner = SliceIter{
+                    .parent = parent,
+                    .first = false,
+                    .block_id = block + 1,
+                };
+
                 return .{
                     .inner = inner,
-                    .current_slice = current_slice,
+                    .current_slice = parent.expansions[block][0..block_len],
+                    .slice_idx = block_offs,
                 };
             }
 
@@ -325,7 +345,11 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         };
 
         pub fn iter(self: *const Self) Iter {
-            return Iter.init(self);
+            return Iter.init(self, 0);
+        }
+
+        pub fn iterFrom(self: *const Self, idx: usize) Iter {
+            return Iter.init(self, idx);
         }
     };
 }
@@ -581,4 +605,40 @@ test "RuntimeSegmentedList get" {
     try std.testing.expectEqual(21, list.get(21));
     try std.testing.expectEqual(17342, list.get(17342));
     try std.testing.expectEqual(579, list.get(579));
+}
+
+test "RuntimeSegmentedList iter offset" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var list = try RuntimeSegmentedList(usize).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
+
+    for (0..20000) |i| {
+        try list.append(i);
+    }
+
+    {
+        var it = list.iterFrom(1);
+        try std.testing.expectEqual(1, it.next().?.*);
+    }
+    {
+        var it = list.iterFrom(0);
+        try std.testing.expectEqual(0, it.next().?.*);
+    }
+    {
+        var it = list.iterFrom(20);
+        try std.testing.expectEqual(20, it.next().?.*);
+    }
+    {
+        var it = list.iterFrom(21);
+        try std.testing.expectEqual(21, it.next().?.*);
+    }
+    {
+        var it = list.iterFrom(17342);
+        try std.testing.expectEqual(17342, it.next().?.*);
+    }
+    {
+        var it = list.iterFrom(579);
+        try std.testing.expectEqual(579, it.next().?.*);
+    }
 }
