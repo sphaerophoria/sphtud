@@ -18,12 +18,8 @@ pub fn Runner(comptime Action: type) type {
             };
         }
 
-        pub fn step(self: *Self, delta_s: f32, widget_bounds: gui.PixelBBox, window_size: gui.PixelSize, input_queue: anytype) !?Action {
-            const widget_size = gui.PixelSize{
-                .width = widget_bounds.calcWidth(),
-                .height = widget_bounds.calcHeight(),
-            };
-            try self.root.update(widget_size, delta_s);
+        pub fn step(self: *Self, delta_s: f32, window_size: gui.PixelSize, input_queue: anytype) !?Action {
+            try self.root.update(window_size, delta_s);
 
             self.input_state.startFrame();
             while (input_queue.readItem()) |action| {
@@ -35,6 +31,15 @@ pub fn Runner(comptime Action: type) type {
                 .bottom = window_size.height,
                 .left = 0,
                 .right = window_size.width,
+            };
+
+            const widget_size = self.root.getSize();
+
+            const widget_bounds = gui.PixelBBox{
+                .top = 0,
+                .bottom = widget_size.height,
+                .left = 0,
+                .right = widget_size.width,
             };
 
             const input_response = self.root.setInputState(widget_bounds, widget_bounds, self.input_state);

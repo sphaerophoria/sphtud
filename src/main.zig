@@ -261,15 +261,8 @@ pub fn main() !void {
             .height = @intCast(height),
         };
 
-        const window_bounds = gui.PixelBBox{
-            .left = 0,
-            .top = 0,
-            .right = window_size.width,
-            .bottom = window_size.height,
-        };
-
         const selected_object = app.input_state.selected_object;
-        if (try gui_runner.step(delta_s, window_bounds, window_size, &window.queue)) |action| exec_action: {
+        if (try gui_runner.step(delta_s, window_size, &window.queue)) |action| exec_action: {
             switch (action) {
                 .update_selected_object => |id| {
                     app.setSelectedObject(id);
