@@ -105,11 +105,11 @@ pub fn PopupLayer(comptime Action: type) type {
             return ret;
         }
 
-        pub fn update(ctx: ?*anyopaque, container_size: PixelSize) !void {
+        pub fn update(ctx: ?*anyopaque, container_size: PixelSize, delta_s: f32) !void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.container_size = container_size;
             if (self.inner) |*data| {
-                try data.widget.update(container_size);
+                try data.widget.update(container_size, delta_s);
                 self.healOffset();
             }
         }

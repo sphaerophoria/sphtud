@@ -93,7 +93,7 @@ pub fn EvenVertLayout(comptime Action: type, comptime max_size: comptime_int) ty
             return self.container_size;
         }
 
-        fn update(ctx: ?*anyopaque, available_size: PixelSize) anyerror!void {
+        fn update(ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) anyerror!void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.container_size = available_size;
 
@@ -104,7 +104,7 @@ pub fn EvenVertLayout(comptime Action: type, comptime max_size: comptime_int) ty
                 self.shared.border_size,
             );
             for (items) |item| {
-                try item.update(child_size);
+                try item.update(child_size, delta_s);
             }
         }
 

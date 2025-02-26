@@ -55,14 +55,14 @@ pub fn Box(comptime Action: type) type {
             return self.inner.getSize();
         }
 
-        fn update(ctx: ?*anyopaque, available_size: PixelSize) anyerror!void {
+        fn update(ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) anyerror!void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             switch (self.fill_style) {
                 .fill_none => {},
                 .fill_width => self.size.width = available_size.width,
                 .fill_height => self.size.height = available_size.height,
             }
-            return self.inner.update(self.size);
+            return self.inner.update(self.size, delta_s);
         }
 
         fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {

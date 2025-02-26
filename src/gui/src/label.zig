@@ -41,7 +41,7 @@ pub fn Label(comptime TextRetriever: type) type {
             };
         }
 
-        fn update(ctx: ?*anyopaque, available_size: PixelSize) !void {
+        fn update(ctx: ?*anyopaque, available_size: PixelSize, _: f32) !void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             try self.text.update(available_size.width);
         }

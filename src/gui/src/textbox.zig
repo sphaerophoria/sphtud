@@ -148,7 +148,7 @@ fn Textbox(comptime Action: type, comptime TextRetriever: type, comptime TextAct
             return self.shared.style.size;
         }
 
-        fn update(ctx: ?*anyopaque, _: PixelSize) !void {
+        fn update(ctx: ?*anyopaque, _: PixelSize, _: f32) !void {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             try self.gui_text.update(std.math.maxInt(u31));

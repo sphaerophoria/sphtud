@@ -97,7 +97,7 @@ pub fn DragFloat(comptime Action: type, comptime ValRetriever: type, comptime Ac
             return self.shared.style.size;
         }
 
-        pub fn update(ctx: ?*anyopaque, _: PixelSize) !void {
+        pub fn update(ctx: ?*anyopaque, _: PixelSize, _: f32) !void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             // Float label content should be sized so that it doesn't exceed
             // the bounds of the widget. Wrapping the text would just go out of

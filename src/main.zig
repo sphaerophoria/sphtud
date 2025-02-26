@@ -241,11 +241,17 @@ pub fn main() !void {
 
     var gui_runner = try widget_factory.makeRunner(toplevel_layout.asWidget());
 
+    var last = try std.time.Instant.now();
+
     while (!window.closed()) {
         allocators.scratch.reset();
         scratch_gl.reset();
         const width, const height = window.getWindowSize();
         const now = try std.time.Instant.now();
+        defer last = now;
+
+        var delta_s: f32 = @floatFromInt(now.since(last));
+        delta_s /= std.time.ns_per_s;
 
         sphrender.gl.glViewport(0, 0, @intCast(width), @intCast(height));
         sphrender.gl.glScissor(0, 0, @intCast(width), @intCast(height));
@@ -263,7 +269,7 @@ pub fn main() !void {
         };
 
         const selected_object = app.input_state.selected_object;
-        if (try gui_runner.step(window_bounds, window_size, &window.queue)) |action| exec_action: {
+        if (try gui_runner.step(delta_s, window_bounds, window_size, &window.queue)) |action| exec_action: {
             switch (action) {
                 .update_selected_object => |id| {
                     app.setSelectedObject(id);

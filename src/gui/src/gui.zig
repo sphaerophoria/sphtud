@@ -262,7 +262,7 @@ pub fn Widget(comptime Action: type) type {
         pub const VTable = struct {
             render: *const fn (ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void,
             getSize: *const fn (ctx: ?*anyopaque) PixelSize,
-            update: ?*const fn (ctx: ?*anyopaque, available_size: PixelSize) anyerror!void,
+            update: ?*const fn (ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) anyerror!void,
             setInputState: ?*const fn (ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action),
             setFocused: ?*const fn (ctx: ?*anyopaque, focused: bool) void,
             reset: ?*const fn (ctx: ?*anyopaque) void,
@@ -278,9 +278,9 @@ pub fn Widget(comptime Action: type) type {
             return self.vtable.getSize(self.ctx);
         }
 
-        pub fn update(self: Self, available_size: PixelSize) !void {
+        pub fn update(self: Self, available_size: PixelSize, delta_s: f32) !void {
             if (self.vtable.update) |u| {
-                try u(self.ctx, available_size);
+                try u(self.ctx, available_size, delta_s);
             }
         }
 

@@ -96,7 +96,7 @@ pub fn PropertyList(comptime Action: type) type {
             return self.size;
         }
 
-        fn update(ctx: ?*anyopaque, available_size: PixelSize) anyerror!void {
+        fn update(ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) anyerror!void {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             const value_available = PixelSize{
@@ -112,8 +112,8 @@ pub fn PropertyList(comptime Action: type) type {
             var height: u31 = 0;
 
             for (self.items.items) |item| {
-                try item.key.update(key_available);
-                try item.value.update(value_available);
+                try item.key.update(key_available, delta_s);
+                try item.value.update(value_available, delta_s);
 
                 const key_size = item.key.getSize();
                 const value_size = item.value.getSize();

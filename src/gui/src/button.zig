@@ -89,12 +89,15 @@ pub fn Button(comptime Action: type) type {
             };
         }
 
-        fn update(ctx: ?*anyopaque, _: PixelSize) !void {
+        fn update(ctx: ?*anyopaque, _: PixelSize, delta_s: f32) !void {
             const self: *Self = @ptrCast(@alignCast(ctx));
-            try self.label.update(.{
-                .width = self.shared.style.width,
-                .height = self.shared.style.height,
-            });
+            try self.label.update(
+                .{
+                    .width = self.shared.style.width,
+                    .height = self.shared.style.height,
+                },
+                delta_s,
+            );
         }
 
         fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: InputState) gui.InputResponse(Action) {

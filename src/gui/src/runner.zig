@@ -18,12 +18,12 @@ pub fn Runner(comptime Action: type) type {
             };
         }
 
-        pub fn step(self: *Self, widget_bounds: gui.PixelBBox, window_size: gui.PixelSize, input_queue: anytype) !?Action {
+        pub fn step(self: *Self, delta_s: f32, widget_bounds: gui.PixelBBox, window_size: gui.PixelSize, input_queue: anytype) !?Action {
             const widget_size = gui.PixelSize{
                 .width = widget_bounds.calcWidth(),
                 .height = widget_bounds.calcHeight(),
             };
-            try self.root.update(widget_size);
+            try self.root.update(widget_size, delta_s);
 
             self.input_state.startFrame();
             while (input_queue.readItem()) |action| {

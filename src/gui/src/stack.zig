@@ -77,13 +77,13 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
             return self.total_size;
         }
 
-        fn update(ctx: ?*anyopaque, available_size: PixelSize) !void {
+        fn update(ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) !void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.total_size = .{ .width = 0, .height = 0 };
 
             for (self.items.slice()) |item| {
                 if (item.layout == .fill) continue;
-                try item.widget.update(available_size);
+                try item.widget.update(available_size, delta_s);
 
                 const item_size = item.widget.getSize();
                 self.total_size = newTotalSize(self.total_size, item.layout, item_size);
@@ -91,7 +91,7 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
 
             for (self.items.slice()) |item| {
                 if (item.layout == .fill) {
-                    try item.widget.update(self.total_size);
+                    try item.widget.update(self.total_size, delta_s);
                 }
             }
         }

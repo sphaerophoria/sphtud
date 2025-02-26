@@ -114,7 +114,7 @@ pub fn SelectableList(comptime Action: type, comptime Retriever: type, comptime 
             };
         }
 
-        fn update(ctx: ?*anyopaque, available_space: PixelSize) !void {
+        fn update(ctx: ?*anyopaque, available_space: PixelSize, _: f32) !void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             const num_items = self.retriever.numItems();
 

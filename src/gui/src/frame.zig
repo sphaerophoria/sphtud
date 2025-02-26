@@ -65,9 +65,9 @@ pub fn Frame(comptime Action: type) type {
             };
         }
 
-        fn update(ctx: ?*anyopaque, available_size: PixelSize) !void {
+        fn update(ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) !void {
             const self: *Self = @ptrCast(@alignCast(ctx));
-            return self.inner.update(self.adjustSize(available_size));
+            return self.inner.update(self.adjustSize(available_size), delta_s);
         }
 
         fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {

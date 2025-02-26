@@ -57,7 +57,7 @@ pub fn ScrollView(comptime Action: type) type {
             return self.size;
         }
 
-        fn update(ctx: ?*anyopaque, available_size: PixelSize) !void {
+        fn update(ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) !void {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             // We cannot know if the layout requires a scrollbar without
@@ -75,7 +75,7 @@ pub fn ScrollView(comptime Action: type) type {
                     .width = available_size.width - self.scrollbarWidth(),
                     .height = available_size.height,
                 };
-                try self.inner.update(adjusted_window_size);
+                try self.inner.update(adjusted_window_size, delta_s);
 
                 // If we update and the scrollbar is in the wrong state, flip it
                 if (scrollbarInWrongState(

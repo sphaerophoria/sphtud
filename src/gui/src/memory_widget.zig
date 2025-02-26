@@ -134,7 +134,7 @@ pub fn MemoryWidget(comptime Action: type) type {
             return self.inner_widget.getSize();
         }
 
-        fn update(ctx: ?*anyopaque, available_size: gui.PixelSize) anyerror!void {
+        fn update(ctx: ?*anyopaque, available_size: gui.PixelSize, delta_s: f32) anyerror!void {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             self.size = available_size;
@@ -187,7 +187,7 @@ pub fn MemoryWidget(comptime Action: type) type {
                 }
             }
 
-            try self.inner_widget.update(available_size);
+            try self.inner_widget.update(available_size, delta_s);
         }
 
         const NameRetriever = struct {
@@ -245,7 +245,7 @@ pub fn MemoryWidget(comptime Action: type) type {
                 };
             }
 
-            fn update(ctx: ?*anyopaque, available_size: gui.PixelSize) anyerror!void {
+            fn update(ctx: ?*anyopaque, available_size: gui.PixelSize, _: f32) anyerror!void {
                 const self: *Graph = @ptrCast(@alignCast(ctx));
                 self.width = available_size.width;
 

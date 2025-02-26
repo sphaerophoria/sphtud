@@ -180,7 +180,7 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
             };
         }
 
-        fn update(ctx: ?*anyopaque, _: PixelSize) anyerror!void {
+        fn update(ctx: ?*anyopaque, _: PixelSize, _: f32) anyerror!void {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             const sub_bounds = SubSizes.calc(self.shared.style);
@@ -247,10 +247,13 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
             // We need to know the height of the content, but the content is
             // lazily added on first update. Give the frame our max width and
             // height to see if it's smaller
-            try frame.update(.{
-                .width = self.shared.style.popup_width - self.shared.style.layout_pad,
-                .height = self.shared.style.popup_height - self.shared.style.layout_pad,
-            });
+            try frame.update(
+                .{
+                    .width = self.shared.style.popup_width - self.shared.style.layout_pad,
+                    .height = self.shared.style.popup_height - self.shared.style.layout_pad,
+                },
+                0,
+            );
 
             const height = @min(
                 self.shared.style.popup_height - self.shared.style.layout_pad,

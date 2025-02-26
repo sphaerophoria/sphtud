@@ -69,13 +69,13 @@ pub fn Layout(comptime Action: type) type {
             };
         }
 
-        pub fn update(ctx: ?*anyopaque, container_size: PixelSize) !void {
+        pub fn update(ctx: ?*anyopaque, container_size: PixelSize, delta_s: f32) !void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.cursor.reset();
 
             var item_it = self.items.iterator(0);
             while (item_it.next()) |item| {
-                try item.widget.update(self.availableSize(container_size));
+                try item.widget.update(self.availableSize(container_size), delta_s);
                 const widget_size = item.widget.getSize();
                 item.bounds = self.cursor.push(widget_size, self.item_pad);
                 self.updatePerpendicularLength(widget_size);

@@ -83,7 +83,7 @@ fn getSize(ctx: ?*anyopaque) gui.PixelSize {
     return self.size;
 }
 
-fn update(ctx: ?*anyopaque, available_size: gui.PixelSize) anyerror!void {
+fn update(ctx: ?*anyopaque, available_size: gui.PixelSize, _: f32) anyerror!void {
     const self: *AppWidget = @ptrCast(@alignCast(ctx));
     self.size = available_size;
     self.app.view_state.window_width = available_size.width;
