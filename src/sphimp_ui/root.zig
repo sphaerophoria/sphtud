@@ -28,7 +28,7 @@ pub fn makeGui(alloc: RenderAlloc, app: *App, scratch: *ScratchAlloc, scratch_gl
     const widget_factory = widget_state.factory(alloc);
 
     const toplevel_layout = try widget_factory.makeLayout();
-    toplevel_layout.cursor.direction = .horizontal;
+    toplevel_layout.cursor.direction = .left_to_right;
     toplevel_layout.item_pad = 0;
 
     const sidebar = try sidebar_mod.makeSidebar(alloc, app, widget_state);

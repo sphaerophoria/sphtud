@@ -81,12 +81,29 @@ pub fn Layout(comptime Action: type) type {
                 item.bounds = self.cursor.push(widget_size, self.item_pad);
                 self.updatePerpendicularLength(widget_size);
             }
+
+            switch (self.cursor.direction) {
+                .right_to_left => {
+                    self.invertWidgetsHorizontally(container_size);
+                },
+                .left_to_right, .top_to_bottom => {},
+            }
+        }
+
+        fn invertWidgetsHorizontally(self: *Self, container_size: PixelSize) void {
+            var item_it = self.items.iterator(0);
+            while (item_it.next()) |item| {
+                const new_right = container_size.width - item.bounds.left;
+                const new_left = container_size.width - item.bounds.right;
+                item.bounds.left = new_left;
+                item.bounds.right = new_right;
+            }
         }
 
         fn availableSize(self: *Self, container_size: PixelSize) PixelSize {
             return .{
-                .width = container_size.width -| self.cursor.x(),
-                .height = container_size.height -| self.cursor.y(),
+                .width = container_size.width -| self.cursor.x_offs(),
+                .height = container_size.height -| self.cursor.y_offs(),
             };
         }
 
@@ -137,13 +154,13 @@ pub fn Layout(comptime Action: type) type {
         fn getSize(ctx: ?*anyopaque) PixelSize {
             const self: *Self = @ptrCast(@alignCast(ctx));
             switch (self.cursor.direction) {
-                .horizontal => {
+                .left_to_right, .right_to_left => {
                     return .{
                         .width = self.cursor.offs -| self.item_pad,
                         .height = self.max_perpendicular_length,
                     };
                 },
-                .vertical => {
+                .top_to_bottom => {
                     return .{
                         .width = self.max_perpendicular_length,
                         .height = self.cursor.offs -| self.item_pad,
@@ -170,8 +187,8 @@ pub fn Layout(comptime Action: type) type {
 
         fn updatePerpendicularLength(self: *Self, size: PixelSize) void {
             const new_length = switch (self.cursor.direction) {
-                .horizontal => size.height,
-                .vertical => size.width,
+                .left_to_right, .right_to_left => size.height,
+                .top_to_bottom => size.width,
             };
 
             self.max_perpendicular_length = @max(self.max_perpendicular_length, new_length);
@@ -192,39 +209,40 @@ const Cursor = struct {
     offs: u31 = 0,
 
     direction: enum {
-        horizontal,
-        vertical,
-    } = .vertical,
+        left_to_right,
+        right_to_left,
+        top_to_bottom,
+    } = .top_to_bottom,
 
     fn reset(self: *Cursor) void {
         self.offs = 0;
     }
 
-    fn x(self: Cursor) u31 {
+    fn x_offs(self: Cursor) u31 {
         return switch (self.direction) {
-            .horizontal => self.offs,
-            .vertical => 0,
+            .left_to_right, .right_to_left => self.offs,
+            .top_to_bottom => 0,
         };
     }
 
-    fn y(self: Cursor) u31 {
+    fn y_offs(self: Cursor) u31 {
         return switch (self.direction) {
-            .horizontal => 0,
-            .vertical => self.offs,
+            .left_to_right, .right_to_left => 0,
+            .top_to_bottom => self.offs,
         };
     }
 
     fn push(self: *Cursor, size: PixelSize, padding: u31) PixelBBox {
         const bounds = PixelBBox{
-            .left = self.x(),
-            .right = self.x() + size.width,
-            .top = self.y(),
-            .bottom = self.y() + size.height,
+            .left = self.x_offs(),
+            .right = self.x_offs() + size.width,
+            .top = self.y_offs(),
+            .bottom = self.y_offs() + size.height,
         };
 
         switch (self.direction) {
-            .vertical => self.offs += size.height + padding,
-            .horizontal => self.offs += size.width + padding,
+            .top_to_bottom => self.offs += size.height + padding,
+            .left_to_right, .right_to_left => self.offs += size.width + padding,
         }
 
         return bounds;
