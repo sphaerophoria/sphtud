@@ -378,8 +378,8 @@ pub fn WidgetFactory(comptime Action: type) type {
 
         pub fn makeRunner(self: *const Self, inner: gui.Widget(Action)) !gui.runner.Runner(Action) {
             const root_stack = try self.makeStack(2);
-            try root_stack.pushWidget(inner, .{ .offset = .{ .x_offs = 0, .y_offs = 0 } });
-            try root_stack.pushWidget(self.state.overlay.asWidget(), .{ .offset = .{ .x_offs = 0, .y_offs = 0 } });
+            try root_stack.pushWidget(inner, .{});
+            try root_stack.pushWidget(self.state.overlay.asWidget(), .{});
 
             return gui.runner.Runner(Action).init(self.alloc.heap.general(), root_stack.asWidget());
         }

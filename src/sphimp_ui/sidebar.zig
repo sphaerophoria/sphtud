@@ -401,11 +401,11 @@ pub fn makeSidebar(sidebar_alloc: gui.GuiAlloc, app: *App, widget_state: *gui.wi
 
     try sidebar_stack.pushWidget(
         sidebar_background,
-        .{ .offset = .{ .x_offs = 0, .y_offs = 0 } },
+        .{},
     );
 
     const sidebar_layout = try full_factory.makeEvenVertLayout(3);
-    try sidebar_stack.pushWidget(sidebar_layout.asWidget(), .centered);
+    try sidebar_stack.pushWidget(sidebar_layout.asWidget(), gui.stack.Layout.centered());
 
     const obj_list = try makeObjList(app, full_factory);
     try sidebar_layout.pushWidget(obj_list);

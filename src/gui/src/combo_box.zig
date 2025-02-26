@@ -218,7 +218,7 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
                 self.shared.style.popup_background,
                 self.shared.squircle_renderer,
             );
-            try stack.pushWidget(rect, .fill);
+            try stack.pushWidget(rect, .{ .size_policy = .match_siblings });
 
             const list = try gui.selectable_list.selectableList(
                 Action,
@@ -271,7 +271,7 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
                 .fill_none,
             );
 
-            try stack.pushWidget(box, .centered);
+            try stack.pushWidget(box, gui.stack.Layout.centered());
 
             self.popup_layer.set(stack.asWidget(), @intFromFloat(loc.x), @intFromFloat(loc.y));
         }

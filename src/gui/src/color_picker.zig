@@ -161,10 +161,10 @@ pub fn ColorPicker(comptime Action: type, comptime ColorRetriever: type, comptim
                 self.shared.style.popup_background,
                 self.shared.squircle_renderer,
             );
-            try stack.pushWidget(rect, .fill);
+            try stack.pushWidget(rect, .{ .size_policy = .match_siblings });
 
             const overlay_widget = try self.generateOverlayWidget();
-            try stack.pushWidget(overlay_widget, .centered);
+            try stack.pushWidget(overlay_widget, gui.stack.Layout.centered());
 
             return stack.asWidget();
         }

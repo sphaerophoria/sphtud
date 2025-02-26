@@ -16,15 +16,6 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
 
         const Self = @This();
 
-        pub const Layout = union(enum) {
-            centered,
-            offset: struct {
-                x_offs: i32,
-                y_offs: i32,
-            },
-            fill,
-        };
-
         const StackItem = struct {
             layout: Layout,
             widget: Widget(Action),
@@ -68,7 +59,7 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
         fn render(ctx: ?*anyopaque, stack_bounds: PixelBBox, window_bounds: PixelBBox) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             for (self.items.slice()) |item| {
-                item.widget.render(itemBounds(stack_bounds, item.layout, item.widget), window_bounds);
+                item.widget.render(itemBounds(stack_bounds, item.layout, item.widget.getSize()), window_bounds);
             }
         }
 
@@ -82,7 +73,7 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
             self.total_size = .{ .width = 0, .height = 0 };
 
             for (self.items.slice()) |item| {
-                if (item.layout == .fill) continue;
+                if (item.layout.size_policy == .match_siblings) continue;
                 try item.widget.update(available_size, delta_s);
 
                 const item_size = item.widget.getSize();
@@ -90,7 +81,7 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
             }
 
             for (self.items.slice()) |item| {
-                if (item.layout == .fill) {
+                if (item.layout.size_policy == .match_siblings) {
                     try item.widget.update(self.total_size, delta_s);
                 }
             }
@@ -110,7 +101,7 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
                 i -= 1;
 
                 const item = items[i];
-                const item_bounds = itemBounds(stack_bounds, item.layout, item.widget);
+                const item_bounds = itemBounds(stack_bounds, item.layout, item.widget.getSize());
                 const item_input_bounds = item_bounds.calcIntersection(input_bounds);
 
                 ret = item.widget.setInputState(item_bounds, item_input_bounds, input_state);
@@ -140,46 +131,75 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
             }
         }
 
-        fn itemBounds(stack_bounds: PixelBBox, layout: Layout, widget: Widget(Action)) PixelBBox {
-            switch (layout) {
-                .centered => return util.centerBoxInBounds(widget.getSize(), stack_bounds),
-                .offset => |offs| {
-                    const item_size = widget.getSize();
-                    const left = stack_bounds.left + offs.x_offs;
-                    const top = stack_bounds.top + offs.y_offs;
-                    return .{
-                        .left = left,
-                        .right = left + item_size.width,
-                        .top = top,
-                        .bottom = top + item_size.height,
-                    };
-                },
-                .fill => {
-                    const item_size = widget.getSize();
-                    return .{
-                        .left = stack_bounds.left,
-                        .right = stack_bounds.left + item_size.width,
-                        .top = stack_bounds.top,
-                        .bottom = stack_bounds.top + item_size.height,
-                    };
-                },
-            }
+        fn itemBounds(stack_bounds: PixelBBox, layout: Layout, item_size: PixelSize) PixelBBox {
+            const base_left = switch (layout.horizontal_justify) {
+                .left => stack_bounds.left,
+                .right => stack_bounds.right - item_size.width,
+                .center => @divTrunc(stack_bounds.left + stack_bounds.right - item_size.width, 2),
+            };
+
+            const base_top = switch (layout.vertical_justify) {
+                .top => stack_bounds.top,
+                .bottom => stack_bounds.bottom - item_size.height,
+                .center => @divTrunc(stack_bounds.top + stack_bounds.bottom - item_size.height, 2),
+            };
+
+            const left = base_left + layout.x_offs;
+            const top = base_top + layout.y_offs;
+
+            return .{
+                .left = left,
+                .right = left + item_size.width,
+                .top = top,
+                .bottom = top + item_size.height,
+            };
         }
 
         fn newTotalSize(old_size: PixelSize, layout: Layout, widget_size: PixelSize) PixelSize {
-            var new_size = old_size;
-            switch (layout) {
-                .centered => {
-                    new_size.width = @max(new_size.width, widget_size.width);
-                    new_size.height = @max(new_size.height, widget_size.height);
-                },
-                .offset => |offs| {
-                    new_size.width = @max(new_size.width, widget_size.width + offs.x_offs);
-                    new_size.height = @max(new_size.height, widget_size.height + offs.y_offs);
-                },
-                .fill => {},
-            }
-            return new_size;
+            const old_bounds = PixelBBox{
+                .left = 0,
+                .top = 0,
+                .right = old_size.width,
+                .bottom = old_size.height,
+            };
+            const item_bounds = itemBounds(old_bounds, layout, widget_size);
+            const merged = old_bounds.calcUnion(item_bounds);
+            return .{
+                .width = merged.calcWidth(),
+                .height = merged.calcHeight(),
+            };
         }
     };
 }
+
+pub const HJustification = enum {
+    left,
+    right,
+    center,
+};
+
+pub const VJustification = enum {
+    top,
+    bottom,
+    center,
+};
+
+pub const SizePolicy = enum {
+    allow_expand,
+    match_siblings,
+};
+
+pub const Layout = struct {
+    x_offs: i32 = 0,
+    y_offs: i32 = 0,
+    vertical_justify: VJustification = .top,
+    horizontal_justify: HJustification = .left,
+    size_policy: SizePolicy = .allow_expand,
+
+    pub fn centered() Layout {
+        return .{
+            .vertical_justify = .center,
+            .horizontal_justify = .center,
+        };
+    }
+};
