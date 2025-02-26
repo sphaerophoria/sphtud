@@ -9,8 +9,8 @@ const UiAction = ui_action.UiAction;
 const logError = @import("util.zig").logError;
 const GlAlloc = sphrender.GlAlloc;
 
-size: gui.PixelSize,
 app: *sphimp.App,
+size: gui.PixelSize = .{},
 
 const AppWidget = @This();
 
@@ -42,11 +42,10 @@ const widget_vtable = gui.Widget(UiAction).VTable{
     .reset = null,
 };
 
-pub fn init(alloc: Allocator, app: *App, size: gui.PixelSize) !gui.Widget(UiAction) {
+pub fn init(alloc: Allocator, app: *App) !gui.Widget(UiAction) {
     const ctx = try alloc.create(AppWidget);
     ctx.* = .{
         .app = app,
-        .size = size,
     };
     return .{
         .vtable = &widget_vtable,

@@ -190,8 +190,8 @@ pub const InputState = struct {
     }
 };
 pub const PixelSize = struct {
-    width: u31,
-    height: u31,
+    width: u31 = 0,
+    height: u31 = 0,
 };
 
 pub const PixelBBox = struct {

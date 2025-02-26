@@ -9,10 +9,9 @@ const sphwindow = @import("sphwindow");
 const App = sphimp.App;
 const gui = @import("sphui");
 const ui_action = @import("sphimp_ui/ui_action.zig");
-const AppWidget = @import("sphimp_ui/AppWidget.zig");
 const logError = @import("sphimp_ui/util.zig").logError;
-const sidebar_mod = @import("sphimp_ui/sidebar.zig");
 const UiAction = ui_action.UiAction;
+const root_ui_mod = @import("sphimp_ui/root.zig");
 
 const Args = struct {
     action: Action,
@@ -216,30 +215,18 @@ pub fn main() !void {
         },
     }
 
-    const gui_alloc = try root_render_alloc.makeSubAlloc("gui");
-
-    const widget_state = try gui.widget_factory.widgetState(UiAction, gui_alloc, &allocators.scratch, scratch_gl);
-
-    const widget_factory = widget_state.factory(gui_alloc);
-
-    const toplevel_layout = try widget_factory.makeLayout();
-    toplevel_layout.cursor.direction = .horizontal;
-    toplevel_layout.item_pad = 0;
-
-    const sidebar = try sidebar_mod.makeSidebar(gui_alloc, &app, widget_state);
-    try toplevel_layout.pushWidget(sidebar.widget);
-
     var memory_tracker = blk: {
         const now = try std.time.Instant.now();
         break :blk try MemoryTracker.init(root_arena, now, 1000, &allocators.root);
     };
 
-    const memory_widget = try widget_factory.makeMemoryWidget(&memory_tracker);
-
-    const app_widget = try AppWidget.init(root_arena, &app, .{ .width = window_width, .height = window_height });
-    try toplevel_layout.pushWidget(app_widget);
-
-    var gui_runner = try widget_factory.makeRunner(toplevel_layout.asWidget());
+    var ui = try root_ui_mod.makeGui(
+        try root_render_alloc.makeSubAlloc("gui"),
+        &app,
+        &allocators.scratch,
+        scratch_gl,
+        &memory_tracker,
+    );
 
     var last = try std.time.Instant.now();
 
@@ -262,7 +249,7 @@ pub fn main() !void {
         };
 
         const selected_object = app.input_state.selected_object;
-        if (try gui_runner.step(delta_s, window_size, &window.queue)) |action| exec_action: {
+        if (try ui.runner.step(delta_s, window_size, &window.queue)) |action| exec_action: {
             switch (action) {
                 .update_selected_object => |id| {
                     app.setSelectedObject(id);
@@ -355,7 +342,7 @@ pub fn main() !void {
                     app.setDrawingObjectBrush(id) catch |e| {
                         logError("Failed to chnage brush", e, @errorReturnTrace());
                     };
-                    try sidebar.handle.updateObjectProperties();
+                    try ui.sidebar.updateObjectProperties();
                 },
                 .update_path_source => |id| {
                     app.updatePathDisplayObj(id) catch |e| {
@@ -390,13 +377,13 @@ pub fn main() !void {
                         logError("Failed to add object to composition", e, @errorReturnTrace());
                         break :blk;
                     };
-                    try sidebar.handle.updateObjectProperties();
+                    try ui.sidebar.updateObjectProperties();
                 },
                 .delete_from_composition => |idx| {
                     app.deleteFromComposition(.{ .value = idx }) catch |e| {
                         logError("Failed to delete object from composition", e, @errorReturnTrace());
                     };
-                    try sidebar.handle.updateObjectProperties();
+                    try ui.sidebar.updateObjectProperties();
                 },
                 .toggle_composition_debug => {
                     app.toggleCompositionDebug() catch |e| {
@@ -409,17 +396,17 @@ pub fn main() !void {
         try app.step();
         try memory_tracker.step(now);
 
-        for (gui_runner.input_state.key_tracker.pressed_this_frame.items) |key| {
+        for (ui.runner.input_state.key_tracker.pressed_this_frame.items) |key| {
             if (key.ctrl and key.key == .ascii and key.key.ascii == 'd') {
-                widget_factory.state.overlay.set(memory_widget, 0, 0);
+                ui.state.overlay.set(ui.memory_widget, 0, 0);
             } else if (key.key == .escape) {
-                try widget_factory.state.overlay.reset();
+                try ui.state.overlay.reset();
             }
         }
 
         if (selected_object.value != app.input_state.selected_object.value) {
-            try sidebar.handle.updateObjectProperties();
-            sidebar.handle.notifyObjectChanged();
+            try ui.sidebar.updateObjectProperties();
+            ui.sidebar.notifyObjectChanged();
         }
 
         window.swapBuffers();
