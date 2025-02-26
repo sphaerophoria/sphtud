@@ -72,6 +72,7 @@ pub fn Layout(comptime Action: type) type {
         pub fn update(ctx: ?*anyopaque, container_size: PixelSize, delta_s: f32) !void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.cursor.reset();
+            self.max_perpendicular_length = 0;
 
             var item_it = self.items.iterator(0);
             while (item_it.next()) |item| {
