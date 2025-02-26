@@ -130,6 +130,8 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
 
     ret.frame_shared = gui.frame.Shared{
         .border_size = layout_pad,
+        .inner_border_size = layout_pad / 5,
+        .squircle_renderer = &ret.squircle_renderer,
     };
 
     ret.even_vert_layout_shared = gui.even_vert_layout.Shared{
