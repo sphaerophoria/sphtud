@@ -29,6 +29,7 @@ pub fn makeFrame(comptime Action: type, alloc: Allocator, options: Options(Actio
 
     return .{
         .ctx = ctx,
+        .name = "frame",
         .vtable = &Frame(Action).widget_vtable,
     };
 }

@@ -271,6 +271,7 @@ pub fn Widget(comptime Action: type) type {
         const Self = @This();
 
         vtable: *const VTable,
+        name: []const u8,
         ctx: ?*anyopaque,
 
         pub fn getSize(self: Self) PixelSize {

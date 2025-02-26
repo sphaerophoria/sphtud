@@ -24,6 +24,7 @@ pub fn box(comptime Action: type, alloc: Allocator, inner: Widget(Action), size:
 
     return .{
         .ctx = ctx,
+        .name = "box",
         .vtable = &Box(Action).vtable,
     };
 }

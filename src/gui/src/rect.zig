@@ -42,6 +42,7 @@ pub fn Rect(comptime Action: type) type {
 
             return .{
                 .vtable = &Self.widget_vtable,
+                .name = "rect",
                 .ctx = @ptrCast(rect),
             };
         }

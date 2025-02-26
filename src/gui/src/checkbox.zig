@@ -38,6 +38,7 @@ pub fn makeCheckbox(comptime Action: type, alloc: Allocator, checked: anytype, o
 
     return .{
         .ctx = ctx,
+        .name = "checkbox",
         .vtable = &T.vtable,
     };
 }

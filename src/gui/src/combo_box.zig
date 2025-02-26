@@ -96,6 +96,7 @@ pub fn makeComboBox(comptime Action: type, alloc: gui.GuiAlloc, retriever: anyty
 
     return .{
         .ctx = ctx,
+        .name = "combobox",
         .vtable = &T.widget_vtable,
     };
 }

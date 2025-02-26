@@ -47,6 +47,7 @@ pub fn ScrollView(comptime Action: type) type {
             };
             return .{
                 .ctx = view,
+                .name = "scroll_view",
                 .vtable = &widget_vtable,
             };
         }

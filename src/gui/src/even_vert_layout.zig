@@ -48,6 +48,7 @@ pub fn EvenVertLayout(comptime Action: type, comptime max_size: comptime_int) ty
         pub fn asWidget(self: *Self) Widget(Action) {
             return .{
                 .ctx = self,
+                .name = "even_vert_layout",
                 .vtable = &widget_vtable,
             };
         }

@@ -71,6 +71,7 @@ pub fn makeMemoryWidget(
 
     return .{
         .ctx = ret,
+        .name = "memory_visualizer",
         .vtable = &MemoryWidget(Action).widget_vtable,
     };
 }
@@ -225,6 +226,7 @@ pub fn MemoryWidget(comptime Action: type) type {
             fn asWidget(self: *Graph) gui.Widget(Action) {
                 return .{
                     .ctx = self,
+                    .name = "memory tracking graph",
                     .vtable = &graph_vtable,
                 };
             }

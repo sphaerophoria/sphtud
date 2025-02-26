@@ -42,6 +42,7 @@ pub fn selectableList(comptime Action: type, alloc: gui.GuiAlloc, retriever: any
 
     return .{
         .vtable = &S.widget_vtable,
+        .name = "selectable_list",
         .ctx = ret,
     };
 }

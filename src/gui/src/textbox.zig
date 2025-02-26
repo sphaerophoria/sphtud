@@ -270,6 +270,7 @@ pub fn makeTextbox(comptime Action: type, alloc: gui.GuiAlloc, text_retreiver: a
 
     return .{
         .vtable = &TB.widget_vtable,
+        .name = "textbox",
         .ctx = box,
     };
 }

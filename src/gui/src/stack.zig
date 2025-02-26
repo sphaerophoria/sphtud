@@ -60,6 +60,7 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
         pub fn asWidget(self: *Self) Widget(Action) {
             return .{
                 .ctx = self,
+                .name = "stack",
                 .vtable = &widget_vtable,
             };
         }

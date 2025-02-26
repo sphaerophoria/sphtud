@@ -64,6 +64,7 @@ pub fn Layout(comptime Action: type) type {
         pub fn asWidget(self: *Self) Widget(Action) {
             return .{
                 .ctx = self,
+                .name = "layout",
                 .vtable = &widget_vtable,
             };
         }

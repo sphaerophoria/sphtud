@@ -68,6 +68,7 @@ pub fn PropertyList(comptime Action: type) type {
         pub fn asWidget(self: *Self) Widget(Action) {
             return .{
                 .ctx = self,
+                .name = "property_list",
                 .vtable = &widget_vtable,
             };
         }

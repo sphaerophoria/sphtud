@@ -15,6 +15,7 @@ pub fn makeNull(comptime Action: type) Widget(Action) {
 
     return .{
         .ctx = null,
+        .name = "null",
         .vtable = &vtable,
     };
 }

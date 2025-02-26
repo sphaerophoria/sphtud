@@ -19,6 +19,7 @@ pub fn makeLabel(comptime Action: type, alloc: gui.GuiAlloc, text_retriever: any
 
     return .{
         .vtable = T.widgetVTable(Action),
+        .name = "label",
         .ctx = ctx,
     };
 }

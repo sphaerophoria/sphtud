@@ -47,6 +47,7 @@ pub fn PopupLayer(comptime Action: type) type {
         pub fn asWidget(self: *Self) Widget(Action) {
             return .{
                 .ctx = self,
+                .name = "popup layer",
                 .vtable = &widget_vtable,
             };
         }

@@ -50,6 +50,7 @@ pub fn init(alloc: Allocator, app: *App, size: gui.PixelSize) !gui.Widget(UiActi
     };
     return .{
         .vtable = &widget_vtable,
+        .name = "app_widget",
         .ctx = ctx,
     };
 }

@@ -46,6 +46,7 @@ pub fn dragFloat(comptime Action: type, alloc: gui.GuiAlloc, val_retriever: anyt
 
     return .{
         .vtable = &T.widget_vtable,
+        .name = "drag_float",
         .ctx = ctx,
     };
 }

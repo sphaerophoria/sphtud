@@ -231,6 +231,7 @@ pub fn makeColorPicker(
 
     return .{
         .vtable = &T.widget_vtable,
+        .name = "color picker",
         .ctx = preview,
     };
 }
@@ -510,6 +511,7 @@ fn makeHexagon(comptime Action: type, alloc: Allocator, color_retriever: anytype
 
     return .{
         .vtable = &T.widget_vtable,
+        .name = "color picker hexagon",
         .ctx = ctx,
     };
 }

@@ -51,6 +51,7 @@ pub fn makeButton(
 
     return .{
         .vtable = &Button(Action).widget_vtable,
+        .name = "button",
         .ctx = @ptrCast(button),
     };
 }
