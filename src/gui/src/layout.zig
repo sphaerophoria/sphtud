@@ -34,10 +34,10 @@ pub fn Layout(comptime Action: type) type {
             .reset = Self.resetWidgets,
         };
 
-        pub fn init(alloc: Allocator, item_pad: u31) !*Self {
-            const layout = try alloc.create(Self);
+        pub fn init(arena: Allocator, item_pad: u31) !*Self {
+            const layout = try arena.create(Self);
             layout.* = .{
-                .alloc = alloc,
+                .alloc = arena,
                 .cursor = .{},
                 .items = .{},
                 .item_pad = item_pad,
