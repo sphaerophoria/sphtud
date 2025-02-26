@@ -195,6 +195,12 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
         .image_renderer = &ret.image_renderer,
     };
 
+    ret.drag_layer = gui.drag_layer.DragLayer(Action){};
+
+    ret.interactable_shared = gui.interactable.Shared(Action){
+        .drag_layer = &ret.drag_layer,
+    };
+
     ret.overlay = gui.popup_layer.PopupLayer(Action){
         .alloc = try gui_alloc.makeSubAlloc("overlay"),
     };
@@ -252,6 +258,8 @@ pub fn WidgetState(comptime Action: type) type {
         checkbox_shared: gui.checkbox.Shared,
         memory_widget_shared: gui.memory_widget.Shared,
         thumbnail_shared: gui.thumbnail.Shared,
+        drag_layer: gui.drag_layer.DragLayer(Action),
+        interactable_shared: gui.interactable.Shared(Action),
         overlay: gui.popup_layer.PopupLayer(Action),
 
         const Self = @This();
@@ -398,9 +406,10 @@ pub fn WidgetFactory(comptime Action: type) type {
         }
 
         pub fn makeRunner(self: *const Self, inner: gui.Widget(Action)) !gui.runner.Runner(Action) {
-            const root_stack = try self.makeStack(2);
+            const root_stack = try self.makeStack(3);
             try root_stack.pushWidget(inner, .{});
             try root_stack.pushWidget(self.state.overlay.asWidget(), .{});
+            try root_stack.pushWidget(self.state.drag_layer.asWidget(), .{});
 
             return gui.runner.Runner(Action).init(self.alloc.heap.general(), root_stack.asWidget());
         }

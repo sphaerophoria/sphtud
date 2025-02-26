@@ -47,6 +47,7 @@ pub const UiAction = union(enum) {
     update_text_size: f32,
     add_to_composition: ObjectId,
     delete_from_composition: usize,
+    set_drag_source: ObjectId,
     toggle_composition_debug,
 
     pub fn makeChangeTextSize(size: f32) UiAction {

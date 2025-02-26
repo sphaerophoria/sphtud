@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const sphimp = @import("sphimp");
 const App = sphimp.App;
+const ObjectId = sphimp.object.ObjectId;
 const sphrender = @import("sphrender");
 const gui = @import("sphui");
 const ui_action = @import("ui_action.zig");
@@ -11,6 +12,7 @@ const GlAlloc = sphrender.GlAlloc;
 
 app: *sphimp.App,
 size: gui.PixelSize = .{},
+drag_source: *?ObjectId,
 
 const AppWidget = @This();
 
@@ -42,10 +44,11 @@ const widget_vtable = gui.Widget(UiAction).VTable{
     .reset = null,
 };
 
-pub fn init(alloc: Allocator, app: *App) !gui.Widget(UiAction) {
+pub fn init(alloc: Allocator, app: *App, drag_source: *?ObjectId) !gui.Widget(UiAction) {
     const ctx = try alloc.create(AppWidget);
     ctx.* = .{
         .app = app,
+        .drag_source = drag_source,
     };
     return .{
         .vtable = &widget_vtable,
@@ -92,21 +95,32 @@ fn update(ctx: ?*anyopaque, available_size: gui.PixelSize, _: f32) anyerror!void
 fn setInputState(ctx: ?*anyopaque, widget_bounds: gui.PixelBBox, input_bounds: gui.PixelBBox, input_state: gui.InputState) gui.InputResponse(UiAction) {
     const self: *AppWidget = @ptrCast(@alignCast(ctx));
 
-    const no_action = gui.InputResponse(UiAction){
-        .wants_focus = false,
-        .action = null,
-    };
-
-    self.trySetInputState(widget_bounds, input_bounds, input_state) catch |e| {
+    const action = self.trySetInputState(widget_bounds, input_bounds, input_state) catch |e| {
         logError("input handling failed", e, @errorReturnTrace());
+        return .{};
     };
 
-    return no_action;
+    if (action) |a| {
+        return .{
+            .action = a,
+        };
+    }
+
+    return .{};
 }
 
-fn trySetInputState(self: *AppWidget, widget_bounds: gui.PixelBBox, input_bounds: gui.PixelBBox, input_state: gui.InputState) !void {
+fn trySetInputState(self: *AppWidget, widget_bounds: gui.PixelBBox, input_bounds: gui.PixelBBox, input_state: gui.InputState) !?UiAction {
+    var ret: ?UiAction = null;
+
     if (input_state.mouse_middle_released) self.app.setMiddleUp();
-    if (input_state.mouse_released) self.app.setMouseUp();
+    if (input_state.mouse_released) {
+        if (input_bounds.containsMousePos(input_state.mouse_pos)) {
+            if (self.drag_source.*) |id| {
+                ret = UiAction{ .add_to_composition = id };
+            }
+        }
+        self.app.setMouseUp();
+    }
 
     try self.app.setMousePos(
         input_state.mouse_pos.x - @as(f32, @floatFromInt(widget_bounds.left)),
@@ -114,7 +128,7 @@ fn trySetInputState(self: *AppWidget, widget_bounds: gui.PixelBBox, input_bounds
     );
 
     if (!input_bounds.containsMousePos(input_state.mouse_pos)) {
-        return;
+        return ret;
     }
 
     if (input_state.mouse_right_pressed) try self.app.clickRightMouse();
@@ -128,4 +142,6 @@ fn trySetInputState(self: *AppWidget, widget_bounds: gui.PixelBBox, input_bounds
     }
 
     self.app.scroll(input_state.frame_scroll);
+
+    return ret;
 }

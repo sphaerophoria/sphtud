@@ -7,6 +7,7 @@ const sphmath = @import("sphmath");
 const sphimp = @import("sphimp");
 const sphwindow = @import("sphwindow");
 const App = sphimp.App;
+const obj_mod = sphimp.object;
 const gui = @import("sphui");
 const ui_action = @import("sphimp_ui/ui_action.zig");
 const logError = @import("sphimp_ui/util.zig").logError;
@@ -220,12 +221,15 @@ pub fn main() !void {
         break :blk try MemoryTracker.init(root_arena, now, 1000, &allocators.root);
     };
 
+    var drag_source: ?obj_mod.ObjectId = null;
+
     var ui = try root_ui_mod.makeGui(
         try root_render_alloc.makeSubAlloc("gui"),
         &app,
         &allocators.scratch,
         scratch_gl,
         &memory_tracker,
+        &drag_source,
     );
 
     var last = try std.time.Instant.now();
@@ -390,6 +394,9 @@ pub fn main() !void {
                         logError("Failed to set composition debug state", e, @errorReturnTrace());
                     };
                 },
+                .set_drag_source => |v| {
+                    drag_source = v;
+                },
             }
         }
 
@@ -404,6 +411,11 @@ pub fn main() !void {
             } else if (key.key.eql(.{ .ascii = '`' })) {
                 ui.drawer.toggleOpenState();
             }
+        }
+
+        if (ui.runner.input_state.mouse_released) {
+            drag_source = null;
+            ui.state.drag_layer.reset();
         }
 
         if (selected_object.value != app.input_state.selected_object.value) {

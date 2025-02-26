@@ -6,25 +6,40 @@ const PixelBBox = gui.PixelBBox;
 const PixelSize = gui.PixelSize;
 const InputState = gui.InputState;
 const InputResponse = gui.InputResponse;
+const DragLayer = gui.drag_layer.DragLayer;
 
-pub fn clickable(comptime Action: type, arena: Allocator, inner: gui.Widget(Action), action: Action) !gui.Widget(Action) {
-    const ctx = try arena.create(Clickable(Action));
+pub fn Shared(comptime Action: type) type {
+    return struct {
+        drag_layer: *DragLayer(Action),
+    };
+}
+
+pub fn interactable(comptime Action: type, arena: Allocator, inner: gui.Widget(Action), action: Action, drag_start_action: Action, shared: *const Shared(Action)) !gui.Widget(Action) {
+    const ctx = try arena.create(Interactable(Action));
     ctx.* = .{
         .inner = inner,
         .action = action,
+        .drag_start_action = drag_start_action,
+        .shared = shared,
     };
 
     return .{
         .ctx = ctx,
         .name = "clickable",
-        .vtable = &Clickable(Action).widget_vtable,
+        .vtable = &Interactable(Action).widget_vtable,
     };
 }
 
-pub fn Clickable(comptime Action: type) type {
+pub fn Interactable(comptime Action: type) type {
     return struct {
         inner: Widget(Action),
         action: Action,
+        drag_start_action: Action,
+        shared: *const Shared(Action),
+        state: enum {
+            idle,
+            dragging,
+        } = .idle,
 
         const Self = @This();
 
@@ -53,12 +68,34 @@ pub fn Clickable(comptime Action: type) type {
 
         fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
-            _ = widget_bounds;
 
-            if (input_state.mouse_pressed and input_bounds.containsOptMousePos(input_state.mouse_down_location)) {
-                return .{
-                    .action = self.action,
-                };
+            if (!input_bounds.containsOptMousePos(input_state.mouse_down_location)) {
+                return .{};
+            }
+
+            switch (self.state) {
+                .idle => {
+                    if (!input_bounds.containsMousePos(input_state.mouse_pos)) {
+                        self.state = .dragging;
+                        const mouse_x: i32 = @intFromFloat(input_state.mouse_down_location.?.x);
+                        const mouse_y: i32 = @intFromFloat(input_state.mouse_down_location.?.y);
+                        const x_offs = mouse_x - widget_bounds.left;
+                        const y_offs = mouse_y - widget_bounds.top;
+                        self.shared.drag_layer.set(self.inner, x_offs, y_offs);
+                        return .{
+                            .action = self.drag_start_action,
+                        };
+                    } else if (input_state.mouse_released) {
+                        return .{
+                            .action = self.action,
+                        };
+                    }
+                },
+                .dragging => {
+                    if (input_state.mouse_released) {
+                        self.state = .idle;
+                    }
+                },
             }
 
             return .{};

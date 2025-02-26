@@ -11,6 +11,7 @@ const ImageDrawer = @import("ImageDrawer.zig");
 const ImageDrawerTab = @import("ImageDrawerTab.zig");
 const sphimp = @import("sphimp");
 const App = sphimp.App;
+const ObjectId = sphimp.object.ObjectId;
 const MemoryTracker = sphalloc.MemoryTracker;
 const AppWidget = @import("AppWidget.zig");
 const MemoryWidget = gui.memory_widget.MemoryWidget;
@@ -25,7 +26,7 @@ const Gui = struct {
 
 const sidebar_width = 300;
 
-pub fn makeGui(alloc: RenderAlloc, app: *App, scratch: *ScratchAlloc, scratch_gl: *GlAlloc, memory_tracker: *MemoryTracker) !Gui {
+pub fn makeGui(alloc: RenderAlloc, app: *App, scratch: *ScratchAlloc, scratch_gl: *GlAlloc, memory_tracker: *MemoryTracker, drag_source: *?ObjectId) !Gui {
     const widget_state = try gui.widget_factory.widgetState(UiAction, alloc, scratch, scratch_gl);
 
     const widget_factory = widget_state.factory(alloc);
@@ -40,6 +41,7 @@ pub fn makeGui(alloc: RenderAlloc, app: *App, scratch: *ScratchAlloc, scratch_gl
         &widget_state.thumbnail_shared,
         &widget_state.frame_shared,
         &widget_state.scroll_style,
+        &widget_state.interactable_shared,
     );
 
     var image_drawer_tab = try ImageDrawerTab.init(
@@ -72,7 +74,7 @@ pub fn makeGui(alloc: RenderAlloc, app: *App, scratch: *ScratchAlloc, scratch_gl
 
     const memory_widget = try widget_factory.makeMemoryWidget(memory_tracker);
 
-    const app_widget = try AppWidget.init(alloc.heap.arena(), app);
+    const app_widget = try AppWidget.init(alloc.heap.arena(), app, drag_source);
     try sidebar_then_main_viewport.pushWidget(app_widget);
 
     try non_drawer_stack.pushWidget(image_drawer_tab.asWidget(), .{

@@ -31,7 +31,8 @@ pub const util = @import("util.zig");
 pub const memory_widget = @import("memory_widget.zig");
 pub const thumbnail = @import("thumbnail.zig");
 pub const grid = @import("grid.zig");
-pub const clickable = @import("clickable.zig");
+pub const interactable = @import("interactable.zig");
+pub const drag_layer = @import("drag_layer.zig");
 
 test {
     std.testing.refAllDeclsRecursive(@This());

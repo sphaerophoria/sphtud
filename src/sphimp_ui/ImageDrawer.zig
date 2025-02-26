@@ -41,6 +41,7 @@ pub fn init(
     thumbnail_shared: *const gui.thumbnail.Shared,
     frame_shared: *const gui.frame.Shared,
     scroll_style: *const gui.scrollbar.Style,
+    interactable_shared: *const gui.interactable.Shared(UiAction),
 ) !*ImageDrawer {
     // With the frames in the list, an item pad is not necessary
     //
@@ -70,6 +71,7 @@ pub fn init(
             .squircle_renderer = squircle_renderer,
             .frame_shared = frame_shared,
             .thumbnail_shared = thumbnail_shared,
+            .interactable_shared = interactable_shared,
         },
         .style = .{
             .background_color = background_color,
@@ -225,6 +227,7 @@ fn updateWidgets(self: *ImageDrawer) !void {
             .frame_renderer = self.refs.app.makeFrameRenderer(self.thumbnail_widget_alloc),
             .thumbnail_shared = self.refs.thumbnail_shared,
             .frame_shared = self.refs.frame_shared,
+            .interactable_shared = self.refs.interactable_shared,
         };
 
         for (0..num_items) |idx| {
@@ -242,6 +245,7 @@ const ThumbnailFactory = struct {
     thumbnail_cache: *ThumbnailCache,
     frame_renderer: sphimp.Renderer.FrameRenderer,
     thumbnail_shared: *const gui.thumbnail.Shared,
+    interactable_shared: *const gui.interactable.Shared(UiAction),
     frame_shared: *const gui.frame.Shared,
 
     fn makeThumbnail(self: *ThumbnailFactory, idx: usize) !gui.Widget(UiAction) {
@@ -278,11 +282,13 @@ const ThumbnailFactory = struct {
             .fill_width,
         );
 
-        return try gui.clickable.clickable(
+        return try gui.interactable.interactable(
             UiAction,
             self.alloc.heap.arena(),
             box,
             .{ .update_selected_object = obj_id },
+            .{ .set_drag_source = obj_id },
+            self.interactable_shared,
         );
     }
 };
@@ -324,6 +330,7 @@ const Refs = struct {
     squircle_renderer: *gui.SquircleRenderer,
     thumbnail_shared: *const gui.thumbnail.Shared,
     frame_shared: *const gui.frame.Shared,
+    interactable_shared: *const gui.interactable.Shared(UiAction),
 };
 
 const DrawerState = union(enum) {
