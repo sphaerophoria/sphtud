@@ -122,6 +122,32 @@ pub fn build(b: *std.Build) !void {
     builder.addAppDependencies(lint_exe);
     try builder.installAndCheck(lint_exe);
 
+    b.installDirectory(.{
+        .source_dir = b.path("share"),
+        .install_dir = .prefix,
+        .install_subdir = "share",
+    });
+
+    b.installDirectory(.{
+        .source_dir = b.path("res/shaders"),
+        .install_dir = .prefix,
+        .install_subdir = "share/sphimp/shaders",
+    });
+
+    b.installDirectory(.{
+        .source_dir = b.path("res/brushes"),
+        .install_dir = .prefix,
+        .install_subdir = "share/sphimp/brushes",
+    });
+
+    // FIXME: Shipping fonts that we didn't make seems a little bad... maybe we
+    // should find system fonts or something
+    b.installDirectory(.{
+        .source_dir = b.path("res/ttf"),
+        .install_dir = .prefix,
+        .install_subdir = "share/sphimp/ttf",
+    });
+
     const uts = builder.addTest(
         "test",
         "src/sphimp/App.zig",

@@ -189,6 +189,8 @@ pub fn main() !void {
     try root_alloc.initPinned(page_alloc.allocator(), "root");
     defer root_alloc.deinit();
 
+    const args = try std.process.argsAlloc(root_alloc.arena());
+
     const alloc = root_alloc.general();
     const scratch_buf = try alloc.alloc(u8, 10 * 1024 * 1024);
     var scratch_alloc = ScratchAlloc.init(scratch_buf);
@@ -203,7 +205,7 @@ pub fn main() !void {
 
     const scratch_gl = try root_gl_alloc.makeSubAlloc(&root_alloc);
 
-    var app = try App.init(root_render_alloc, &scratch_alloc, scratch_gl, 640, 480);
+    var app = try App.init(root_render_alloc, &scratch_alloc, scratch_gl, args[0], 640, 480);
     defer app.deinit();
 
     var tmpdir = std.testing.tmpDir(.{});
@@ -277,7 +279,7 @@ pub fn main() !void {
     try app.save(save_path);
     app.deinit();
 
-    app = try App.init(root_render_alloc, &scratch_alloc, scratch_gl, 640, 480);
+    app = try App.init(root_render_alloc, &scratch_alloc, scratch_gl, args[0], 640, 480);
     try app.load(save_path);
 
     it = app.objects.idIter();

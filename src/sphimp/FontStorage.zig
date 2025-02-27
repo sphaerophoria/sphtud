@@ -16,7 +16,7 @@ const FontStorage = @This();
 // actively using loaded
 const FontData = struct {
     ttf_content: []const u8,
-    path: [:0]const u8, // relative
+    path: []const u8, // relative
     ttf: ttf_mod.Ttf,
 };
 
@@ -38,7 +38,7 @@ pub fn init(alloc: *Sphalloc) !FontStorage {
 }
 
 // On success, takes ownership of font_data and name
-pub fn append(self: *FontStorage, font_data: []const u8, path: [:0]const u8, ttf: ttf_mod.Ttf) !FontId {
+pub fn append(self: *FontStorage, font_data: []const u8, path: []const u8, ttf: ttf_mod.Ttf) !FontId {
     const next_id = self.inner.len;
     try self.inner.append(.{ .ttf_content = font_data, .path = path, .ttf = ttf });
     return .{ .value = next_id };

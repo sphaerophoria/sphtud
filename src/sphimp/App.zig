@@ -57,22 +57,27 @@ mul_fragment_shader: ShaderId,
 const shader_alloc_name = "shaders";
 const brush_alloc_name = "brushes";
 
-pub fn init(alloc: RenderAlloc, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc, window_width: usize, window_height: usize) !App {
+pub fn init(alloc: RenderAlloc, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc, exe_path: []const u8, window_width: usize, window_height: usize) !App {
     const objects = Objects.init(try alloc.makeSubAlloc("object storage"));
 
     const renderer = try Renderer.init(alloc.gl);
 
+    const resource_paths = try ResourcePaths.init(scratch_alloc.allocator(), exe_path);
+
     var shaders = try ShaderStorage(ShaderId).init(
         try alloc.makeSubAlloc(shader_alloc_name),
     );
+    try populateDefaultShaders(scratch_alloc, &shaders, resource_paths.shaders);
 
     const mul_fragment_shader_id = try shaders.addShader("mask_mul", Renderer.mul_fragment_shader, scratch_alloc);
 
-    const brushes = try ShaderStorage(BrushId).init(
+    var brushes = try ShaderStorage(BrushId).init(
         try alloc.makeSubAlloc(brush_alloc_name),
     );
+    try populateDefaultShaders(scratch_alloc, &brushes, resource_paths.brushes);
 
-    const fonts = try FontStorage.init(try alloc.heap.makeSubAlloc("fonts"));
+    var fonts = try FontStorage.init(try alloc.heap.makeSubAlloc("fonts"));
+    try populateDefaultFonts(scratch_alloc, &fonts, resource_paths.fonts);
 
     const io_alloc = try alloc.heap.makeSubAlloc("io");
 
@@ -231,7 +236,7 @@ pub fn load(self: *App, path: []const u8) !void {
     defer new_fonts.alloc.deinit();
 
     for (parsed.fonts) |p| {
-        _ = try loadFontIntoStorage(self.scratch.heap, p, &new_fonts);
+        _ = try loadFontIntoStorage(self.scratch.heap, std.fs.cwd(), p, &new_fonts);
     }
 
     var new_objects = try Objects.load(
@@ -699,40 +704,24 @@ pub fn loadImage(self: *App, path: [:0]const u8) !ObjectId {
 }
 
 pub fn loadShader(self: *App, path: [:0]const u8) !ShaderId {
-    const checkpoint = self.scratch.heap.checkpoint();
-    defer self.scratch.heap.restore(checkpoint);
-
-    const f = try std.fs.cwd().openFile(path, .{});
-    defer f.close();
-
-    const fragment_source = try f.readToEndAllocOptions(self.scratch.heap.allocator(), 1 << 20, null, 4, 0);
-
-    return self.addShaderFromFragmentSource(path, fragment_source);
+    return try loadShaderImpl(self.scratch.heap, std.fs.cwd(), path, &self.shaders);
 }
 
 pub fn loadBrush(self: *App, path: [:0]const u8) !BrushId {
-    const checkpoint = self.scratch.heap.checkpoint();
-    defer self.scratch.heap.restore(checkpoint);
-
-    const f = try std.fs.cwd().openFile(path, .{});
-    defer f.close();
-
-    const fragment_source = try f.readToEndAllocOptions(self.scratch.heap.allocator(), 1 << 20, null, 4, 0);
-
-    return self.brushes.addShader(path, fragment_source, self.scratch.heap);
+    return try loadShaderImpl(self.scratch.heap, std.fs.cwd(), path, &self.brushes);
 }
 
 pub fn loadFont(self: *App, path: [:0]const u8) !FontStorage.FontId {
-    return loadFontIntoStorage(self.scratch.heap, path, &self.fonts);
+    return loadFontIntoStorage(self.scratch.heap, std.fs.cwd(), path, &self.fonts);
 }
 
-fn loadFontIntoStorage(scratch_alloc: *ScratchAlloc, path: []const u8, fonts: *FontStorage) !FontStorage.FontId {
+fn loadFontIntoStorage(scratch_alloc: *ScratchAlloc, dir: std.fs.Dir, path: []const u8, fonts: *FontStorage) !FontStorage.FontId {
     const checkpoint = scratch_alloc.checkpoint();
     defer scratch_alloc.restore(checkpoint);
 
     // readToEndAlloc uses an ArrayList under the hood. No go for our arena.
     // Instead read into scratch, then copy out
-    const f = try std.fs.cwd().openFile(path, .{});
+    const f = try dir.openFile(path, .{});
     defer f.close();
 
     const font_alloc = try fonts.alloc.makeSubAlloc(obj_mod.getAllocName(.text));
@@ -743,7 +732,7 @@ fn loadFontIntoStorage(scratch_alloc: *ScratchAlloc, path: []const u8, fonts: *F
     const scratch_ttf_data = try f.readToEndAlloc(scratch_alloc.allocator(), 1 << 20);
     const ttf_data = try alloc.dupe(u8, scratch_ttf_data);
 
-    const path_duped = try alloc.dupeZ(u8, path);
+    const path_duped = try dir.realpathAlloc(alloc, path);
     const ttf = try ttf_mod.Ttf.init(alloc, ttf_data);
     return try fonts.append(ttf_data, path_duped, ttf);
 }
@@ -1496,6 +1485,65 @@ const Scratch = struct {
         self.gl.restore(from.gl);
     }
 };
+
+const ResourcePaths = struct {
+    brushes: []const u8,
+    shaders: []const u8,
+    fonts: []const u8,
+
+    pub fn init(alloc: Allocator, argv0: []const u8) !App.ResourcePaths {
+        const prefix = std.fs.path.dirname(std.fs.path.dirname(argv0).?).?;
+        return .{
+            .brushes = try std.fs.path.join(alloc, &.{ prefix, "share/sphimp/brushes" }),
+            .shaders = try std.fs.path.join(alloc, &.{ prefix, "share/sphimp/shaders" }),
+            .fonts = try std.fs.path.join(alloc, &.{ prefix, "share/sphimp/ttf" }),
+        };
+    }
+};
+
+fn populateDefaultShaders(scratch: *ScratchAlloc, shaders: anytype, path: []const u8) !void {
+    var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
+    defer dir.close();
+
+    var it = dir.iterate();
+
+    while (try it.next()) |entry| {
+        _ = loadShaderImpl(scratch, dir, entry.name, shaders) catch |e| {
+            std.log.err("Invalid shader at {s}: {s}", .{ path, @errorName(e) });
+            continue;
+        };
+    }
+}
+
+fn StorageId(comptime Ptr: type) type {
+    return @typeInfo(Ptr).Pointer.child.Id;
+}
+
+fn loadShaderImpl(scratch: *ScratchAlloc, dir: std.fs.Dir, path: []const u8, storage: anytype) !StorageId(@TypeOf(storage)) {
+    const checkpoint = scratch.checkpoint();
+    defer scratch.restore(checkpoint);
+
+    const f = try dir.openFile(path, .{});
+    defer f.close();
+
+    const fragment_source = try f.readToEndAllocOptions(scratch.allocator(), 1 << 20, null, 4, 0);
+
+    return try storage.addShader(path, fragment_source, scratch);
+}
+
+fn populateDefaultFonts(scratch: *ScratchAlloc, fonts: *FontStorage, path: []const u8) !void {
+    var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
+    defer dir.close();
+
+    var it = dir.iterate();
+
+    while (try it.next()) |entry| {
+        _ = loadFontIntoStorage(scratch, dir, entry.name, fonts) catch |e| {
+            std.log.err("Invalid font at {s}: {s}", .{ path, @errorName(e) });
+            continue;
+        };
+    }
+}
 
 test {
     std.testing.refAllDeclsRecursive(@This());

@@ -17,11 +17,13 @@ pub const Save = struct {
 pub const ShaderId = struct { value: usize };
 pub const BrushId = struct { value: usize };
 
-pub fn ShaderStorage(comptime Id: type) type {
+pub fn ShaderStorage(comptime IdType: type) type {
     return struct {
         alloc: RenderAlloc,
         storage: RuntimeSegmentedList(Item),
         const Self = @This();
+
+        pub const Id = IdType;
 
         pub const ShaderIdIterator = struct {
             i: usize = 0,

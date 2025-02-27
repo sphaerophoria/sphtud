@@ -16,6 +16,7 @@ const root_ui_mod = @import("sphimp_ui/root.zig");
 
 const Args = struct {
     action: Action,
+    exe_path: []const u8,
     it: std.process.ArgIterator,
 
     const Action = union(enum) {
@@ -54,6 +55,7 @@ const Args = struct {
 
             return .{
                 .action = .{ .load = save },
+                .exe_path = process_name,
                 .it = it,
             };
         }
@@ -103,6 +105,7 @@ const Args = struct {
                     .fonts = try fonts.toOwnedSlice(),
                 },
             },
+            .exe_path = process_name,
             .it = it,
         };
     }
@@ -182,7 +185,14 @@ pub fn main() !void {
 
     var scratch_gl = try root_gl_alloc.makeSubAlloc(&allocators.root);
 
-    var app = try App.init(try root_render_alloc.makeSubAlloc("App"), &allocators.scratch, scratch_gl, window_width, window_height);
+    var app = try App.init(
+        try root_render_alloc.makeSubAlloc("App"),
+        &allocators.scratch,
+        scratch_gl,
+        args.exe_path,
+        window_width,
+        window_height,
+    );
     defer app.deinit();
 
     const background_shader_id = try app.addShaderFromFragmentSource("constant color", background_fragment_shader);
