@@ -97,7 +97,8 @@ fn addShaderParamsToPropertyList(app: *App, property_list: anytype, widget_facto
             else => {
                 const uniform_label = try widget_factory.makeLabel(uniform.name);
                 const value_widget = try widget_factory.makeLabel("unimplemented");
-                try property_list.pushWidgets(uniform_label, value_widget);
+                try property_list.pushWidget(uniform_label);
+                try property_list.pushWidget(value_widget);
             },
         }
     }
@@ -115,7 +116,7 @@ fn makeObjectProperties(app: *App, widget_factory: gui.widget_factory.WidgetFact
         const layout_name = try widget_factory.makeLabel("Object properties");
         try layout.pushWidget(layout_name);
 
-        const property_list = try widget_factory.makePropertyList(4);
+        const property_list = try widget_factory.makePropertyList(8);
         try layout.pushWidget(property_list.asWidget());
 
         {
@@ -124,24 +125,28 @@ fn makeObjectProperties(app: *App, widget_factory: gui.widget_factory.WidgetFact
                 label_adaptors.SelectedObjectName.init(app),
                 &UiAction.makeEditName,
             );
-            try property_list.pushWidgets(name_label, name_box);
+            try property_list.pushWidget(name_label);
+            try property_list.pushWidget(name_box);
         }
 
         {
             const delete_button = try widget_factory.makeButton("Delete", .delete_selected_object);
-            try property_list.pushWidgets(gui.null_widget.makeNull(UiAction), delete_button);
+            try property_list.pushWidget(gui.null_widget.makeNull(UiAction));
+            try property_list.pushWidget(delete_button);
         }
 
         {
             const label = try widget_factory.makeLabel("Width");
             const value = try widget_factory.makeLabel(label_adaptors.SelectedObjectWidth.init(app));
-            try property_list.pushWidgets(label, value);
+            try property_list.pushWidget(label);
+            try property_list.pushWidget(value);
         }
 
         {
             const label = try widget_factory.makeLabel("Height");
             const value = try widget_factory.makeLabel(label_adaptors.SelectedObjectHeight.init(app));
-            try property_list.pushWidgets(label, value);
+            try property_list.pushWidget(label);
+            try property_list.pushWidget(value);
         }
 
         break :blk layout;
@@ -190,7 +195,8 @@ pub const Handle = struct {
         {
             const type_label_key = try self.removable_content_widget_factory.makeLabel("Object type");
             const type_label_value = try self.removable_content_widget_factory.makeLabel(@tagName(selected_obj.data));
-            try property_list.pushWidgets(type_label_key, type_label_value);
+            try property_list.pushWidget(type_label_key);
+            try property_list.pushWidget(type_label_value);
         }
 
         switch (selected_obj.data) {
@@ -198,7 +204,8 @@ pub const Handle = struct {
                 {
                     const source_key = try self.removable_content_widget_factory.makeLabel("Source");
                     const source_value = try self.removable_content_widget_factory.makeLabel(fs_obj.source);
-                    try property_list.pushWidgets(source_key, source_value);
+                    try property_list.pushWidget(source_key);
+                    try property_list.pushWidget(source_value);
                 }
             },
             .generated_mask => {},
@@ -210,7 +217,8 @@ pub const Handle = struct {
                         &UiAction.makeUpdateCompositionWidth,
                         1.0,
                     );
-                    try property_list.pushWidgets(width_label, width_dragger);
+                    try property_list.pushWidget(width_label);
+                    try property_list.pushWidget(width_dragger);
                 }
 
                 {
@@ -220,7 +228,8 @@ pub const Handle = struct {
                         &UiAction.makeUpdateCompositionHeight,
                         1.0,
                     );
-                    try property_list.pushWidgets(height_label, height_dragger);
+                    try property_list.pushWidget(height_label);
+                    try property_list.pushWidget(height_dragger);
                 }
 
                 {
@@ -236,7 +245,8 @@ pub const Handle = struct {
                     };
 
                     const debug_checkbox = try self.removable_content_widget_factory.makeCheckbox(CheckedRetriever{ .app = self.app }, UiAction.toggle_composition_debug);
-                    try property_list.pushWidgets(debug_label, debug_checkbox);
+                    try property_list.pushWidget(debug_label);
+                    try property_list.pushWidget(debug_checkbox);
                 }
 
                 {
@@ -250,13 +260,15 @@ pub const Handle = struct {
                         list_io.objectListRetriever(RetrieverCtx{}, self.app),
                         list_io.itListAction(&self.app.objects, &sphimp.object.Objects.idIter, .add_to_composition),
                     );
-                    try property_list.pushWidgets(add_label, add_combobox);
+                    try property_list.pushWidget(add_label);
+                    try property_list.pushWidget(add_combobox);
                 }
 
                 for (0..comp.objects.items.len) |comp_idx| {
                     const name_label = try self.removable_content_widget_factory.makeLabel(label_adaptors.CompositionObjName.init(self.app, comp_idx));
                     const delete_button = try self.removable_content_widget_factory.makeButton("Delete", .{ .delete_from_composition = comp_idx });
-                    try property_list.pushWidgets(name_label, delete_button);
+                    try property_list.pushWidget(name_label);
+                    try property_list.pushWidget(delete_button);
                 }
             },
             .shader => |s| {
@@ -278,7 +290,8 @@ pub const Handle = struct {
                         list_io.objectListRetriever(RetrieverCtx{}, self.app),
                         list_io.itListAction(&self.app.objects, &sphimp.object.Objects.idIter, .update_drawing_source),
                     );
-                    try property_list.pushWidgets(source_label, value_widget);
+                    try property_list.pushWidget(source_label);
+                    try property_list.pushWidget(value_widget);
                 }
 
                 {
@@ -288,7 +301,8 @@ pub const Handle = struct {
                         list_io.BrushRetriever.init(self.app),
                         list_io.itListAction(&self.app.brushes, &shader_storage.ShaderStorage(BrushId).idIter, .update_brush),
                     );
-                    try property_list.pushWidgets(source_label, value_widget);
+                    try property_list.pushWidget(source_label);
+                    try property_list.pushWidget(value_widget);
                 }
 
                 const brush = self.app.brushes.get(d.brush);
@@ -314,7 +328,8 @@ pub const Handle = struct {
                     list_io.itListAction(&self.app.objects, &sphimp.object.Objects.idIter, .update_path_source),
                 );
 
-                try property_list.pushWidgets(source_label, value_widget);
+                try property_list.pushWidget(source_label);
+                try property_list.pushWidget(value_widget);
             },
             .text => |*t| {
                 {
@@ -323,7 +338,8 @@ pub const Handle = struct {
                         label_adaptors.TextObjectContent.init(self.app),
                         &UiAction.makeTextObjChange,
                     );
-                    try property_list.pushWidgets(key, value_widget);
+                    try property_list.pushWidget(key);
+                    try property_list.pushWidget(value_widget);
                 }
 
                 {
@@ -332,7 +348,8 @@ pub const Handle = struct {
                         list_io.FontRetriever{ .app = self.app },
                         list_io.itListAction(&self.app.fonts, &FontStorage.idIter, .update_selected_font),
                     );
-                    try property_list.pushWidgets(key, value_widget);
+                    try property_list.pushWidget(key);
+                    try property_list.pushWidget(value_widget);
                 }
 
                 {
@@ -342,7 +359,8 @@ pub const Handle = struct {
                         &UiAction.makeChangeTextSize,
                         0.05,
                     );
-                    try property_list.pushWidgets(key, value_widget);
+                    try property_list.pushWidget(key);
+                    try property_list.pushWidget(value_widget);
                 }
             },
         }

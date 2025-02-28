@@ -12,16 +12,18 @@ const GlAlloc = sphrender.GlAlloc;
 
 pub const Shared = struct {
     scratch: *sphalloc.ScratchAlloc,
-    prop_style: *const gui.property_list.Style,
     guitext_shared: *const gui.gui_text.SharedState,
     scrollbar_style: *const gui.scrollbar.Style,
     squircle_renderer: *const gui.SquircleRenderer,
     program: Program(Vert, Uniform),
+    label_width: u31,
+    item_pad: u31,
 
     pub fn init(
         alloc: *sphrender.GlAlloc,
         scratch: *sphalloc.ScratchAlloc,
-        prop_style: *const gui.property_list.Style,
+        label_width: u31,
+        item_pad: u31,
         guitext_shared: *const gui.gui_text.SharedState,
         scrollbar_style: *const gui.scrollbar.Style,
         squircle_renderer: *const gui.SquircleRenderer,
@@ -29,11 +31,12 @@ pub const Shared = struct {
         const program = try Program(Vert, Uniform).init(alloc, vertex_shader, fragment_shader);
         return .{
             .scratch = scratch,
-            .prop_style = prop_style,
             .guitext_shared = guitext_shared,
             .scrollbar_style = scrollbar_style,
             .squircle_renderer = squircle_renderer,
             .program = program,
+            .label_width = label_width,
+            .item_pad = item_pad,
         };
     }
 };
@@ -44,15 +47,28 @@ pub fn makeMemoryWidget(
     memory_tracker: *const MemoryTracker,
     shared: *const Shared,
 ) !gui.Widget(Action) {
-    const property_list = try gui.property_list.PropertyList(Action).init(
-        alloc.heap.arena(),
-        shared.prop_style,
+    const grid = try gui.grid.Grid(Action).init(
+        alloc.heap,
+        &[_]gui.grid.ColumnConfig{
+            .{
+                .width = .{ .fixed = shared.label_width },
+                .horizontal_justify = .left,
+                .vertical_justify = .center,
+            },
+            .{
+                .width = .{ .ratio = 1.0 },
+                .horizontal_justify = .left,
+                .vertical_justify = .center,
+            },
+        },
+        shared.item_pad,
         100,
+        1000,
     );
 
     const scroll = try gui.scroll_view.ScrollView(Action).init(
         alloc.heap.arena(),
-        property_list.asWidget(),
+        grid.asWidget(),
         shared.scrollbar_style,
         shared.squircle_renderer,
     );
@@ -64,7 +80,7 @@ pub fn makeMemoryWidget(
         .item_alloc = item_alloc,
         .memory_tracker = memory_tracker,
         .snapshot_alloc = try alloc.heap.makeSubAlloc("memory_tracker_snapshot"),
-        .property_list = property_list,
+        .grid = grid,
         .inner_widget = scroll,
         .shared = shared,
     };
@@ -86,7 +102,7 @@ pub fn MemoryWidget(comptime Action: type) type {
         snapshot_alloc: *Sphalloc,
         memory_tracker_snapshot: []MemoryTracker.AllocSamples = &.{},
         inner_widget: gui.Widget(Action),
-        property_list: *gui.property_list.PropertyList(Action),
+        grid: *gui.grid.Grid(Action),
         size: gui.PixelSize = .{ .width = 0, .height = 0 },
 
         const widget_vtable = gui.Widget(Action).VTable{
@@ -158,8 +174,8 @@ pub fn MemoryWidget(comptime Action: type) type {
                 self.memory_tracker_snapshot = new_snapshot;
             }
 
-            if (self.property_list.items.items.len != memory_tracker_elems.len) {
-                self.property_list.clear();
+            if (self.grid.items.len != memory_tracker_elems.len) {
+                self.grid.clear();
 
                 try self.item_alloc.reset();
 
@@ -183,7 +199,8 @@ pub fn MemoryWidget(comptime Action: type) type {
                         .buffer = buffer,
                         .last_update_idx = 0,
                     };
-                    try self.property_list.pushWidgets(graph.asWidget(), label);
+                    try self.grid.pushWidget(label);
+                    try self.grid.pushWidget(graph.asWidget());
                 }
             }
 

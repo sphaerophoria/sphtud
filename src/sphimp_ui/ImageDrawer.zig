@@ -49,7 +49,20 @@ pub fn init(
     // fairly large upper bound that practically will not be hit.
     // log(100000/100) / log(2) < 10, so for 10 expansions we get 100,000
     // objects. If this is ever a problem I have no idea what's happening
-    const layout = try gui.grid.Grid(UiAction).init(alloc.heap, &.{ 1.0, 1.0, 1.0 }, 0, 100, 100000);
+    const layout = try gui.grid.Grid(UiAction).init(
+        alloc.heap,
+        &[_]gui.grid.ColumnConfig{
+            .{
+                .width = .{ .ratio = 1.0 },
+                .horizontal_justify = .center,
+                .vertical_justify = .center,
+            },
+        } ** 3,
+        0,
+        100,
+        100000,
+    );
+
     const thumbnail_widget_alloc = try alloc.makeSubAlloc("thumbnail layout");
 
     const frame = try gui.frame.makeFrame(UiAction, alloc.heap.arena(), .{

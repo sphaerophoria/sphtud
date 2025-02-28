@@ -10,10 +10,38 @@ const PixelSize = gui.PixelSize;
 const InputState = gui.InputState;
 const InputResponse = gui.InputResponse;
 
+pub const ColumnConfig = struct {
+    // Width ratios are preprocessed such that they add to 1.0
+    width: Width,
+    horizontal_justify: HJustification,
+    vertical_justify: VJustification,
+};
+
+pub const Width = union(enum) {
+    // Ratio of space after all fixed elements as a fraction of sum of all
+    // ratios.
+    // e.g. ratio: 1.0, ratio: 1.0, fixed: 200 will result in the first two
+    // columns splitting the available space after the 200 pixels are used by
+    // the right most element
+    ratio: f32,
+    fixed: u31,
+};
+
+pub const HJustification = enum {
+    left,
+    center,
+    right,
+};
+
+pub const VJustification = enum {
+    top,
+    center,
+    bottom,
+};
+
 pub fn Grid(comptime Action: type) type {
     return struct {
-        // sum(columns) == 1.0
-        columns: []f32,
+        columns: []const ColumnConfig,
         items: sphutil.RuntimeSegmentedList(LayoutItem),
         item_pad: u31,
         grid_width: u31 = 0,
@@ -36,9 +64,9 @@ pub fn Grid(comptime Action: type) type {
             .reset = Self.reset,
         };
 
-        pub fn init(alloc: *Sphalloc, column_ratios: []const f32, item_pad: u31, typical_elems: usize, max_elems: usize) !*Self {
+        pub fn init(alloc: *Sphalloc, columns: []const ColumnConfig, item_pad: u31, typical_elems: usize, max_elems: usize) !*Self {
             const self = try alloc.arena().create(Self);
-            const normalized = try alloc.arena().dupe(f32, column_ratios);
+            const normalized = try alloc.arena().dupe(ColumnConfig, columns);
             normalize(normalized);
 
             self.* = .{
@@ -99,7 +127,7 @@ pub fn Grid(comptime Action: type) type {
                     const widget_size = item.widget.getSize();
                     const widget_available = layout_calc.widgetAvailable(column_idx);
 
-                    item.bounds = layout_calc.widgetBounds(widget_size, widget_available);
+                    item.bounds = layout_calc.widgetBounds(widget_size, widget_available, column_idx);
                     layout_calc.advanceX(widget_available);
                 }
 
@@ -193,24 +221,41 @@ pub fn Grid(comptime Action: type) type {
     };
 }
 
-fn rowUsableWidth(available_width: u31, num_columns: usize, item_pad: u31) u31 {
-    const num_columns_u: u31 = @intCast(num_columns);
-    return available_width - (num_columns_u - 1) * item_pad;
+fn rowUsableWidth(available_width: u31, columns: []const ColumnConfig, item_pad: u31) u31 {
+    const num_columns_u: u31 = @intCast(columns.len);
+    var fixed_widths: u31 = 0;
+    for (columns) |col| {
+        switch (col.width) {
+            .fixed => |w| fixed_widths += w,
+            else => {},
+        }
+    }
+    return available_width -| fixed_widths -| (num_columns_u - 1) * item_pad;
 }
 
-fn normalize(vals: []f32) void {
+fn normalize(vals: []ColumnConfig) void {
     var sum: f32 = 0;
     for (vals) |v| {
-        sum += v;
+        switch (v.width) {
+            .ratio => |r| {
+                sum += r;
+            },
+            else => {},
+        }
     }
 
     for (vals) |*v| {
-        v.* /= sum;
+        switch (v.width) {
+            .ratio => |*r| {
+                r.* /= sum;
+            },
+            else => {},
+        }
     }
 }
 
 const LayoutCalc = struct {
-    columns: []const f32,
+    columns: []const ColumnConfig,
     row_usable_width: u31,
     available_height: u31,
     item_pad: u31,
@@ -218,10 +263,10 @@ const LayoutCalc = struct {
     x_offs: u31 = 0,
     y_offs: u31 = 0,
 
-    fn init(available_size: PixelSize, columns: []const f32, item_pad: u31) LayoutCalc {
+    fn init(available_size: PixelSize, columns: []const ColumnConfig, item_pad: u31) LayoutCalc {
         const row_usable_width = rowUsableWidth(
             available_size.width,
-            columns.len,
+            columns,
             item_pad,
         );
 
@@ -242,22 +287,38 @@ const LayoutCalc = struct {
 
     fn widgetWidth(self: LayoutCalc, column_idx: usize) u31 {
         const usable_width_f: f32 = @floatFromInt(self.row_usable_width);
-        return @intFromFloat(usable_width_f * self.columns[column_idx]);
+        switch (self.columns[column_idx].width) {
+            .ratio => |r| {
+                return @intFromFloat(usable_width_f * r);
+            },
+            .fixed => |width| {
+                return width;
+            },
+        }
     }
 
     fn updateMaxHeight(self: *LayoutCalc, size: PixelSize) void {
         self.row_height = @max(size.height, self.row_height);
     }
 
-    fn widgetBounds(self: LayoutCalc, widget_size: PixelSize, widget_available: PixelSize) PixelBBox {
-        const acx = widget_available.width / 2 + self.x_offs;
-        const acy = self.row_height / 2 + self.y_offs;
+    fn widgetBounds(self: LayoutCalc, widget_size: PixelSize, widget_available: PixelSize, column_idx: usize) PixelBBox {
+        const left = switch (self.columns[column_idx].horizontal_justify) {
+            .left => self.x_offs,
+            .right => self.x_offs + widget_available.width - widget_size.width,
+            .center => self.x_offs + widget_available.width / 2 - widget_size.width / 2,
+        };
+
+        const top = switch (self.columns[column_idx].vertical_justify) {
+            .top => self.y_offs,
+            .bottom => self.y_offs + self.row_height - widget_size.height,
+            .center => self.y_offs + self.row_height / 2 - widget_size.height / 2,
+        };
 
         return .{
-            .top = acy -| (widget_size.height / 2 + widget_size.width % 2),
-            .left = acx -| (widget_size.width / 2 + widget_size.height % 2),
-            .right = acx + widget_size.width / 2,
-            .bottom = acy + widget_size.height / 2,
+            .top = top,
+            .left = left,
+            .right = left + widget_size.width,
+            .bottom = top + widget_size.height,
         };
     }
 

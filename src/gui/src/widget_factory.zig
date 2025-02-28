@@ -26,6 +26,7 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
     ret.layout_pad = layout_pad;
 
     const widget_width: u31 = @intFromFloat(unit * 8);
+    ret.widget_width = widget_width;
     const typical_widget_height: u31 = @intFromFloat(unit * 1.3);
     const corner_radius: f32 = unit / 5;
 
@@ -78,11 +79,6 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
         .width = @intFromFloat(unit * 0.75),
     };
 
-    ret.property_list_style = gui.property_list.Style{
-        .value_width = widget_width,
-        .item_pad = layout_pad,
-    };
-
     ret.shared_color = try gui.color_picker.SharedColorPickerState.init(
         gui_alloc.gl,
         gui.color_picker.ColorStyle{
@@ -92,12 +88,12 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
             .popup_background = StyleColors.background_color3,
             .item_pad = layout_pad,
             .corner_radius = corner_radius,
+            .grid_content_width = widget_width,
         },
         &ret.drag_shared,
         &ret.guitext_state,
         &ret.squircle_renderer,
         &ret.frame_shared,
-        &ret.property_list_style,
     );
 
     ret.shared_textbox_state = gui.textbox.SharedTextboxState{
@@ -185,7 +181,8 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
     ret.memory_widget_shared = try gui.memory_widget.Shared.init(
         gui_alloc.gl,
         scratch_alloc,
-        &ret.property_list_style,
+        widget_width,
+        layout_pad,
         &ret.guitext_state,
         &ret.scroll_style,
         &ret.squircle_renderer,
@@ -239,6 +236,7 @@ pub const StyleColors = struct {
 pub fn WidgetState(comptime Action: type) type {
     return struct {
         layout_pad: u31,
+        widget_width: u31,
         text_renderer: sphtext.TextRenderer,
         distance_field_renderer: sphrender.DistanceFieldGenerator,
         ttf: sphtext.ttf.Ttf,
@@ -253,7 +251,6 @@ pub fn WidgetState(comptime Action: type) type {
         shared_selecatble_list_state: gui.selectable_list.SharedState,
         frame_shared: gui.frame.Shared,
         even_vert_layout_shared: gui.even_vert_layout.Shared,
-        property_list_style: gui.property_list.Style,
         combo_box_shared: gui.combo_box.Shared,
         checkbox_shared: gui.checkbox.Shared,
         memory_widget_shared: gui.memory_widget.Shared,
@@ -356,8 +353,23 @@ pub fn WidgetFactory(comptime Action: type) type {
             return gui.layout.Layout(Action).init(self.alloc.heap.arena(), self.state.layout_pad);
         }
 
-        pub fn makePropertyList(self: *const Self, max_size: usize) !*gui.property_list.PropertyList(Action) {
-            return gui.property_list.PropertyList(Action).init(self.alloc.heap.arena(), &self.state.property_list_style, max_size);
+        pub fn makePropertyList(self: *const Self, max_size: usize) !*gui.grid.Grid(Action) {
+            return self.makeGrid(
+                &.{
+                    .{
+                        .width = .{ .ratio = 1.0 },
+                        .horizontal_justify = .left,
+                        .vertical_justify = .center,
+                    },
+                    .{
+                        .width = .{ .fixed = self.state.widget_width },
+                        .horizontal_justify = .center,
+                        .vertical_justify = .center,
+                    },
+                },
+                max_size,
+                max_size,
+            );
         }
 
         pub fn makeBox(self: *const Self, inner: gui.Widget(Action), size: gui.PixelSize, fill_style: gui.box.FillStyle) !gui.Widget(Action) {
@@ -388,12 +400,16 @@ pub fn WidgetFactory(comptime Action: type) type {
 
         pub fn makeGrid(
             self: *const Self,
-            column_ratios: []const f32,
-        ) !*gui.stack.Stack(Action) {
+            columns: []const gui.grid.ColumnConfig,
+            typical_elems: usize,
+            max_elems: usize,
+        ) !*gui.grid.Grid(Action) {
             return gui.grid.Grid(Action).init(
-                self.alloc.heap.arena(),
-                column_ratios,
+                self.alloc.heap,
+                columns,
                 self.state.layout_pad,
+                typical_elems,
+                max_elems,
             );
         }
 

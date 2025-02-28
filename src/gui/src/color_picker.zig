@@ -26,6 +26,7 @@ pub const ColorStyle = struct {
     popup_background: Color,
     corner_radius: f32,
     item_pad: u31,
+    grid_content_width: u31,
 };
 
 pub const SharedColorPickerState = struct {
@@ -38,7 +39,6 @@ pub const SharedColorPickerState = struct {
     guitext_state: *const gui.gui_text.SharedState,
     squircle_renderer: *const SquircleRenderer,
     frame: *const gui.frame.Shared,
-    property_list_style: *const gui.property_list.Style,
 
     pub fn init(
         gl_alloc: *GlAlloc,
@@ -47,7 +47,6 @@ pub const SharedColorPickerState = struct {
         guitext_state: *const gui.gui_text.SharedState,
         squircle_renderer: *const SquircleRenderer,
         frame_shared: *const gui.frame.Shared,
-        property_list_style: *const gui.property_list.Style,
     ) !SharedColorPickerState {
         const hexagon_renderer = try HexagonProgram.init(
             gl_alloc,
@@ -69,7 +68,6 @@ pub const SharedColorPickerState = struct {
             .guitext_state = guitext_state,
             .squircle_renderer = squircle_renderer,
             .frame = frame_shared,
-            .property_list_style = property_list_style,
         };
     }
 };
@@ -118,7 +116,25 @@ pub fn ColorPicker(comptime Action: type, comptime ColorRetriever: type, comptim
                 .generator = self.color_generator,
             };
 
-            const property_list = try gui.property_list.PropertyList(Action).init(self.overlay.alloc.heap.arena(), self.shared.property_list_style, 3);
+            const property_list = try gui.grid.Grid(Action).init(
+                self.overlay.alloc.heap,
+                &.{
+                    .{
+                        .width = .{ .ratio = 1.0 },
+                        .horizontal_justify = .left,
+                        .vertical_justify = .center,
+                    },
+                    .{
+                        .width = .{ .fixed = self.shared.style.grid_content_width },
+                        .horizontal_justify = .center,
+                        .vertical_justify = .center,
+                    },
+                },
+                self.shared.style.item_pad,
+                6,
+                6,
+            );
+
             const box = try gui.box.box(
                 Action,
                 self.overlay.alloc.heap.arena(),
@@ -131,19 +147,22 @@ pub fn ColorPicker(comptime Action: type, comptime ColorRetriever: type, comptim
             {
                 const label = try widget_gen.makeLabel("red");
                 const drag = try widget_gen.makeRGBDrag("r");
-                try property_list.pushWidgets(label, drag);
+                try property_list.pushWidget(label);
+                try property_list.pushWidget(drag);
             }
 
             {
                 const label = try widget_gen.makeLabel("green");
                 const drag = try widget_gen.makeRGBDrag("g");
-                try property_list.pushWidgets(label, drag);
+                try property_list.pushWidget(label);
+                try property_list.pushWidget(drag);
             }
 
             {
                 const label = try widget_gen.makeLabel("blue");
                 const drag = try widget_gen.makeRGBDrag("b");
-                try property_list.pushWidgets(label, drag);
+                try property_list.pushWidget(label);
+                try property_list.pushWidget(drag);
             }
 
             return try gui.frame.makeFrame(Action, self.overlay.alloc.heap.arena(), .{
@@ -189,7 +208,9 @@ pub fn ColorPicker(comptime Action: type, comptime ColorRetriever: type, comptim
             };
 
             if (input_bounds.containsOptMousePos(input_state.mouse_down_location)) {
-                self.spawnOverlay(input_state.mouse_down_location.?) catch return ret;
+                self.spawnOverlay(input_state.mouse_down_location.?) catch |e| {
+                    std.log.err("Failed to spawn color overlay: {s}\n", .{@errorName(e)});
+                };
             }
 
             return ret;

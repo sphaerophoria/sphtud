@@ -12,13 +12,13 @@ const label_adaptors = @import("label_adaptors.zig");
 const float_adaptors = @import("float_adaptors.zig");
 const color_adaptors = @import("color_adaptors.zig");
 const UiAction = ui_action.UiAction;
-const PropertyList = gui.property_list.PropertyList(UiAction);
+const Grid = gui.grid.Grid(UiAction);
 const WidgetFactory = gui.widget_factory.WidgetFactory(UiAction);
 
 pub const PropertyWidgetGenerator = struct {
     app: *App,
     widget_factory: WidgetFactory,
-    property_list: *PropertyList,
+    property_list: *Grid,
 
     const drag_speed = 0.01;
 
@@ -31,7 +31,8 @@ pub const PropertyWidgetGenerator = struct {
                 .uniform_idx = uniform_idx,
             },
         );
-        try self.property_list.pushWidgets(uniform_label, value_widget);
+        try self.property_list.pushWidget(uniform_label);
+        try self.property_list.pushWidget(value_widget);
     }
 
     pub fn addFloatToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, name: []const u8) !void {
@@ -48,7 +49,8 @@ pub const PropertyWidgetGenerator = struct {
             },
             drag_speed,
         );
-        try self.property_list.pushWidgets(uniform_label, value_widget);
+        try self.property_list.pushWidget(uniform_label);
+        try self.property_list.pushWidget(value_widget);
     }
 
     pub fn addFloat2ToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, name: []const u8) !void {
@@ -75,7 +77,8 @@ pub const PropertyWidgetGenerator = struct {
                 drag_speed,
             );
 
-            try self.property_list.pushWidgets(uniform_label, value_widget);
+            try self.property_list.pushWidget(uniform_label);
+            try self.property_list.pushWidget(value_widget);
         }
     }
 
@@ -90,7 +93,8 @@ pub const PropertyWidgetGenerator = struct {
             ui_action.ShaderColor{ .uniform_idx = uniform_idx },
         );
 
-        try self.property_list.pushWidgets(uniform_label, value_widget);
+        try self.property_list.pushWidget(uniform_label);
+        try self.property_list.pushWidget(value_widget);
     }
 };
 

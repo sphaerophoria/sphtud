@@ -22,7 +22,6 @@ pub const widget_factory = @import("widget_factory.zig");
 pub const runner = @import("runner.zig");
 pub const even_vert_layout = @import("even_vert_layout.zig");
 pub const frame = @import("frame.zig");
-pub const property_list = @import("property_list.zig");
 pub const null_widget = @import("null.zig");
 pub const combo_box = @import("combo_box.zig");
 pub const box = @import("box.zig");
