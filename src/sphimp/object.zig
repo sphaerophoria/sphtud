@@ -646,6 +646,11 @@ pub const GeneratedMaskObject = struct {
     }
 };
 
+const DrawingIndex = struct {
+    stroke_id: usize,
+    point_id: usize,
+};
+
 pub const DrawingObject = struct {
     pub const Stroke = struct {
         points: std.ArrayListUnmanaged(Vec2) = .{},
@@ -748,6 +753,90 @@ pub const DrawingObject = struct {
         try last_stroke.addPoint(self.strokeAlloc(), pos);
 
         try self.generateDistanceField(scratch_alloc, scratch_gl, objects, distance_field_renderer);
+    }
+
+    pub fn removePointsWithinRange(
+        self: *DrawingObject,
+        scratch: *ScratchAlloc,
+        scratch_gl: *GlAlloc,
+        pos: Vec2,
+        dist: f32,
+        objects: *Objects,
+        distance_field_renderer: sphrender.DistanceFieldGenerator,
+    ) !void {
+        defer self.clearEmptyStrokes();
+
+        const dist2 = dist * dist;
+
+        var total_num_elems: usize = 0;
+        for (self.strokes.items) |s| {
+            total_num_elems += s.points.items.len;
+        }
+
+        var to_remove = try sphutil.RuntimeSegmentedList(DrawingIndex).init(
+            scratch.allocator(),
+            scratch.allocator(),
+            100,
+            @max(100, total_num_elems),
+        );
+
+        var stroke_idx = self.strokes.items.len;
+        while (stroke_idx > 0) {
+            stroke_idx -= 1;
+
+            const stroke = self.strokes.items[stroke_idx];
+            var point_idx = stroke.points.items.len;
+            while (point_idx > 0) {
+                point_idx -= 1;
+
+                const point = stroke.points.items[point_idx];
+                if (sphmath.length2(pos - point) < dist2) {
+                    try to_remove.append(.{
+                        .stroke_id = stroke_idx,
+                        .point_id = point_idx,
+                    });
+                }
+            }
+        }
+
+        var it = to_remove.iter();
+        while (it.next()) |elem| {
+            try self.remove(elem.*);
+        }
+
+        try self.generateDistanceField(scratch, scratch_gl, objects, distance_field_renderer);
+    }
+
+    fn remove(self: *DrawingObject, id: DrawingIndex) !void {
+        var stroke = &self.strokes.items[id.stroke_id];
+
+        const right_point_id = id.point_id + 1;
+        const right_half: []const @Vector(2, f32) =
+            if (right_point_id < stroke.points.items.len)
+            stroke.points.items[right_point_id..]
+        else
+            &.{};
+
+        if (right_half.len > 0) {
+            try self.strokes.append(self.strokeAlloc(), Stroke{});
+            // reference may be invalidated
+            stroke = &self.strokes.items[id.stroke_id];
+            try self.strokes.items[self.strokes.items.len - 1].points.appendSlice(self.strokeAlloc(), right_half);
+        }
+
+        stroke.points.shrinkAndFree(self.strokeAlloc(), id.point_id);
+    }
+
+    fn clearEmptyStrokes(self: *DrawingObject) void {
+        var idx = self.strokes.items.len;
+        while (idx > 0) {
+            idx -= 1;
+            const stroke = self.strokes.items[idx];
+            if (stroke.points.items.len == 0) {
+                var removed = self.strokes.swapRemove(idx);
+                removed.points.deinit(self.strokeAlloc());
+            }
+        }
     }
 
     pub fn generateDistanceField(

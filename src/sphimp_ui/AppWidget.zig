@@ -13,6 +13,7 @@ const GlAlloc = sphrender.GlAlloc;
 app: *sphimp.App,
 size: gui.PixelSize = .{},
 drag_source: *?ObjectId,
+now: std.time.Instant = undefined,
 
 const AppWidget = @This();
 
@@ -77,7 +78,7 @@ fn render(ctx: ?*anyopaque, widget_bounds: gui.PixelBBox, window_bounds: gui.Pix
         widget_bounds.calcHeight(),
     );
 
-    self.app.render() catch return;
+    self.app.render(self.now) catch return;
 }
 
 fn getSize(ctx: ?*anyopaque) gui.PixelSize {
@@ -88,6 +89,7 @@ fn getSize(ctx: ?*anyopaque) gui.PixelSize {
 fn update(ctx: ?*anyopaque, available_size: gui.PixelSize, _: f32) anyerror!void {
     const self: *AppWidget = @ptrCast(@alignCast(ctx));
     self.size = available_size;
+    self.now = try std.time.Instant.now();
     self.app.view_state.window_width = available_size.width;
     self.app.view_state.window_height = available_size.height;
 }
@@ -121,7 +123,6 @@ fn trySetInputState(self: *AppWidget, widget_bounds: gui.PixelBBox, input_bounds
         }
         self.app.setMouseUp();
     }
-    if (input_state.mouse_right_released) self.app.setRightUp();
 
     try self.app.setMousePos(
         input_state.mouse_pos.x - @as(f32, @floatFromInt(widget_bounds.left)),

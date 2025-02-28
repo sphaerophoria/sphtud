@@ -9,12 +9,12 @@ const InputState = gui.InputState;
 const Color = gui.Color;
 const SquircleRenderer = @import("SquircleRenderer.zig");
 
-pub fn Rect(comptime Action: type) type {
+pub fn Rect(comptime Action: type, comptime ColorRetriever: type) type {
     return struct {
         size: PixelSize = .{ .width = 0, .height = 0 },
         corner_radius: f32,
         renderer: *const SquircleRenderer,
-        color: Color,
+        color: ColorRetriever,
 
         const Self = @This();
 
@@ -30,7 +30,7 @@ pub fn Rect(comptime Action: type) type {
         pub fn init(
             alloc: Allocator,
             corner_radius: f32,
-            color: Color,
+            color: ColorRetriever,
             renderer: *const SquircleRenderer,
         ) !Widget(Action) {
             const rect = try alloc.create(Self);
@@ -62,12 +62,28 @@ pub fn Rect(comptime Action: type) type {
 
             const transform = util.widgetToClipTransform(bounds, window);
 
+            const color = getColor(&self.color) orelse return;
             self.renderer.render(
-                self.color,
+                color,
                 self.corner_radius,
                 bounds,
                 transform,
             );
         }
     };
+}
+
+fn getColor(retriever: anytype) ?Color {
+    const Ptr = @TypeOf(retriever);
+    const T = @typeInfo(Ptr).Pointer.child;
+
+    switch (@typeInfo(T)) {
+        .Struct => {
+            if (T == Color) return retriever.*;
+            if (@hasDecl(T, "getColor")) return retriever.getColor();
+        },
+        else => {},
+    }
+
+    @compileError("Color retriever needs to be a gui.Color or struct with getColor() that returns ?gui.Color. Got " ++ @typeName(T));
 }

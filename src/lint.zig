@@ -79,7 +79,7 @@ pub fn writeDummyImage(alloc: Allocator, path: [:0]const u8) !void {
     }
 }
 
-pub fn inputOnCanvas(app: *App) !void {
+pub fn inputOnCanvas(app: *App, now: std.time.Instant) !void {
     const selected_object = app.objects.get(app.input_state.selected_object);
     var new_name_buf: [1024]u8 = undefined;
     const new_name = try std.fmt.bufPrint(&new_name_buf, "{s}1", .{selected_object.name});
@@ -88,20 +88,20 @@ pub fn inputOnCanvas(app: *App) !void {
     // Try dragging some stuff around
     try app.setMousePos(300, 300);
     try app.setMouseDown();
-    try app.render();
+    try app.render(now);
 
     try app.setMousePos(100, 100);
     app.setMouseUp();
-    try app.render();
+    try app.render(now);
 
     // Try panning
     try app.setMousePos(100, 100);
     app.setMiddleDown();
-    try app.render();
+    try app.render(now);
 
     try app.setMousePos(200, 200);
     app.setMiddleUp();
-    try app.render();
+    try app.render(now);
 
     // Render sometimes in debug mode
     if (selected_object.data == .composition) {
@@ -111,33 +111,30 @@ pub fn inputOnCanvas(app: *App) !void {
     // Click the right mouse button a few times (create path elements)
     try app.setMousePos(400, 400);
     try app.setRightDown();
-    app.setRightUp();
-    try app.render();
+    try app.render(now);
 
     try app.setMousePos(200, 300);
     try app.setRightDown();
-    app.setRightUp();
-    try app.render();
+    try app.render(now);
 
     const keys = [_]u8{ 'S', 'R' };
     for (keys) |key| {
         // Try to apply transformation to an object
         try app.setKeyDown(key, false);
-        try app.render();
+        try app.render(now);
 
         try app.setMousePos(400, 400);
-        try app.render();
+        try app.render(now);
 
         // Cancel the transformation
         try app.setRightDown();
-        app.setRightUp();
 
         // Try to apply transformation to an object
         try app.setKeyDown(key, false);
-        try app.render();
+        try app.render(now);
 
         try app.setMousePos(400, 400);
-        try app.render();
+        try app.render(now);
 
         // Submit the transformation
         try app.setMouseDown();
@@ -224,6 +221,8 @@ pub fn main() !void {
     const swap_colors_id = try app.addShaderFromFragmentSource("swap colors", swap_colors_frag);
     _ = try app.addBrushFromFragmnetSource("default brush", default_brush);
 
+    const now = try std.time.Instant.now();
+
     for (0..2) |_| {
         const composition_idx = try app.addComposition();
 
@@ -273,7 +272,7 @@ pub fn main() !void {
     while (it.next()) |i| {
         scratch_gl.reset();
         app.setSelectedObject(i);
-        try inputOnCanvas(&app);
+        try inputOnCanvas(&app, now);
     }
 
     var save_path_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -289,6 +288,6 @@ pub fn main() !void {
     while (it.next()) |i| {
         scratch_gl.reset();
         app.setSelectedObject(i);
-        try inputOnCanvas(&app);
+        try inputOnCanvas(&app, now);
     }
 }

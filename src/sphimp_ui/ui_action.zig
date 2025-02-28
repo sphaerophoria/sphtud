@@ -6,6 +6,7 @@ const BrushId = sphimp.shader_storage.BrushId;
 const FontStorage = sphimp.FontStorage;
 const gui = @import("sphui");
 const list_io = @import("list_io.zig");
+const DrawingTool = sphimp.tool.DrawingTool;
 
 pub const UiActionType = @typeInfo(UiAction).Union.tag_type.?;
 
@@ -49,6 +50,8 @@ pub const UiAction = union(enum) {
     delete_from_composition: usize,
     set_drag_source: ObjectId,
     toggle_composition_debug,
+    set_drawing_tool: DrawingTool,
+    change_eraser_size: f32,
 
     pub fn makeChangeTextSize(size: f32) UiAction {
         return .{ .update_text_size = size };
@@ -80,6 +83,10 @@ pub const UiAction = union(enum) {
 
     pub fn makeUpdateCompositionHeight(val: f32) UiAction {
         return .{ .update_composition_height = val };
+    }
+
+    pub fn makeChangeEraserSize(val: f32) UiAction {
+        return .{ .change_eraser_size = val };
     }
 };
 

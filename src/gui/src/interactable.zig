@@ -14,7 +14,7 @@ pub fn Shared(comptime Action: type) type {
     };
 }
 
-pub fn interactable(comptime Action: type, arena: Allocator, inner: gui.Widget(Action), action: Action, drag_start_action: Action, shared: *const Shared(Action)) !gui.Widget(Action) {
+pub fn interactable(comptime Action: type, arena: Allocator, inner: gui.Widget(Action), action: Action, drag_start_action: ?Action, shared: *const Shared(Action)) !gui.Widget(Action) {
     const ctx = try arena.create(Interactable(Action));
     ctx.* = .{
         .inner = inner,
@@ -34,7 +34,7 @@ pub fn Interactable(comptime Action: type) type {
     return struct {
         inner: Widget(Action),
         action: Action,
-        drag_start_action: Action,
+        drag_start_action: ?Action,
         shared: *const Shared(Action),
         state: enum {
             idle,
@@ -75,7 +75,9 @@ pub fn Interactable(comptime Action: type) type {
 
             switch (self.state) {
                 .idle => {
-                    if (!input_bounds.containsMousePos(input_state.mouse_pos)) {
+                    const emit_click = if (self.drag_start_action == null) input_state.mouse_pressed else input_state.mouse_released;
+
+                    if (!input_bounds.containsMousePos(input_state.mouse_pos) and self.drag_start_action != null) {
                         self.state = .dragging;
                         const mouse_x: i32 = @intFromFloat(input_state.mouse_down_location.?.x);
                         const mouse_y: i32 = @intFromFloat(input_state.mouse_down_location.?.y);
@@ -83,9 +85,9 @@ pub fn Interactable(comptime Action: type) type {
                         const y_offs = mouse_y - widget_bounds.top;
                         self.shared.drag_layer.set(self.inner, x_offs, y_offs);
                         return .{
-                            .action = self.drag_start_action,
+                            .action = self.drag_start_action.?,
                         };
-                    } else if (input_state.mouse_released) {
+                    } else if (emit_click) {
                         return .{
                             .action = self.action,
                         };

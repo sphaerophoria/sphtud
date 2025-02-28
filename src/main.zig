@@ -407,6 +407,14 @@ pub fn main() !void {
                 .set_drag_source => |v| {
                     drag_source = v;
                 },
+                .set_drawing_tool => |t| {
+                    app.tool_params.active_drawing_tool = t;
+                    try ui.sidebar.updateObjectProperties();
+                },
+                .change_eraser_size => |size| {
+                    app.tool_params.eraser_width = @max(size, 0.0);
+                    app.renderer.eraser_preview_start = try std.time.Instant.now();
+                },
             }
         }
 

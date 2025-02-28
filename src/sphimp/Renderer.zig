@@ -6,6 +6,8 @@ const shader_storage = @import("shader_storage.zig");
 const sphrender = @import("sphrender");
 const sphmath = @import("sphmath");
 const sphtext = @import("sphtext");
+const tool = @import("tool.zig");
+const ToolParams = tool.ToolParams;
 const TextRenderer = sphtext.TextRenderer;
 const gl = sphrender.gl;
 const ShaderProgram = sphrender.shader_program.Program;
@@ -29,6 +31,10 @@ const Object = obj_mod.Object;
 const ObjectId = obj_mod.ObjectId;
 const Transform = sphmath.Transform;
 
+const TransformOnlyUniform = struct {
+    transform: sphmath.Mat3x3,
+};
+
 sampler_program: PlaneProgram(sphrender.xyuvt_program.ImageSamplerUniforms),
 sampler_buffer: PlaneBuffer,
 background_program: PlaneProgram(BackgroundUniforms),
@@ -38,6 +44,9 @@ comp_id_program: PlaneProgram(IdUniforms),
 comp_id_buffer: PlaneBuffer,
 display_id_program: PlaneProgram(DisplayIdUniforms),
 display_id_buffer: PlaneBuffer,
+eraser_preview_program: PlaneProgram(TransformOnlyUniform),
+eraser_preview_buffer: PlaneBuffer,
+eraser_preview_start: ?std.time.Instant = null,
 distance_field_generator: sphrender.DistanceFieldGenerator,
 
 const Renderer = @This();
@@ -78,6 +87,7 @@ pub fn init(gl_alloc: *GlAlloc) !Renderer {
     const comp_id_buffer = try comp_id_program.makeFullScreenPlane(gl_alloc);
 
     const display_id_prog = try PlaneProgram(DisplayIdUniforms).init(gl_alloc, display_id_frag);
+    const eraser_perview_program = try PlaneProgram(TransformOnlyUniform).init(gl_alloc, eraser_preview_shader);
 
     return .{
         .sampler_program = sampler_program,
@@ -87,6 +97,8 @@ pub fn init(gl_alloc: *GlAlloc) !Renderer {
         .path_program = path_program,
         .comp_id_program = comp_id_program,
         .comp_id_buffer = comp_id_buffer,
+        .eraser_preview_program = eraser_perview_program,
+        .eraser_preview_buffer = try eraser_perview_program.makeFullScreenPlane(gl_alloc),
         .display_id_program = display_id_prog,
         .display_id_buffer = try display_id_prog.makeFullScreenPlane(gl_alloc),
         .distance_field_generator = distance_field_generator,
@@ -344,6 +356,63 @@ pub fn makeFrameRenderer(self: *Renderer, alloc: Allocator, gl_alloc: *GlAlloc, 
     };
 }
 
+pub const UiRenderer = struct {
+    renderer: *Renderer,
+    tool_params: ToolParams,
+    mouse_pos: sphmath.Vec2,
+    now: std.time.Instant,
+
+    pub fn render(self: *const UiRenderer, object: Object, transform: Transform) void {
+        switch (object.data) {
+            .drawing => {},
+            else => return,
+        }
+
+        switch (self.tool_params.active_drawing_tool) {
+            .brush => {},
+            .eraser => blk: {
+                // Render preview
+                const inv = transform.invert();
+                const screen_pos_w = transform.apply(.{ self.mouse_pos[0], self.mouse_pos[1], 1.0 });
+                const screen_pos = sphmath.applyHomogenous(screen_pos_w);
+
+                const mouse_off_screen = screen_pos[0] < -1.0 or screen_pos[0] > 1.0 or
+                    screen_pos[1] < -1.0 or screen_pos[1] > 1.0;
+
+                const wants_preview = self.renderer.eraser_preview_start != null and self.now.since(self.renderer.eraser_preview_start.?) < 500 * std.time.ns_per_ms;
+
+                // FIXME: Obviously split a fn
+                const eraser_preview_center: sphmath.Vec2 =
+                    if (mouse_off_screen and wants_preview)
+                    sphmath.applyHomogenous(inv.apply(.{ 0.0, 0.0, 1.0 }))
+                else if (!mouse_off_screen)
+                    self.mouse_pos
+                else
+                    break :blk;
+
+                const preview_transform = Transform.scale(
+                    self.tool_params.eraser_width,
+                    self.tool_params.eraser_width,
+                )
+                    .then(Transform.translate(eraser_preview_center[0], eraser_preview_center[1]))
+                    .then(transform);
+
+                self.renderer.eraser_preview_program.render(self.renderer.eraser_preview_buffer, .{
+                    .transform = preview_transform.inner,
+                });
+            },
+        }
+    }
+};
+
+pub fn makeUiRenderer(self: *Renderer, tool_params: ToolParams, mouse_pos: sphmath.Vec2, now: std.time.Instant) UiRenderer {
+    return .{
+        .renderer = self,
+        .tool_params = tool_params,
+        .mouse_pos = mouse_pos,
+        .now = now,
+    };
+}
 pub const UniformValue = union(UniformType) {
     image: ?ObjectId,
     float: f32,
@@ -566,5 +635,17 @@ pub const path_fragment_shader =
     \\void main()
     \\{
     \\    fragment = vec4(1.0, 1.0, 1.0, 1.0);
+    \\}
+;
+
+pub const eraser_preview_shader =
+    \\#version 330
+    \\in vec2 uv;
+    \\out vec4 fragment;
+    \\void main()
+    \\{
+    \\    vec2 center_offs = uv - 0.5;
+    \\    float alpha = (length(center_offs) < 0.5) ? 0.5 : 0.0;
+    \\    fragment = vec4(0.0, 0.0, 1.0, alpha);
     \\}
 ;

@@ -29,6 +29,7 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
     ret.widget_width = widget_width;
     const typical_widget_height: u31 = @intFromFloat(unit * 1.3);
     const corner_radius: f32 = unit / 5;
+    ret.corner_radius = corner_radius;
 
     ret.drag_shared = gui.drag_float.Shared{
         .style = .{
@@ -237,6 +238,7 @@ pub fn WidgetState(comptime Action: type) type {
     return struct {
         layout_pad: u31,
         widget_width: u31,
+        corner_radius: f32,
         text_renderer: sphtext.TextRenderer,
         distance_field_renderer: sphrender.DistanceFieldGenerator,
         ttf: sphtext.ttf.Ttf,
@@ -413,12 +415,16 @@ pub fn WidgetFactory(comptime Action: type) type {
             );
         }
 
-        pub fn makeRect(self: *const Self, color: gui.Color) !gui.Widget(Action) {
-            return gui.rect.Rect(Action).init(self.alloc.heap.arena(), 1.0, color, &self.state.squircle_renderer);
+        pub fn makeRect(self: *const Self, color: anytype, corner_radius: f32) !gui.Widget(Action) {
+            return gui.rect.Rect(Action, @TypeOf(color)).init(self.alloc.heap.arena(), corner_radius, color, &self.state.squircle_renderer);
         }
 
         pub fn makeCheckbox(self: *const Self, checked: anytype, on_change: Action) !gui.Widget(Action) {
             return try gui.checkbox.makeCheckbox(Action, self.alloc.heap.arena(), checked, on_change, &self.state.checkbox_shared);
+        }
+
+        pub fn makeOneOf(self: *const Self, retriever: anytype, options: []const gui.Widget(Action)) !gui.Widget(Action) {
+            return try gui.one_of.oneOf(Action, self.alloc.heap.arena(), retriever, options);
         }
 
         pub fn makeRunner(self: *const Self, inner: gui.Widget(Action)) !gui.runner.Runner(Action) {
@@ -440,6 +446,17 @@ pub fn WidgetFactory(comptime Action: type) type {
                 self.alloc.heap.arena(),
                 retriever,
                 &self.state.thumbnail_shared,
+            );
+        }
+
+        pub fn makeInteractable(self: *const Self, inner: gui.Widget(Action), click_action: Action, drag_action: ?Action) !gui.Widget(Action) {
+            return gui.interactable.interactable(
+                Action,
+                self.alloc.heap.arena(),
+                inner,
+                click_action,
+                drag_action,
+                &self.state.interactable_shared,
             );
         }
     };

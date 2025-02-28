@@ -9,6 +9,8 @@ const sphtext = @import("sphtext");
 const ttf_mod = sphtext.ttf;
 const FontStorage = @import("FontStorage.zig");
 const coords = @import("coords.zig");
+const tool = @import("tool.zig");
+const ToolParams = tool.ToolParams;
 const dependency_loop = @import("dependency_loop.zig");
 const shader_storage = @import("shader_storage.zig");
 const stbiw = @cImport({
@@ -48,6 +50,7 @@ fonts: FontStorage,
 renderer: Renderer,
 view_state: ViewState,
 input_state: InputState = .{},
+tool_params: ToolParams = .{},
 io_alloc: *Sphalloc,
 io_thread: *IoThread,
 io_thread_handle: std.Thread,
@@ -275,7 +278,7 @@ pub fn load(self: *App, path: []const u8) !void {
     }
 }
 
-pub fn render(self: *App) !void {
+pub fn render(self: *App, now: std.time.Instant) !void {
     const checkpoint = self.scratch.checkpoint();
     defer self.scratch.restore(checkpoint);
     var frame_renderer = self.renderer.makeFrameRenderer(
@@ -287,7 +290,11 @@ pub fn render(self: *App) !void {
         self.input_state.mouse_pos,
     );
 
-    try frame_renderer.render(self.input_state.selected_object, self.view_state.objectToClipTransform(self.selectedDims()));
+    const transform = self.view_state.objectToClipTransform(self.selectedDims());
+    try frame_renderer.render(self.input_state.selected_object, transform);
+
+    const ui_renderer = self.renderer.makeUiRenderer(self.tool_params, self.input_state.mouse_pos, now);
+    ui_renderer.render(self.objects.get(self.input_state.selected_object).*, transform);
 }
 
 pub fn makeFrameRenderer(self: *App, alloc: RenderAlloc) Renderer.FrameRenderer {
@@ -314,7 +321,7 @@ pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {
 pub fn setMouseDown(self: *App) !void {
     var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
 
-    const action = try self.input_state.setMouseDown(&self.objects, &fr);
+    const action = try self.input_state.setMouseDown(self.tool_params, &self.objects, &fr);
     try self.handleInputAction(action);
 }
 
@@ -335,10 +342,6 @@ pub fn setRightDown(self: *App) !void {
     try self.handleInputAction(input_action);
 }
 
-pub fn setRightUp(self: *App) void {
-    self.input_state.setRightUp();
-}
-
 pub fn setSelectedObject(self: *App, id: ObjectId) void {
     self.input_state.selectObject(id, &self.objects);
     self.view_state.reset();
@@ -353,7 +356,7 @@ pub fn setMousePos(self: *App, xpos: f32, ypos: f32) !void {
     const new_y = self.view_state.windowToClipY(ypos);
     const selected_dims = self.selectedDims();
     const new_pos = self.view_state.clipToObject(Vec2{ new_x, new_y }, selected_dims);
-    const input_action = self.input_state.setMousePos(new_pos, &self.objects);
+    const input_action = self.input_state.setMousePos(self.tool_params, new_pos, &self.objects);
 
     try self.handleInputAction(input_action);
 }
@@ -1001,6 +1004,7 @@ const InputState = struct {
         },
         add_draw_stroke: Vec2,
         add_stroke_sample: Vec2,
+        remove_stroke_samples: Vec2,
         export_image,
         save,
         pan: Vec2,
@@ -1018,7 +1022,7 @@ const InputState = struct {
     }
 
     // FIXME: Objects should be const
-    fn setMouseDown(self: *InputState, objects: *obj_mod.Objects, frame_renderer: *Renderer.FrameRenderer) !?InputAction {
+    fn setMouseDown(self: *InputState, tool_params: ToolParams, objects: *obj_mod.Objects, frame_renderer: *Renderer.FrameRenderer) !?InputAction {
         switch (self.data) {
             .composition => |*action| {
                 action.* = try self.makeCompositionInputState(objects, frame_renderer, .move);
@@ -1042,9 +1046,18 @@ const InputState = struct {
             },
             .drawing => |*d| {
                 d.mouse_down = true;
-                return .{
-                    .add_draw_stroke = self.mouse_pos,
-                };
+                switch (tool_params.active_drawing_tool) {
+                    .brush => {
+                        return .{
+                            .add_draw_stroke = self.mouse_pos,
+                        };
+                    },
+                    .eraser => {
+                        return .{
+                            .remove_stroke_samples = self.mouse_pos,
+                        };
+                    },
+                }
             },
             .none => {},
         }
@@ -1060,7 +1073,7 @@ const InputState = struct {
         }
     }
 
-    fn setMousePos(self: *InputState, new_pos: Vec2, objects: *Objects) ?InputAction {
+    fn setMousePos(self: *InputState, tool_params: ToolParams, new_pos: Vec2, objects: *Objects) ?InputAction {
         var apply_mouse_pos = true;
         defer if (apply_mouse_pos) {
             self.mouse_pos = new_pos;
@@ -1156,7 +1169,10 @@ const InputState = struct {
             },
             .drawing => |*d| {
                 if (d.mouse_down) {
-                    return InputAction{ .add_stroke_sample = new_pos };
+                    switch (tool_params.active_drawing_tool) {
+                        .brush => return InputAction{ .add_stroke_sample = new_pos },
+                        .eraser => return InputAction{ .remove_stroke_samples = new_pos },
+                    }
                 }
             },
             else => {},
@@ -1201,8 +1217,6 @@ const InputState = struct {
             else => return null,
         }
     }
-
-    fn setRightUp(_: *InputState) void {}
 
     fn setMiddleDown(self: *InputState) void {
         self.panning = true;
@@ -1309,6 +1323,20 @@ fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
             const selected_object = self.selectedObject();
             if (selected_object.asDrawing()) |d| {
                 try d.addSample(self.scratch.heap, self.scratch.gl, pos, &self.objects, self.renderer.distance_field_generator);
+            }
+        },
+        .remove_stroke_samples => |pos| {
+            // FIXME: Error consistency the whole way down
+            const selected_object = self.selectedObject();
+            if (selected_object.asDrawing()) |d| {
+                try d.removePointsWithinRange(
+                    self.scratch.heap,
+                    self.scratch.gl,
+                    pos,
+                    self.tool_params.eraser_width,
+                    &self.objects,
+                    self.renderer.distance_field_generator,
+                );
             }
         },
         .save => {

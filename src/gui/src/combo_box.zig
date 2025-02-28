@@ -212,7 +212,7 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
             const overlay_alloc = self.popup_layer.alloc.heap.arena();
 
             const stack = try gui.stack.Stack(Action, 2).init(overlay_alloc);
-            const rect = try gui.rect.Rect(Action).init(
+            const rect = try gui.rect.Rect(Action, Color).init(
                 overlay_alloc,
                 self.shared.style.corner_radius,
                 self.shared.style.popup_background,

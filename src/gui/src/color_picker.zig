@@ -174,7 +174,7 @@ pub fn ColorPicker(comptime Action: type, comptime ColorRetriever: type, comptim
         fn makeOverlayStack(self: *Self) !Widget(Action) {
             const stack = try gui.stack.Stack(Action, 2).init(self.overlay.alloc.heap.arena());
 
-            const rect = try gui.rect.Rect(Action).init(
+            const rect = try gui.rect.Rect(Action, Color).init(
                 self.overlay.alloc.heap.arena(),
                 self.shared.style.corner_radius,
                 self.shared.style.popup_background,

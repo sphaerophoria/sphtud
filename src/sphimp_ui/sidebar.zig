@@ -168,6 +168,9 @@ pub const Handle = struct {
     object_properties: gui.Widget(UiAction),
     specific_object_properties: *gui.layout.Layout(UiAction),
 
+    brush_icon: TextureRetriever,
+    eraser_icon: TextureRetriever,
+
     app: *App,
     removable_content_widget_factory: WidgetFactory,
 
@@ -294,24 +297,82 @@ pub const Handle = struct {
                     try property_list.pushWidget(value_widget);
                 }
 
-                {
+                try self.specific_object_properties.pushWidget(try self.removable_content_widget_factory.makeLabel("Tools"));
+
+                const tools = try self.removable_content_widget_factory.makeLayout();
+                tools.cursor.direction = .left_to_right;
+                try self.specific_object_properties.pushWidget(tools.asWidget());
+
+                try tools.pushWidget(try makeDrawingToolOption(
+                    self.removable_content_widget_factory,
+                    self.brush_icon,
+                    .brush,
+                    self.app,
+                ));
+                try tools.pushWidget(try makeDrawingToolOption(
+                    self.removable_content_widget_factory,
+                    self.eraser_icon,
+                    .eraser,
+                    self.app,
+                ));
+
+                const brush_params = blk: {
+                    const layout = try self.removable_content_widget_factory.makeLayout();
+                    try layout.pushWidget(
+                        try self.removable_content_widget_factory.makeLabel("Brush parameters"),
+                    );
+
+                    const params_list = try self.removable_content_widget_factory.makePropertyList(50);
+                    try layout.pushWidget(params_list.asWidget());
+
                     const source_label = try self.removable_content_widget_factory.makeLabel("Brush");
 
                     const value_widget = try self.removable_content_widget_factory.makeComboBox(
                         list_io.BrushRetriever.init(self.app),
                         list_io.itListAction(&self.app.brushes, &shader_storage.ShaderStorage(BrushId).idIter, .update_brush),
                     );
-                    try property_list.pushWidget(source_label);
-                    try property_list.pushWidget(value_widget);
-                }
+                    try params_list.pushWidget(source_label);
+                    try params_list.pushWidget(value_widget);
 
-                const brush = self.app.brushes.get(d.brush);
-                try addShaderParamsToPropertyList(
-                    self.app,
-                    property_list,
-                    self.removable_content_widget_factory,
-                    brush.uniforms,
-                );
+                    const brush = self.app.brushes.get(d.brush);
+                    try addShaderParamsToPropertyList(
+                        self.app,
+                        params_list,
+                        self.removable_content_widget_factory,
+                        brush.uniforms,
+                    );
+                    break :blk layout.asWidget();
+                };
+
+                const eraser_params = blk: {
+                    const layout = try self.removable_content_widget_factory.makeLayout();
+                    try layout.pushWidget(
+                        try self.removable_content_widget_factory.makeLabel("Eraser parameters"),
+                    );
+
+                    const params_list = try self.removable_content_widget_factory.makePropertyList(2);
+                    try layout.pushWidget(params_list.asWidget());
+
+                    const size_label = try self.removable_content_widget_factory.makeLabel("Size");
+
+                    const value_widget = try self.removable_content_widget_factory.makeDragFloat(
+                        EraserSizeRetriever{ .app = self.app },
+                        &UiAction.makeChangeEraserSize,
+                        0.001,
+                    );
+
+                    try params_list.pushWidget(size_label);
+                    try params_list.pushWidget(value_widget);
+
+                    break :blk layout.asWidget();
+                };
+
+                const selected_tool_retriever = SelectedToolIdx{
+                    .app = self.app,
+                };
+
+                const params = try self.removable_content_widget_factory.makeOneOf(selected_tool_retriever, &.{ brush_params, eraser_params });
+                try self.specific_object_properties.pushWidget(params);
             },
             .path => {
                 const source_label = try self.removable_content_widget_factory.makeLabel("Source object");
@@ -367,6 +428,62 @@ pub const Handle = struct {
     }
 };
 
+fn makeDrawingToolOption(factory: WidgetFactory, icon: TextureRetriever, tool: sphimp.tool.DrawingTool, app: *App) !gui.Widget(UiAction) {
+    const thumbnail = try factory.makeThumbnail(icon);
+    const box = try factory.makeBox(thumbnail, .{ .width = 24, .height = 24 }, .fill_none);
+    const clickable = try factory.makeInteractable(
+        box,
+        .{ .set_drawing_tool = tool },
+        null,
+    );
+
+    const background_color = ToolHighlightRetriever{
+        .app = app,
+        .desired = tool,
+        .color = gui.widget_factory.StyleColors.default_color,
+    };
+
+    const rect = try factory.makeRect(background_color, factory.state.corner_radius);
+
+    const stack = try factory.makeStack(2);
+    try stack.pushWidget(rect, .{ .size_policy = .match_siblings });
+    try stack.pushWidget(clickable, .{});
+    return stack.asWidget();
+}
+
+const ToolHighlightRetriever = struct {
+    app: *App,
+    desired: sphimp.tool.DrawingTool,
+    color: gui.Color,
+
+    pub fn getColor(self: ToolHighlightRetriever) ?gui.Color {
+        if (self.app.tool_params.active_drawing_tool == self.desired) {
+            return self.color;
+        } else {
+            return null;
+        }
+    }
+};
+
+const SelectedToolIdx = struct {
+    app: *App,
+
+    pub fn get(self: @This()) usize {
+        return switch (self.app.tool_params.active_drawing_tool) {
+            .brush => 0,
+            .eraser => 1,
+        };
+    }
+};
+
+const EraserSizeRetriever = struct {
+    app: *App,
+
+    pub fn getVal(r: @This()) f32 {
+        return r.app.tool_params.eraser_width;
+    }
+};
+
 pub const Sidebar = struct {
     widget: gui.Widget(UiAction),
     handle: Handle,
@@ -388,6 +505,7 @@ pub fn makeSidebar(sidebar_alloc: gui.GuiAlloc, app: *App, sidebar_width: u31, w
 
     const sidebar_background = try full_factory.makeRect(
         gui.widget_factory.StyleColors.background_color,
+        1.0,
     );
 
     try sidebar_stack.pushWidget(
@@ -404,10 +522,16 @@ pub fn makeSidebar(sidebar_alloc: gui.GuiAlloc, app: *App, sidebar_width: u31, w
     const properties = try makeObjectProperties(app, full_factory);
     try sidebar_layout.pushWidget(properties.widget);
 
+    const brush_icon = try loadTexture(sidebar_alloc.gl, @embedFile("res/brush.png"));
+    const eraser_icon = try loadTexture(sidebar_alloc.gl, @embedFile("res/eraser.png"));
+
     var handle = Handle{
         .removable_content_alloc = removable_content_alloc,
         .object_properties = properties.widget,
         .specific_object_properties = properties.specific_properties,
+
+        .brush_icon = brush_icon,
+        .eraser_icon = eraser_icon,
 
         .app = app,
         .removable_content_widget_factory = removable_factory,
@@ -418,5 +542,34 @@ pub fn makeSidebar(sidebar_alloc: gui.GuiAlloc, app: *App, sidebar_width: u31, w
     return .{
         .widget = sidebar_box,
         .handle = handle,
+    };
+}
+
+const TextureRetriever = struct {
+    size: gui.PixelSize,
+    texture: sphrender.Texture,
+
+    pub fn getTexture(self: TextureRetriever) sphrender.Texture {
+        return self.texture;
+    }
+
+    pub fn getSize(self: TextureRetriever) gui.PixelSize {
+        return self.size;
+    }
+};
+
+fn loadTexture(gl_alloc: *GlAlloc, data: []const u8) !TextureRetriever {
+    const image = try sphimp.StbImage.initData(data);
+    defer image.deinit();
+
+    const texture = try sphrender.makeTextureFromRgba(gl_alloc, image.data, image.width);
+    const size = gui.PixelSize{
+        .width = @intCast(image.width),
+        .height = @intCast(image.calcHeight()),
+    };
+
+    return .{
+        .texture = texture,
+        .size = size,
     };
 }
