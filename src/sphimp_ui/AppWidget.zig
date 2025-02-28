@@ -121,6 +121,7 @@ fn trySetInputState(self: *AppWidget, widget_bounds: gui.PixelBBox, input_bounds
         }
         self.app.setMouseUp();
     }
+    if (input_state.mouse_right_released) self.app.setRightUp();
 
     try self.app.setMousePos(
         input_state.mouse_pos.x - @as(f32, @floatFromInt(widget_bounds.left)),
@@ -131,7 +132,7 @@ fn trySetInputState(self: *AppWidget, widget_bounds: gui.PixelBBox, input_bounds
         return ret;
     }
 
-    if (input_state.mouse_right_pressed) try self.app.clickRightMouse();
+    if (input_state.mouse_right_pressed) try self.app.setRightDown();
     if (input_state.mouse_middle_pressed) self.app.setMiddleDown();
     if (input_state.mouse_pressed) try self.app.setMouseDown();
 

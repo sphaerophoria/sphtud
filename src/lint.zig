@@ -110,11 +110,13 @@ pub fn inputOnCanvas(app: *App) !void {
 
     // Click the right mouse button a few times (create path elements)
     try app.setMousePos(400, 400);
-    try app.clickRightMouse();
+    try app.setRightDown();
+    app.setRightUp();
     try app.render();
 
     try app.setMousePos(200, 300);
-    try app.clickRightMouse();
+    try app.setRightDown();
+    app.setRightUp();
     try app.render();
 
     const keys = [_]u8{ 'S', 'R' };
@@ -127,7 +129,8 @@ pub fn inputOnCanvas(app: *App) !void {
         try app.render();
 
         // Cancel the transformation
-        try app.clickRightMouse();
+        try app.setRightDown();
+        app.setRightUp();
 
         // Try to apply transformation to an object
         try app.setKeyDown(key, false);

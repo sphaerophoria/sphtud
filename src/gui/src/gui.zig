@@ -66,7 +66,8 @@ pub const WindowAction = union(enum) {
     mouse_up,
     middle_down,
     middle_up,
-    right_click,
+    right_down,
+    right_up,
     scroll: f32,
 };
 
@@ -137,6 +138,7 @@ pub const InputState = struct {
     mouse_down_location: ?MousePos = null,
 
     mouse_right_pressed: bool = false,
+    mouse_right_released: bool = false,
 
     mouse_middle_pressed: bool = false,
     mouse_middle_released: bool = false,
@@ -158,6 +160,8 @@ pub const InputState = struct {
             self.mouse_released = false;
         }
         self.mouse_right_pressed = false;
+        self.mouse_right_released = false;
+        self.mouse_middle_released = false;
         self.mouse_middle_pressed = false;
         self.mouse_middle_released = false;
         self.mouse_pressed = false;
@@ -188,7 +192,8 @@ pub const InputState = struct {
             },
             .middle_down => self.mouse_middle_pressed = true,
             .middle_up => self.mouse_middle_released = true,
-            .right_click => self.mouse_right_pressed = true,
+            .right_down => self.mouse_right_pressed = true,
+            .right_up => self.mouse_right_released = true,
         }
     }
 };

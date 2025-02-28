@@ -140,7 +140,9 @@ fn mouseButtonCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, button: c_int, actio
     } else if (button == glfwb.GLFW_MOUSE_BUTTON_MIDDLE and !is_down) {
         write_obj = .middle_up;
     } else if (button == glfwb.GLFW_MOUSE_BUTTON_RIGHT and is_down) {
-        write_obj = .right_click;
+        write_obj = .right_down;
+    } else if (button == glfwb.GLFW_MOUSE_BUTTON_RIGHT and !is_down) {
+        write_obj = .right_up;
     }
 
     if (write_obj) |w| {

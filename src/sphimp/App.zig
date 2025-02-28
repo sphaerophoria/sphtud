@@ -330,9 +330,13 @@ pub fn setMiddleUp(self: *App) void {
     self.input_state.setMiddleUp();
 }
 
-pub fn clickRightMouse(self: *App) !void {
-    const input_action = self.input_state.clickRightMouse();
+pub fn setRightDown(self: *App) !void {
+    const input_action = self.input_state.setRightDown();
     try self.handleInputAction(input_action);
+}
+
+pub fn setRightUp(self: *App) void {
+    self.input_state.setRightUp();
 }
 
 pub fn setSelectedObject(self: *App, id: ObjectId) void {
@@ -1173,7 +1177,7 @@ const InputState = struct {
         return null;
     }
 
-    fn clickRightMouse(self: *InputState) ?InputAction {
+    fn setRightDown(self: *InputState) ?InputAction {
         switch (self.data) {
             .path => {
                 return .{ .add_path_elem = self.mouse_pos };
@@ -1197,6 +1201,8 @@ const InputState = struct {
             else => return null,
         }
     }
+
+    fn setRightUp(_: *InputState) void {}
 
     fn setMiddleDown(self: *InputState) void {
         self.panning = true;
