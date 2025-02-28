@@ -379,9 +379,9 @@ pub const CompositionObject = struct {
         obj.transform = transform;
     }
 
-    pub fn addObj(self: *CompositionObject, alloc: Allocator, id: ObjectId) !CompositionIdx {
+    pub fn addObj(self: *CompositionObject, id: ObjectId) !CompositionIdx {
         const ret = self.objects.items.len;
-        try self.objects.append(alloc, .{
+        try self.objects.append(self.objectsAlloc(), .{
             .id = id,
             .transform = Transform.identity,
         });
@@ -390,6 +390,12 @@ pub const CompositionObject = struct {
 
     pub fn removeObj(self: *CompositionObject, id: CompositionIdx) void {
         _ = self.objects.swapRemove(id.value);
+    }
+
+    fn objectsAlloc(self: *CompositionObject) Allocator {
+        const data: *Object.Data = @alignCast(@fieldParentPtr("composition", self));
+        const object: *Object = @fieldParentPtr("data", data);
+        return object.alloc.heap.general();
     }
 };
 
@@ -485,14 +491,20 @@ pub const PathObject = struct {
         };
     }
 
-    pub fn addPoint(self: *PathObject, alloc: Allocator, pos: Vec2) !void {
-        try self.points.append(alloc, pos);
+    pub fn addPoint(self: *PathObject, pos: Vec2) !void {
+        try self.points.append(self.pointsAlloc(), pos);
         self.render_buffer.setData(self.points.items);
     }
 
     pub fn movePoint(self: *PathObject, idx: PathIdx, movement: Vec2) void {
         self.points.items[idx.value] += movement;
         self.render_buffer.updatePoint(idx.value, self.points.items[idx.value]);
+    }
+
+    fn pointsAlloc(self: *PathObject) Allocator {
+        const data: *Object.Data = @alignCast(@fieldParentPtr("path", self));
+        const object: *Object = @fieldParentPtr("data", data);
+        return object.alloc.heap.general();
     }
 };
 
@@ -706,22 +718,26 @@ pub const DrawingObject = struct {
         };
     }
 
+    fn strokeAlloc(self: *DrawingObject) Allocator {
+        const data: *Object.Data = @alignCast(@fieldParentPtr("drawing", self));
+        const object: *Object = @fieldParentPtr("data", data);
+        return object.alloc.heap.general();
+    }
+
     pub fn addStroke(
         self: *DrawingObject,
-        alloc: Allocator,
         scratch_alloc: *ScratchAlloc,
         scratch_gl: *GlAlloc,
         pos: Vec2,
         objects: *Objects,
         distance_field_renderer: sphrender.DistanceFieldGenerator,
     ) !void {
-        try self.strokes.append(alloc, Stroke{});
-        try self.addSample(alloc, scratch_alloc, scratch_gl, pos, objects, distance_field_renderer);
+        try self.strokes.append(self.strokeAlloc(), Stroke{});
+        try self.addSample(scratch_alloc, scratch_gl, pos, objects, distance_field_renderer);
     }
 
     pub fn addSample(
         self: *DrawingObject,
-        alloc: Allocator,
         scratch_alloc: *ScratchAlloc,
         scratch_gl: *GlAlloc,
         pos: Vec2,
@@ -729,7 +745,7 @@ pub const DrawingObject = struct {
         distance_field_renderer: sphrender.DistanceFieldGenerator,
     ) !void {
         const last_stroke = &self.strokes.items[self.strokes.items.len - 1];
-        try last_stroke.addPoint(alloc, pos);
+        try last_stroke.addPoint(self.strokeAlloc(), pos);
 
         try self.generateDistanceField(scratch_alloc, scratch_gl, objects, distance_field_renderer);
     }
@@ -765,12 +781,12 @@ pub const DrawingObject = struct {
         self.bindings[idx] = val;
     }
 
-    pub fn updateBrush(self: *DrawingObject, alloc: Allocator, brush_id: BrushId, brushes: ShaderStorage(BrushId)) !void {
+    pub fn updateBrush(self: *DrawingObject, brush_id: BrushId, brushes: ShaderStorage(BrushId)) !void {
         const brush = brushes.get(brush_id);
         const uniforms = brush.uniforms;
 
-        var bindings = try alloc.alloc(Renderer.UniformValue, uniforms.items.len);
-        defer alloc.free(bindings);
+        var bindings = try self.strokeAlloc().alloc(Renderer.UniformValue, uniforms.items.len);
+        defer self.strokeAlloc().free(bindings);
 
         for (0..bindings.len) |i| {
             bindings[i] = Renderer.UniformValue.fromDefault(uniforms.items[i].default);

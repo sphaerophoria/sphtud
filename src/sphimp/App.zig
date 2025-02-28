@@ -510,7 +510,7 @@ pub fn addToComposition(self: *App, id: obj_mod.ObjectId) !obj_mod.CompositionId
         return error.SelectedItemNotComposition;
     }
 
-    const new_idx = try selected_object.data.composition.addObj(selected_object.alloc.heap.general(), id);
+    const new_idx = try selected_object.data.composition.addObj(id);
     errdefer selected_object.data.composition.removeObj(new_idx);
 
     try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), self.input_state.selected_object, &self.objects);
@@ -616,7 +616,7 @@ pub fn setBrushDependency(self: *App, idx: usize, val: Renderer.UniformValue) !v
 pub fn setDrawingObjectBrush(self: *App, id: BrushId) !void {
     const selected_object = self.selectedObject();
     const drawing_data = selected_object.asDrawing() orelse return error.SelectedItemNotDrawing;
-    try drawing_data.updateBrush(selected_object.alloc.heap.general(), id, self.brushes);
+    try drawing_data.updateBrush(id, self.brushes);
 }
 
 pub fn addDrawing(self: *App) !ObjectId {
@@ -1273,7 +1273,7 @@ fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
         .add_path_elem => |obj_loc| {
             const selected_object = self.selectedObject();
             if (selected_object.asPath()) |p| {
-                try p.addPoint(selected_object.alloc.heap.general(), obj_loc);
+                try p.addPoint(obj_loc);
                 try self.regeneratePathMasks(self.input_state.selected_object);
             }
         },
@@ -1296,13 +1296,13 @@ fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
         .add_draw_stroke => |pos| {
             const selected_object = self.selectedObject();
             if (selected_object.asDrawing()) |d| {
-                try d.addStroke(selected_object.alloc.heap.general(), self.scratch.heap, self.scratch.gl, pos, &self.objects, self.renderer.distance_field_generator);
+                try d.addStroke(self.scratch.heap, self.scratch.gl, pos, &self.objects, self.renderer.distance_field_generator);
             }
         },
         .add_stroke_sample => |pos| {
             const selected_object = self.selectedObject();
             if (selected_object.asDrawing()) |d| {
-                try d.addSample(selected_object.alloc.heap.general(), self.scratch.heap, self.scratch.gl, pos, &self.objects, self.renderer.distance_field_generator);
+                try d.addSample(self.scratch.heap, self.scratch.gl, pos, &self.objects, self.renderer.distance_field_generator);
             }
         },
         .save => {
