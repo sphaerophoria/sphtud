@@ -92,3 +92,59 @@ pub const CompositionObjName = struct {
         return obj.name;
     }
 };
+
+pub const ShaderImageUniformName = struct {
+    app: *sphimp.App,
+    uniform_idx: usize,
+
+    pub fn getText(self: ShaderImageUniformName) []const u8 {
+        const object = self.app.selectedObject();
+        const bindings = object.shaderBindings() orelse return "";
+        switch (bindings[self.uniform_idx]) {
+            .image => |id| {
+                return self.app.objects.get(id orelse return "").name;
+            },
+            else => return "",
+        }
+    }
+};
+
+pub const DrawingDisplayObjectName = struct {
+    app: *sphimp.App,
+
+    pub fn getText(self: DrawingDisplayObjectName) []const u8 {
+        const drawing = self.app.selectedObject().asDrawing() orelse return "";
+        const id = drawing.display_object;
+        return self.app.objects.get(id).name;
+    }
+};
+
+pub const SelectedBrushName = struct {
+    app: *sphimp.App,
+
+    pub fn getText(self: SelectedBrushName) []const u8 {
+        const drawing = self.app.selectedObject().asDrawing() orelse return "";
+        const id = drawing.brush;
+        return self.app.brushes.get(id).name;
+    }
+};
+
+pub const PathDisplayObjectName = struct {
+    app: *sphimp.App,
+
+    pub fn getText(self: PathDisplayObjectName) []const u8 {
+        const path = self.app.selectedObject().asPath() orelse return "";
+        const id = path.display_object;
+        return self.app.objects.get(id).name;
+    }
+};
+
+pub const SelectedFontName = struct {
+    app: *sphimp.App,
+
+    pub fn getText(self: SelectedFontName) []const u8 {
+        const text = self.app.selectedObject().asText() orelse return "";
+        const id = text.font;
+        return self.app.fonts.get(id).path;
+    }
+};

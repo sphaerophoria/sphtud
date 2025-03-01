@@ -140,7 +140,7 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
         .squircle_renderer = &ret.squircle_renderer,
     };
 
-    ret.combo_box_shared = try gui.combo_box.Shared.init(
+    ret.combo_box_shared = try gui.combo_box.Shared(Action).init(
         .{
             .gl_alloc = gui_alloc.gl,
             .style = .{
@@ -163,6 +163,7 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
             .squircle_renderer = &ret.squircle_renderer,
             .selectable = &ret.shared_selecatble_list_state,
             .frame = &ret.frame_shared,
+            .popup_layer = &ret.overlay,
         },
     );
 
@@ -253,7 +254,7 @@ pub fn WidgetState(comptime Action: type) type {
         shared_selecatble_list_state: gui.selectable_list.SharedState,
         frame_shared: gui.frame.Shared,
         even_vert_layout_shared: gui.even_vert_layout.Shared,
-        combo_box_shared: gui.combo_box.Shared,
+        combo_box_shared: gui.combo_box.Shared(Action),
         checkbox_shared: gui.checkbox.Shared,
         memory_widget_shared: gui.memory_widget.Shared,
         thumbnail_shared: gui.thumbnail.Shared,
@@ -318,13 +319,12 @@ pub fn WidgetFactory(comptime Action: type) type {
             );
         }
 
-        pub fn makeComboBox(self: *const Self, retriever: anytype, on_select: anytype) !gui.Widget(Action) {
+        pub fn makeComboBox(self: *const Self, preview: gui.Widget(Action), on_click: anytype) !gui.Widget(Action) {
             return gui.combo_box.makeComboBox(
                 Action,
                 self.alloc,
-                retriever,
-                on_select,
-                &self.state.overlay,
+                preview,
+                on_click,
                 &self.state.combo_box_shared,
             );
         }

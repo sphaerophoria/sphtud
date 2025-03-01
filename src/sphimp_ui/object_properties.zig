@@ -24,11 +24,16 @@ pub const PropertyWidgetGenerator = struct {
 
     pub fn addImageToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, name: []const u8) !void {
         const uniform_label = try self.widget_factory.makeLabel(name);
+        const preview = try self.widget_factory.makeLabel(
+            label_adaptors.ShaderImageUniformName{ .app = self.app, .uniform_idx = uniform_idx },
+        );
+
         const value_widget = try self.widget_factory.makeComboBox(
-            list_io.objectListRetriever(ShaderImage{ .uniform_idx = uniform_idx }, self.app),
-            ui_action.ShaderImage{
-                .app = self.app,
+            preview,
+            ShaderSelectableListGenerator{
+                .widget_state = self.widget_factory.state,
                 .uniform_idx = uniform_idx,
+                .app = self.app,
             },
         );
         try self.property_list.pushWidget(uniform_label);
@@ -110,5 +115,22 @@ const ShaderImage = struct {
             .image => |id| return id orelse return null,
             else => return null,
         }
+    }
+};
+
+const ShaderSelectableListGenerator = struct {
+    widget_state: *gui.widget_factory.WidgetState(UiAction),
+    app: *App,
+    uniform_idx: usize,
+
+    pub fn makeWidget(self: ShaderSelectableListGenerator, alloc: gui.GuiAlloc) !gui.Widget(UiAction) {
+        const factory = self.widget_state.factory(alloc);
+        return try factory.makeSelectableList(
+            list_io.objectListRetriever(ShaderImage{ .uniform_idx = self.uniform_idx }, self.app),
+            ui_action.ShaderImage{
+                .app = self.app,
+                .uniform_idx = self.uniform_idx,
+            },
+        );
     }
 };

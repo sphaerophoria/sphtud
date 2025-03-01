@@ -33,65 +33,68 @@ pub const Style = struct {
     layout_pad: u31,
 };
 
-pub const Shared = struct {
-    style: Style,
-    triangle_program: TriangleProgram,
-    triangle_buf: sphrender.shader_program.Buffer(TriangleVertex),
-    guitext_state: *const gui.gui_text.SharedState,
-    squircle_renderer: *const SquircleRenderer,
-    selectable: *const gui.selectable_list.SharedState,
-    scroll_style: *const gui.scrollbar.Style,
-    frame: *const gui.frame.Shared,
-
-    const Options = struct {
-        gl_alloc: *GlAlloc,
+pub fn Shared(comptime Action: type) type {
+    return struct {
         style: Style,
+        triangle_program: TriangleProgram,
+        triangle_buf: sphrender.shader_program.Buffer(TriangleVertex),
         guitext_state: *const gui.gui_text.SharedState,
         squircle_renderer: *const SquircleRenderer,
         selectable: *const gui.selectable_list.SharedState,
         scroll_style: *const gui.scrollbar.Style,
         frame: *const gui.frame.Shared,
-    };
+        popup_layer: *PopupLayer(Action),
 
-    pub fn init(options: Options) !Shared {
-        const triangle_program = try TriangleProgram.init(options.gl_alloc, triangle_vertex_shader, triangle_fragment_shader);
-
-        const triangle_buf = try triangle_program.makeBuffer(
-            options.gl_alloc,
-            &.{
-                // Make a triangle that is pointing down and taking up the full
-                // clip space
-                .{ .vPos = .{ -1.0, 1.0 } },
-                .{ .vPos = .{ 1.0, 1.0 } },
-                .{ .vPos = .{ 0.0, -1.0 } },
-            },
-        );
-
-        return .{
-            .triangle_program = triangle_program,
-            .triangle_buf = triangle_buf,
-            .style = options.style,
-            .guitext_state = options.guitext_state,
-            .squircle_renderer = options.squircle_renderer,
-            .selectable = options.selectable,
-            .scroll_style = options.scroll_style,
-            .frame = options.frame,
+        const Options = struct {
+            gl_alloc: *GlAlloc,
+            style: Style,
+            guitext_state: *const gui.gui_text.SharedState,
+            squircle_renderer: *const SquircleRenderer,
+            selectable: *const gui.selectable_list.SharedState,
+            scroll_style: *const gui.scrollbar.Style,
+            frame: *const gui.frame.Shared,
+            popup_layer: *PopupLayer(Action),
         };
-    }
-};
 
-pub fn makeComboBox(comptime Action: type, alloc: gui.GuiAlloc, retriever: anytype, on_select: anytype, popup_layer: *PopupLayer(Action), shared: *const Shared) !Widget(Action) {
-    const T = ComboBox(Action, @TypeOf(retriever), @TypeOf(on_select));
+        const Self = @This();
+
+        pub fn init(options: Options) !Self {
+            const triangle_program = try TriangleProgram.init(options.gl_alloc, triangle_vertex_shader, triangle_fragment_shader);
+
+            const triangle_buf = try triangle_program.makeBuffer(
+                options.gl_alloc,
+                &.{
+                    // Make a triangle that is pointing down and taking up the full
+                    // clip space
+                    .{ .vPos = .{ -1.0, 1.0 } },
+                    .{ .vPos = .{ 1.0, 1.0 } },
+                    .{ .vPos = .{ 0.0, -1.0 } },
+                },
+            );
+
+            return .{
+                .triangle_program = triangle_program,
+                .triangle_buf = triangle_buf,
+                .style = options.style,
+                .guitext_state = options.guitext_state,
+                .squircle_renderer = options.squircle_renderer,
+                .selectable = options.selectable,
+                .scroll_style = options.scroll_style,
+                .frame = options.frame,
+                .popup_layer = options.popup_layer,
+            };
+        }
+    };
+}
+
+pub fn makeComboBox(comptime Action: type, alloc: gui.GuiAlloc, preview: gui.Widget(Action), on_click: anytype, shared: *const Shared(Action)) !Widget(Action) {
+    const T = ComboBox(Action, @TypeOf(on_click));
     const ctx = try alloc.heap.arena().create(T);
-
-    const gui_text = try gui.gui_text.guiText(alloc, shared.guitext_state, selectedTextRetriever(retriever));
 
     ctx.* = .{
         .shared = shared,
-        .popup_layer = popup_layer,
-        .retriever = retriever,
-        .gui_text = gui_text,
-        .on_select = on_select,
+        .preview = preview,
+        .on_click = on_click,
     };
 
     return .{
@@ -101,13 +104,11 @@ pub fn makeComboBox(comptime Action: type, alloc: gui.GuiAlloc, retriever: anyty
     };
 }
 
-pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime ListActionGenerator: type) type {
+pub fn ComboBox(comptime Action: type, comptime OnClick: type) type {
     return struct {
-        shared: *const Shared,
-        popup_layer: *gui.popup_layer.PopupLayer(Action),
-        retriever: ListRetriever,
-        on_select: ListActionGenerator,
-        gui_text: GuiText(SelectedTextRetriever(ListRetriever)),
+        shared: *const Shared(Action),
+        preview: gui.Widget(Action),
+        on_click: OnClick,
         state: enum {
             default,
             hover,
@@ -159,16 +160,15 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
             }
 
             {
-                const text_bounds = sub_sizes.textBounds(self.gui_text.size(), widget_bounds);
-                const transform = util.widgetToClipTransform(text_bounds, window_bounds);
-                self.gui_text.render(transform);
+                const text_bounds = sub_sizes.textBounds(self.preview.getSize(), widget_bounds);
+                self.preview.render(text_bounds, window_bounds);
             }
         }
 
         fn getSize(ctx: ?*anyopaque) PixelSize {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
-            const text_size = self.gui_text.size();
+            const text_size = self.preview.getSize();
             const height = @max(
                 self.shared.style.box_height,
                 text_size.height + self.shared.style.layout_pad,
@@ -180,11 +180,17 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
             };
         }
 
-        fn update(ctx: ?*anyopaque, _: PixelSize, _: f32) anyerror!void {
+        fn update(ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) anyerror!void {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             const sub_bounds = SubSizes.calc(self.shared.style);
-            try self.gui_text.update(sub_bounds.text_wrap);
+            try self.preview.update(
+                .{
+                    .width = sub_bounds.text_wrap,
+                    .height = available_size.height,
+                },
+                delta_s,
+            );
         }
 
         fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
@@ -208,8 +214,8 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
         }
 
         fn spawnOverlay(self: *Self, loc: gui.MousePos) !void {
-            try self.popup_layer.reset();
-            const overlay_alloc = self.popup_layer.alloc.heap.arena();
+            try self.shared.popup_layer.reset();
+            const overlay_alloc = self.shared.popup_layer.alloc.heap.arena();
 
             const stack = try gui.stack.Stack(Action, 2).init(overlay_alloc);
             const rect = try gui.rect.Rect(Action, Color).init(
@@ -220,19 +226,11 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
             );
             try stack.pushWidget(rect, .{ .size_policy = .match_siblings });
 
-            const list = try gui.selectable_list.selectableList(
-                Action,
-                self.popup_layer.alloc,
-                self.retriever,
-                self.on_select,
-                self.shared.selectable,
-            );
-
             const frame = try gui.frame.makeFrame(
                 Action,
                 overlay_alloc,
                 .{
-                    .inner = list,
+                    .inner = try self.on_click.makeWidget(self.shared.popup_layer.alloc),
                     .shared = self.shared.frame,
                 },
             );
@@ -273,12 +271,13 @@ pub fn ComboBox(comptime Action: type, comptime ListRetriever: type, comptime Li
 
             try stack.pushWidget(box, gui.stack.Layout.centered());
 
-            self.popup_layer.set(stack.asWidget(), @intFromFloat(loc.x), @intFromFloat(loc.y));
+            self.shared.popup_layer.set(stack.asWidget(), @intFromFloat(loc.x), @intFromFloat(loc.y));
         }
     };
 }
 
 const SubSizes = struct {
+    // Leftover names from when the preview widget was always text
     text_wrap: u31,
     text_offs: i32,
     triangle: PixelSize,
@@ -327,27 +326,6 @@ const SubSizes = struct {
         };
     }
 };
-
-fn SelectedTextRetriever(comptime ListRetriever: type) type {
-    return struct {
-        inner: ListRetriever,
-
-        pub fn getText(self: @This()) []const u8 {
-            const selected = self.inner.selectedId();
-            if (selected >= self.inner.numItems()) {
-                return "none";
-            }
-
-            return self.inner.getText(selected);
-        }
-    };
-}
-
-fn selectedTextRetriever(list_retriever: anytype) SelectedTextRetriever(@TypeOf(list_retriever)) {
-    return .{
-        .inner = list_retriever,
-    };
-}
 
 const TriangleUniform = struct {
     color: sphmath.Vec3,
