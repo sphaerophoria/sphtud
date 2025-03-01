@@ -26,12 +26,6 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         capacity: usize,
         len: usize = 0,
 
-        const first_expansion_size: usize = blk: {
-            const t_size_log2: usize = std.math.log2_int_ceil(usize, @sizeOf(T));
-            const min_page_size_log2: usize = @max(t_size_log2, sphalloc.tiny_page_log2);
-            break :blk (1 << min_page_size_log2) / @sizeOf(T);
-        };
-
         // Every expansion block doubles in size
 
         const Self = @This();
@@ -41,7 +35,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             const initial_block = try arena.alloc(T, small_size);
 
             const max_idx = max_size - 1;
-            const num_expansions = idxToExpansionSlot(small_size, max_idx, first_expansion_size);
+            const num_expansions = idxToExpansionSlot(small_size, max_idx, firstExpansionSize(small_size)) + 1;
             const expansions = try arena.alloc([*]T, num_expansions);
             const expansion_allocated = try std.DynamicBitSetUnmanaged.initEmpty(arena, num_expansions);
 
@@ -63,7 +57,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
                 return error.OutOfMemory;
             }
 
-            const block = idxToExpansionSlot(self.initial_block.len, self.len, first_expansion_size);
+            const block = idxToExpansionSlot(self.initial_block.len, self.len, firstExpansionSize(self.initial_block.len));
             try self.ensureBlockAllocated(block);
             self.appendToBlock(block, elem);
         }
@@ -104,8 +98,8 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
                 return &self.initial_block[idx];
             }
 
-            const block = idxToExpansionSlot(self.initial_block.len, idx, first_expansion_size);
-            const block_start = expansionSlotStart(self.initial_block.len, block, first_expansion_size);
+            const block = idxToExpansionSlot(self.initial_block.len, idx, firstExpansionSize(self.initial_block.len));
+            const block_start = expansionSlotStart(self.initial_block.len, block, firstExpansionSize(self.initial_block.len));
             return &self.expansions[block][idx - block_start];
         }
 
@@ -129,8 +123,8 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             var block_id: usize = 0;
 
             while (true) {
-                const block_start = expansionSlotStart(self.initial_block.len, block_id, first_expansion_size);
-                const block_size = expansionBlockSize(block_id, first_expansion_size);
+                const block_start = expansionSlotStart(self.initial_block.len, block_id, firstExpansionSize(self.initial_block.len));
+                const block_size = expansionBlockSize(block_id, firstExpansionSize(self.initial_block.len));
                 const block_end = block_start + block_size;
 
                 if (content.len <= block_start) break;
@@ -187,7 +181,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
                     };
                 }
 
-                const expansion_idx = idxToExpansionSlot(parent.initial_block.len, parent.len - 1, first_expansion_size);
+                const expansion_idx = idxToExpansionSlot(parent.initial_block.len, parent.len - 1, firstExpansionSize(parent.initial_block.len));
 
                 return .{
                     .parent = parent,
@@ -206,7 +200,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
                 }
 
                 defer self.expansion_idx += 1;
-                const block_size = expansionBlockSize(self.expansion_idx, first_expansion_size);
+                const block_size = expansionBlockSize(self.expansion_idx, firstExpansionSize(self.parent.initial_block.len));
 
                 return .{
                     .idx = self.expansion_idx,
@@ -236,16 +230,16 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         }
 
         fn appendToBlock(self: *Self, block: usize, elem: T) void {
-            const block_start = expansionSlotStart(self.initial_block.len, block, first_expansion_size);
+            const block_start = expansionSlotStart(self.initial_block.len, block, firstExpansionSize(self.initial_block.len));
             const expansion_offs = self.len - block_start;
-            std.debug.assert(expansion_offs < expansionBlockSize(self.initial_block.len, block_start));
+            std.debug.assert(expansion_offs < expansionBlockSize(block, firstExpansionSize(self.initial_block.len)));
             self.expansions[block][expansion_offs] = elem;
             self.len += 1;
         }
 
         fn ensureBlockAllocated(self: *Self, block: usize) !void {
             if (!self.expansion_allocated.isSet(block)) {
-                self.expansions[block] = (try self.alloc.alloc(T, expansionBlockSize(block, first_expansion_size))).ptr;
+                self.expansions[block] = (try self.alloc.alloc(T, expansionBlockSize(block, firstExpansionSize(self.initial_block.len)))).ptr;
                 self.expansion_allocated.set(block);
             }
         }
@@ -268,7 +262,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
                     return self.parent.initial_block[0..len];
                 }
 
-                const block_start = expansionSlotStart(self.parent.initial_block.len, self.block_id, first_expansion_size);
+                const block_start = expansionSlotStart(self.parent.initial_block.len, self.block_id, firstExpansionSize(self.parent.initial_block.len));
                 if (block_start >= self.parent.len) {
                     return null;
                 }
@@ -278,7 +272,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
                 const expansion = self.parent.expansions[self.block_id];
                 std.debug.assert(self.parent.expansion_allocated.isSet(self.block_id));
 
-                const block_size = expansionBlockSize(self.block_id, first_expansion_size);
+                const block_size = expansionBlockSize(self.block_id, firstExpansionSize(self.parent.initial_block.len));
                 const len = @min(
                     self.parent.len - block_start,
                     block_size,
@@ -308,9 +302,9 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
                     };
                 }
 
-                const block = idxToExpansionSlot(parent.initial_block.len, idx, first_expansion_size);
-                const block_start = expansionSlotStart(parent.initial_block.len, block, first_expansion_size);
-                const block_len = expansionBlockSize(block, first_expansion_size);
+                const block = idxToExpansionSlot(parent.initial_block.len, idx, firstExpansionSize(parent.initial_block.len));
+                const block_start = expansionSlotStart(parent.initial_block.len, block, firstExpansionSize(parent.initial_block.len));
+                const block_len = expansionBlockSize(block, firstExpansionSize(parent.initial_block.len));
                 const block_offs = idx - block_start;
 
                 const inner = SliceIter{
@@ -350,6 +344,13 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
 
         pub fn iterFrom(self: *const Self, idx: usize) Iter {
             return Iter.init(self, idx);
+        }
+
+        fn firstExpansionSize(initial_len: usize) usize {
+            const initial_len_log2: usize = std.math.log2_int_ceil(usize, @sizeOf(T) * initial_len);
+            const min_page_size_log2: usize = @max(initial_len_log2, sphalloc.tiny_page_log2);
+
+            return (@as(usize, 1) << @intCast(min_page_size_log2)) / @sizeOf(T);
         }
     };
 }
