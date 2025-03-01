@@ -28,49 +28,6 @@ fn wrapFrameScrollView(widget_factory: WidgetFactory, inner: gui.Widget(UiAction
     return try widget_factory.makeScrollView(frame);
 }
 
-fn makeCreateObject(app: *App, widget_factory: gui.widget_factory.WidgetFactory(UiAction)) !gui.Widget(UiAction) {
-    const layout = blk: {
-        const layout = try widget_factory.makeLayout();
-
-        {
-            const label = try widget_factory.makeLabel("Create an item");
-            try layout.pushWidget(label);
-        }
-
-        {
-            const button = try widget_factory.makeButton("New path", .create_path);
-            try layout.pushWidget(button);
-        }
-        {
-            const button = try widget_factory.makeButton("New composition", .create_composition);
-            try layout.pushWidget(button);
-        }
-        {
-            const button = try widget_factory.makeButton("New drawing", .create_drawing);
-            try layout.pushWidget(button);
-        }
-        {
-            const button = try widget_factory.makeButton("New text", .create_text);
-            try layout.pushWidget(button);
-        }
-
-        {
-            const label = try widget_factory.makeLabel("Create a shader");
-            try layout.pushWidget(label);
-
-            const shader_list = try widget_factory.makeSelectableList(
-                list_io.ShaderListRetriever{ .app = app },
-                list_io.itListAction(&app.shaders, &ShaderStorage(ShaderId).idIter, .create_shader),
-            );
-            try layout.pushWidget(shader_list);
-        }
-
-        break :blk layout;
-    };
-
-    return wrapFrameScrollView(widget_factory, layout.asWidget());
-}
-
 fn addShaderParamsToPropertyList(app: *App, property_list: anytype, widget_factory: gui.widget_factory.WidgetFactory(UiAction), uniforms: sphrender.shader_program.UnknownUniforms) !void {
     const property_widget_gen = object_properties.PropertyWidgetGenerator{
         .app = app,
@@ -540,14 +497,8 @@ pub fn makeSidebar(sidebar_alloc: gui.GuiAlloc, app: *App, sidebar_width: u31, w
         .{},
     );
 
-    const sidebar_layout = try full_factory.makeEvenVertLayout(2);
-    try sidebar_stack.pushWidget(sidebar_layout.asWidget(), gui.stack.Layout.centered());
-
-    const create_object = try makeCreateObject(app, full_factory);
-    try sidebar_layout.pushWidget(create_object);
-
     const properties = try makeObjectProperties(app, full_factory);
-    try sidebar_layout.pushWidget(properties.widget);
+    try sidebar_stack.pushWidget(properties.widget, .{});
 
     const brush_icon = try loadTexture(sidebar_alloc.gl, @embedFile("res/brush.png"));
     const eraser_icon = try loadTexture(sidebar_alloc.gl, @embedFile("res/eraser.png"));

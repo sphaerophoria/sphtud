@@ -1,3 +1,4 @@
+const std = @import("std");
 const sphimp = @import("sphimp");
 const App = sphimp.App;
 const gui = @import("sphui");
@@ -10,6 +11,7 @@ const PixelSize = gui.PixelSize;
 const InputState = gui.InputState;
 const InputResponse = gui.InputResponse;
 const UiAction = @import("ui_action.zig").UiAction;
+const list_io = @import("list_io.zig");
 
 const ImageDrawer = @This();
 
@@ -34,22 +36,31 @@ const widget_vtable = gui.Widget(UiAction).VTable{
 pub fn init(
     app: *App,
     alloc: sphrender.RenderAlloc,
-    squircle_renderer: *gui.SquircleRenderer,
     background_color: gui.Color,
     highlight_color: gui.Color,
     drawer_width: u31,
-    thumbnail_shared: *const gui.thumbnail.Shared,
-    frame_shared: *const gui.frame.Shared,
-    scroll_style: *const gui.scrollbar.Style,
-    interactable_shared: *const gui.interactable.Shared(UiAction),
+    widget_state: *gui.widget_factory.WidgetState(UiAction),
 ) !*ImageDrawer {
+    const factory = widget_state.factory(alloc);
+
+    const layout = try gui.layout.Layout(UiAction).init(alloc.heap.arena(), 0);
+    try layout.pushWidget(try factory.makeFrame(
+        try factory.makeComboBox(
+            try factory.makeLabel("New object"),
+            CreateObjectListGenerator{
+                .state = widget_state,
+                .app = app,
+            },
+        ),
+    ));
+
     // With the frames in the list, an item pad is not necessary
     //
     // While there is technically no limit on number of objects, we can pick a
     // fairly large upper bound that practically will not be hit.
     // log(100000/100) / log(2) < 10, so for 10 expansions we get 100,000
     // objects. If this is ever a problem I have no idea what's happening
-    const layout = try gui.grid.Grid(UiAction).init(
+    const thumbnails = try gui.grid.Grid(UiAction).init(
         alloc.heap,
         &[_]gui.grid.ColumnConfig{
             .{
@@ -65,26 +76,15 @@ pub fn init(
 
     const thumbnail_widget_alloc = try alloc.makeSubAlloc("thumbnail layout");
 
-    const frame = try gui.frame.makeFrame(UiAction, alloc.heap.arena(), .{
-        .inner = layout.asWidget(),
-        .shared = frame_shared,
-    });
-
-    const scroll = try gui.scroll_view.ScrollView(UiAction).init(
-        alloc.heap.arena(),
-        frame,
-        scroll_style,
-        squircle_renderer,
-    );
+    const frame = try factory.makeFrame(thumbnails.asWidget());
+    const scroll = try factory.makeScrollView(frame);
+    try layout.pushWidget(scroll);
 
     const ret = try alloc.heap.arena().create(ImageDrawer);
     ret.* = .{
         .refs = .{
             .app = app,
-            .squircle_renderer = squircle_renderer,
-            .frame_shared = frame_shared,
-            .thumbnail_shared = thumbnail_shared,
-            .interactable_shared = interactable_shared,
+            .widget_state = widget_state,
         },
         .style = .{
             .background_color = background_color,
@@ -92,11 +92,11 @@ pub fn init(
             .drawer_width = drawer_width,
         },
         .thumbnail_widget_alloc = thumbnail_widget_alloc,
-        .layout = layout,
+        .layout = thumbnails,
         .thumbnail_cache = .{
             .alloc = try alloc.makeSubAlloc("thumbnail cache"),
         },
-        .drawer_widget = scroll,
+        .drawer_widget = layout.asWidget(),
     };
     return ret;
 }
@@ -113,7 +113,7 @@ fn render(ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) 
     const self: *ImageDrawer = @ptrCast(@alignCast(ctx));
 
     if (self.drawerBounds(widget_bounds)) |drawer_bounds| {
-        self.refs.squircle_renderer.render(
+        self.refs.widget_state.squircle_renderer.render(
             self.style.background_color,
             0,
             drawer_bounds,
@@ -238,9 +238,7 @@ fn updateWidgets(self: *ImageDrawer) !void {
             .objects = &self.refs.app.objects,
             .thumbnail_cache = &self.thumbnail_cache,
             .frame_renderer = self.refs.app.makeFrameRenderer(self.thumbnail_widget_alloc),
-            .thumbnail_shared = self.refs.thumbnail_shared,
-            .frame_shared = self.refs.frame_shared,
-            .interactable_shared = self.refs.interactable_shared,
+            .factory = self.refs.widget_state.factory(self.thumbnail_widget_alloc),
         };
 
         for (0..num_items) |idx| {
@@ -257,36 +255,26 @@ const ThumbnailFactory = struct {
     objects: *sphimp.object.Objects,
     thumbnail_cache: *ThumbnailCache,
     frame_renderer: sphimp.Renderer.FrameRenderer,
-    thumbnail_shared: *const gui.thumbnail.Shared,
-    interactable_shared: *const gui.interactable.Shared(UiAction),
-    frame_shared: *const gui.frame.Shared,
+    factory: gui.widget_factory.WidgetFactory(UiAction),
 
     fn makeThumbnail(self: *ThumbnailFactory, idx: usize) !gui.Widget(UiAction) {
         const obj_id = self.thumbnail_cache.ids[idx];
-        const thumbnail = try gui.thumbnail.makeThumbnail(
-            UiAction,
-            self.alloc.heap.arena(),
+        const thumbnail = try self.factory.makeThumbnail(
             ThumbnailRetriever{
                 .cache = self.thumbnail_cache,
                 .idx = idx,
             },
-            self.thumbnail_shared,
         );
 
-        const highlight = try gui.frame.makeColorableFrame(
-            UiAction,
-            self.alloc.heap.arena(),
+        const highlight = try self.factory.makeColorableFrame(
             thumbnail,
             HighlightRetriever{
                 .parent = self.parent,
                 .id = obj_id,
             },
-            self.frame_shared,
         );
 
-        const box = try gui.box.box(
-            UiAction,
-            self.alloc.heap.arena(),
+        const box = try self.factory.makeBox(
             highlight,
             .{
                 .width = self.parent.style.drawer_width / 2,
@@ -295,13 +283,10 @@ const ThumbnailFactory = struct {
             .fill_width,
         );
 
-        return try gui.interactable.interactable(
-            UiAction,
-            self.alloc.heap.arena(),
+        return try self.factory.makeInteractable(
             box,
             .{ .update_selected_object = obj_id },
             .{ .set_drag_source = obj_id },
-            self.interactable_shared,
         );
     }
 };
@@ -340,10 +325,7 @@ const Style = struct {
 
 const Refs = struct {
     app: *App,
-    squircle_renderer: *gui.SquircleRenderer,
-    thumbnail_shared: *const gui.thumbnail.Shared,
-    frame_shared: *const gui.frame.Shared,
-    interactable_shared: *const gui.interactable.Shared(UiAction),
+    widget_state: *gui.widget_factory.WidgetState(UiAction),
 };
 
 const DrawerState = union(enum) {
@@ -398,4 +380,64 @@ const ThumbnailCache = struct {
         self.textures = new_textures;
         self.sizes = new_sizes;
     }
+};
+
+const CreateObjectListGenerator = struct {
+    state: *gui.widget_factory.WidgetState(UiAction),
+    app: *App,
+
+    pub fn makeWidget(self: CreateObjectListGenerator, alloc: gui.GuiAlloc) !gui.Widget(UiAction) {
+        const factory = self.state.factory(alloc);
+        const layout = try factory.makeLayout();
+        try layout.pushWidget(
+            try factory.makeSelectableList(NewItemListRetriever{}, NewItemActionGen{}),
+        );
+
+        try layout.pushWidget(
+            try factory.makeLabel("Shaders"),
+        );
+
+        try layout.pushWidget(
+            try factory.makeSelectableList(
+                list_io.ShaderListRetriever{ .app = self.app },
+                list_io.itListAction(
+                    &self.app.shaders,
+                    &sphimp.shader_storage.ShaderStorage(sphimp.shader_storage.ShaderId).idIter,
+                    .create_shader,
+                ),
+            ),
+        );
+        return layout.asWidget();
+    }
+
+    const NewItemListRetriever = struct {
+        pub fn selectedId(_: NewItemListRetriever) usize {
+            return std.math.maxInt(usize);
+        }
+        pub fn numItems(_: NewItemListRetriever) usize {
+            return 4;
+        }
+
+        pub fn getText(_: NewItemListRetriever, idx: usize) []const u8 {
+            return switch (idx) {
+                0 => "new path",
+                1 => "new composition",
+                2 => "new drawing",
+                3 => "new text",
+                else => unreachable,
+            };
+        }
+    };
+
+    const NewItemActionGen = struct {
+        pub fn generate(_: NewItemActionGen, idx: usize) UiAction {
+            return switch (idx) {
+                0 => .create_path,
+                1 => .create_composition,
+                2 => .create_drawing,
+                3 => .create_text,
+                else => unreachable,
+            };
+        }
+    };
 };

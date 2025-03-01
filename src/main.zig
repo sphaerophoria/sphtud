@@ -427,6 +427,7 @@ pub fn main() !void {
             } else if (key.key == .escape) {
                 try ui.state.overlay.reset();
             } else if (key.key.eql(.{ .ascii = '`' })) {
+                try ui.state.overlay.reset();
                 ui.drawer.toggleOpenState();
             }
         }

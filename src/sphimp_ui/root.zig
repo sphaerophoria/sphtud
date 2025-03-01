@@ -34,14 +34,10 @@ pub fn makeGui(alloc: RenderAlloc, app: *App, scratch: *ScratchAlloc, scratch_gl
     const image_drawer = try ImageDrawer.init(
         app,
         alloc,
-        &widget_state.squircle_renderer,
         gui.widget_factory.StyleColors.background_color,
         gui.widget_factory.StyleColors.default_color,
         sidebar_width,
-        &widget_state.thumbnail_shared,
-        &widget_state.frame_shared,
-        &widget_state.scroll_style,
-        &widget_state.interactable_shared,
+        widget_state,
     );
 
     var image_drawer_tab = try ImageDrawerTab.init(

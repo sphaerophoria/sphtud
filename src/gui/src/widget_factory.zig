@@ -155,7 +155,7 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
                 .triangle_color = gui.Color{ .r = 1, .g = 1, .b = 1, .a = 1 },
                 .box_height = typical_widget_height,
                 .popup_width = widget_width * 2,
-                .popup_height = @intFromFloat(unit * 10),
+                .popup_height = @intFromFloat(unit * 20),
                 .layout_pad = layout_pad,
             },
             .guitext_state = &ret.guitext_state,
@@ -383,6 +383,20 @@ pub fn WidgetFactory(comptime Action: type) type {
                 .inner = inner,
                 .shared = &self.state.frame_shared,
             });
+        }
+
+        pub fn makeColorableFrame(
+            self: *const Self,
+            inner: gui.Widget(Action),
+            retriever: anytype,
+        ) !gui.Widget(Action) {
+            return gui.frame.makeColorableFrame(
+                Action,
+                self.alloc.heap.arena(),
+                inner,
+                retriever,
+                &self.state.frame_shared,
+            );
         }
 
         pub fn makeScrollView(self: *const Self, inner: gui.Widget(Action)) !gui.Widget(Action) {
