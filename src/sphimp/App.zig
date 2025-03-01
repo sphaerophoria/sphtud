@@ -1005,6 +1005,7 @@ const InputState = struct {
         add_draw_stroke: Vec2,
         add_stroke_sample: Vec2,
         remove_stroke_samples: Vec2,
+        set_drawing_tool: tool.DrawingTool,
         export_image,
         save,
         pan: Vec2,
@@ -1236,6 +1237,13 @@ const InputState = struct {
                     else => {},
                 }
             },
+            .drawing => {
+                switch (key) {
+                    'e' => return .{ .set_drawing_tool = .eraser },
+                    'w' => return .{ .set_drawing_tool = .brush },
+                    else => {},
+                }
+            },
             else => {},
         }
 
@@ -1338,6 +1346,9 @@ fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
                     self.renderer.distance_field_generator,
                 );
             }
+        },
+        .set_drawing_tool => |t| {
+            self.tool_params.active_drawing_tool = t;
         },
         .save => {
             try self.save("save.json");
