@@ -128,7 +128,9 @@ pub fn Layout(comptime Action: type) type {
 
                 if (input_response.wants_focus) {
                     if (self.focused_id) |id| {
-                        self.items.at(id).widget.setFocused(false);
+                        if (id != idx) {
+                            self.items.at(id).widget.setFocused(false);
+                        }
                     }
                     self.focused_id = idx;
                     ret.wants_focus = true;

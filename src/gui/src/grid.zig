@@ -172,8 +172,9 @@ pub fn Grid(comptime Action: type) type {
                 const item_response = item.widget.setInputState(widget_bounds, widget_input_bounds, input_state);
                 if (item_response.wants_focus) {
                     if (self.focused_idx) |focus_idx| {
-                        self.items.getPtr(focus_idx).widget.setFocused(false);
-                        self.focused_idx = null;
+                        if (focus_idx != idx) {
+                            self.items.getPtr(focus_idx).widget.setFocused(false);
+                        }
                     }
 
                     self.focused_idx = idx;
