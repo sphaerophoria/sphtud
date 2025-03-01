@@ -262,7 +262,21 @@ pub const Object = struct {
                     return m.source;
                 },
                 .drawing => |*d| {
-                    if (self.idx >= 1) {
+                    while (true) {
+                        if (self.idx >= d.bindings.len) {
+                            break;
+                        }
+                        defer self.idx += 1;
+
+                        switch (d.bindings[self.idx]) {
+                            .image => |id| {
+                                return id;
+                            },
+                            else => {},
+                        }
+                    }
+
+                    if (self.idx > d.bindings.len) {
                         return null;
                     }
                     defer self.idx += 1;
