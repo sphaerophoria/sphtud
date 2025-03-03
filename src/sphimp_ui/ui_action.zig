@@ -21,6 +21,7 @@ pub const TextEditRequest = struct {
 
 pub const UiAction = union(enum) {
     update_selected_object: ObjectId,
+    update_property_object: ObjectId,
     create_path,
     create_composition,
     create_drawing,

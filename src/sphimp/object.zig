@@ -221,7 +221,7 @@ pub const Object = struct {
         }
     }
 
-    const DependencyIt = struct {
+    pub const DependencyIt = struct {
         idx: usize = 0,
         object: Object,
 

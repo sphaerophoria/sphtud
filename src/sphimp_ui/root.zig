@@ -70,7 +70,7 @@ pub fn makeGui(alloc: RenderAlloc, app: *App, scratch: *ScratchAlloc, scratch_gl
 
     try non_drawer_stack.pushWidget(sidebar_then_main_viewport.asWidget(), .{});
 
-    const sidebar = try sidebar_mod.makeSidebar(alloc, app, selected_id, sidebar_width, widget_state);
+    const sidebar = try sidebar_mod.makeSidebar(alloc, scratch, app, selected_id, sidebar_width, widget_state);
     try sidebar_then_main_viewport.pushWidget(sidebar.widget);
 
     const memory_widget = try widget_factory.makeMemoryWidget(memory_tracker);

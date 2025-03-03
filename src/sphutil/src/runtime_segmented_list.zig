@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const RuntimeBoundedArray = @import("sphutil.zig").RuntimeBoundedArray;
 const sphalloc = @import("sphalloc");
 
 /// Very similar in concept to standard library SegmentedList with a few
@@ -167,6 +168,15 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
 
                 content_idx += part.len;
             }
+        }
+
+        pub fn makeContiguous(self: *Self, alloc: Allocator) ![]T {
+            var ret = try RuntimeBoundedArray(T).init(alloc, self.len);
+            var slice_iter = self.sliceIter();
+            while (slice_iter.next()) |s| {
+                try ret.appendSlice(s);
+            }
+            return ret.items;
         }
 
         const UnusedBlocksIt = struct {
@@ -606,6 +616,22 @@ test "RuntimeSegmentedList get" {
     try std.testing.expectEqual(21, list.get(21));
     try std.testing.expectEqual(17342, list.get(17342));
     try std.testing.expectEqual(579, list.get(579));
+}
+
+test "RuntimeSegmentedList makeContiguous" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var list = try RuntimeSegmentedList(usize).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
+
+    for (0..20000) |i| {
+        try list.append(i);
+    }
+
+    const contiguous = try list.makeContiguous(arena.allocator());
+    for (0..20000) |i| {
+        try std.testing.expectEqual(i, contiguous[i]);
+    }
 }
 
 test "RuntimeSegmentedList iter offset" {

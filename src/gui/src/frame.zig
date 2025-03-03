@@ -258,8 +258,8 @@ pub fn ColorableFrame(comptime Action: type, comptime ColorRetriever: type) type
 
 fn adjustSize(border_size: u31, size: PixelSize) PixelSize {
     return .{
-        .width = size.width - border_size * 2,
-        .height = size.height - border_size * 2,
+        .width = size.width -| border_size * 2,
+        .height = size.height -| border_size * 2,
     };
 }
 

@@ -268,6 +268,11 @@ pub fn main() !void {
                 .update_selected_object => |id| {
                     next_object = id;
                 },
+                .update_property_object => |id| {
+                    ui.sidebar.property_object_id.* = id;
+                    try ui.sidebar.updateObjectProperties();
+                    ui.sidebar.notifyObjectChanged();
+                },
                 .create_path => {
                     const new_obj = app.createPath(selected_object.*) catch |e| {
                         logError("failed to create path", e, @errorReturnTrace());
@@ -356,7 +361,7 @@ pub fn main() !void {
                     app.setDrawingObjectBrush(params.object, params.brush) catch |e| {
                         logError("Failed to chnage brush", e, @errorReturnTrace());
                     };
-                    try ui.sidebar.updateObjectProperties(selected_object);
+                    try ui.sidebar.updateObjectProperties();
                 },
                 .update_path_source => |params| {
                     app.updatePathDisplayObj(params.object, params.source) catch |e| {
@@ -391,13 +396,13 @@ pub fn main() !void {
                         logError("Failed to add object to composition", e, @errorReturnTrace());
                         break :blk;
                     };
-                    try ui.sidebar.updateObjectProperties(selected_object);
+                    try ui.sidebar.updateObjectProperties();
                 },
                 .delete_from_composition => |params| {
                     app.deleteFromComposition(params.composition, params.idx) catch |e| {
                         logError("Failed to delete object from composition", e, @errorReturnTrace());
                     };
-                    try ui.sidebar.updateObjectProperties(selected_object);
+                    try ui.sidebar.updateObjectProperties();
                 },
                 .toggle_composition_debug => {
                     app.toggleCompositionDebug() catch |e| {
@@ -409,7 +414,7 @@ pub fn main() !void {
                 },
                 .set_drawing_tool => |t| {
                     app.tool_params.active_drawing_tool = t;
-                    try ui.sidebar.updateObjectProperties(selected_object);
+                    try ui.sidebar.updateObjectProperties();
                 },
                 .change_eraser_size => |size| {
                     app.tool_params.eraser_width = @max(size, 0.0);
@@ -446,7 +451,9 @@ pub fn main() !void {
 
         if (selected_object.value != next_object.value) {
             ui.app_widget.app_view.setSelectedObject(next_object);
-            try ui.sidebar.updateObjectProperties(selected_object);
+            ui.sidebar.tree_view.reset();
+            ui.sidebar.property_object_id.* = next_object;
+            try ui.sidebar.updateObjectProperties();
             ui.sidebar.notifyObjectChanged();
         }
 
