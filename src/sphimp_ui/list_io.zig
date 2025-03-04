@@ -68,13 +68,14 @@ pub const ShaderListRetriever = struct {
 
 pub const FontRetriever = struct {
     app: *App,
+    id: ObjectId,
 
     pub fn numItems(self: FontRetriever) usize {
         return self.app.fonts.numItems();
     }
 
     pub fn selectedId(self: FontRetriever) usize {
-        const text_obj = self.app.selectedObject().asText() orelse return invalid_list_id;
+        const text_obj = self.app.objects.get(self.id).asText() orelse return invalid_list_id;
         var it = self.app.fonts.idIter();
         return idxForId(&it, text_obj.font);
     }
@@ -89,9 +90,10 @@ pub const FontRetriever = struct {
 
 pub const BrushRetriever = struct {
     app: *App,
+    id: ObjectId,
 
-    pub fn init(app: *App) BrushRetriever {
-        return .{ .app = app };
+    pub fn init(app: *App, id: ObjectId) BrushRetriever {
+        return .{ .app = app, .id = id };
     }
 
     pub fn numItems(self: BrushRetriever) usize {
@@ -99,7 +101,7 @@ pub const BrushRetriever = struct {
     }
 
     pub fn selectedId(self: BrushRetriever) usize {
-        const drawing_obj = self.app.selectedObject().asDrawing() orelse return invalid_list_id;
+        const drawing_obj = self.app.objects.get(self.id).asDrawing() orelse return invalid_list_id;
         var it = self.app.brushes.idIter();
         return idxForId(&it, drawing_obj.brush);
     }

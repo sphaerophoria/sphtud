@@ -6,6 +6,7 @@ const egl = @cImport({
 });
 const sphimp = @import("sphimp");
 const App = sphimp.App;
+const AppView = sphimp.AppView;
 const sphmath = @import("sphmath");
 const obj_mod = sphimp.object;
 const stbiw = @cImport({
@@ -80,66 +81,66 @@ pub fn writeDummyImage(alloc: Allocator, path: [:0]const u8) !void {
     }
 }
 
-pub fn inputOnCanvas(app: *App, view_state: *ViewState, now: std.time.Instant) !void {
-    const selected_object = app.objects.get(app.input_state.selected_object);
+pub fn inputOnCanvas(app_view: *AppView, now: std.time.Instant) !void {
+    const selected_object = app_view.selectedObject();
     var new_name_buf: [1024]u8 = undefined;
     const new_name = try std.fmt.bufPrint(&new_name_buf, "{s}1", .{selected_object.name});
-    try app.updateSelectedObjectName(new_name);
+    try selected_object.updateName(new_name);
 
     // Try dragging some stuff around
-    try app.setMousePos(view_state, 300, 300);
-    try app.setMouseDown(view_state);
-    try app.render(view_state.*, now);
+    try app_view.setMousePos(300, 300);
+    try app_view.setMouseDown();
+    try app_view.render(now);
 
-    try app.setMousePos(view_state, 100, 100);
-    app.setMouseUp();
-    try app.render(view_state.*, now);
+    try app_view.setMousePos(100, 100);
+    app_view.setMouseUp();
+    try app_view.render(now);
 
     // Try panning
-    try app.setMousePos(view_state, 100, 100);
-    app.setMiddleDown();
-    try app.render(view_state.*, now);
+    try app_view.setMousePos(100, 100);
+    app_view.setMiddleDown();
+    try app_view.render(now);
 
-    try app.setMousePos(view_state, 200, 200);
-    app.setMiddleUp();
-    try app.render(view_state.*, now);
+    try app_view.setMousePos(200, 200);
+    app_view.setMiddleUp();
+    try app_view.render(now);
 
     // Render sometimes in debug mode
     if (selected_object.data == .composition) {
-        try app.toggleCompositionDebug();
+        try app_view.app.toggleCompositionDebug();
     }
 
     // Click the right mouse button a few times (create path elements)
-    try app.setMousePos(view_state, 400, 400);
-    try app.setRightDown(view_state);
-    try app.render(view_state.*, now);
+    try app_view.setMousePos(400, 400);
+    try app_view.setRightDown();
+    try app_view.render(now);
 
-    try app.setMousePos(view_state, 200, 300);
-    try app.setRightDown(view_state);
-    try app.render(view_state.*, now);
+    try app_view.setMousePos(200, 300);
+    try app_view.setRightDown();
+    try app_view.render(now);
 
     const keys = [_]u8{ 'S', 'R' };
     for (keys) |key| {
         // Try to apply transformation to an object
-        try app.setKeyDown(view_state, key, false);
-        try app.render(view_state.*, now);
+        try app_view.setKeyDown(key, false);
+        try app_view.render(now);
 
-        try app.setMousePos(view_state, 400, 400);
-        try app.render(view_state.*, now);
+        try app_view.setMousePos(400, 400);
+        try app_view.render(now);
 
         // Cancel the transformation
-        try app.setRightDown(view_state);
+        try app_view.setRightDown();
 
         // Try to apply transformation to an object
-        try app.setKeyDown(view_state, key, false);
-        try app.render(view_state.*, now);
+        try app_view.setKeyDown(key, false);
+        try app_view.render(now);
 
-        try app.setMousePos(view_state, 400, 400);
-        try app.render(view_state.*, now);
+        try app_view.setMousePos(400, 400);
+        try app_view.render(now);
 
         // Submit the transformation
-        try app.setMouseDown(view_state);
-        app.setMouseUp();
+        try app_view.setMouseDown();
+        app_view.setMouseUp();
     }
 }
 
@@ -209,6 +210,14 @@ pub fn main() !void {
     var app = try App.init(root_render_alloc, &scratch_alloc, scratch_gl, args[0]);
     defer app.deinit();
 
+    var app_view = AppView{
+        .app = &app,
+        .view_state = .{
+            .window_width = 800,
+            .window_height = 800,
+        },
+    };
+
     var tmpdir = std.testing.tmpDir(.{});
     defer tmpdir.cleanup();
 
@@ -222,15 +231,10 @@ pub fn main() !void {
     const swap_colors_id = try app.addShaderFromFragmentSource("swap colors", swap_colors_frag);
     _ = try app.addBrushFromFragmnetSource("default brush", default_brush);
 
-    var view_state: ViewState = .{
-        .window_width = 800,
-        .window_height = 600,
-    };
-
     const now = try std.time.Instant.now();
 
     for (0..2) |_| {
-        const composition_idx = try app.addComposition();
+        const composition_id = try app.addComposition();
 
         const id = try app.loadImage(dummy_path);
 
@@ -240,45 +244,42 @@ pub fn main() !void {
             swapped_name,
             swap_colors_id,
         );
-        app.setSelectedObject(shader_id);
-        try app.setShaderImage(0, id);
+        try app.setShaderImage(shader_id, 0, id);
 
-        app.setSelectedObject(composition_idx);
-        _ = try app.addToComposition(id);
-        const shader_composition_idx = try app.addToComposition(shader_id);
-        _ = try app.addToComposition(shader_id);
-        try app.deleteFromComposition(shader_composition_idx);
+        _ = try app.addToComposition(composition_id, id);
+        const shader_composition_idx = try app.addToComposition(composition_id, shader_id);
+        _ = try app.addToComposition(composition_id, shader_id);
+        try app.deleteFromComposition(composition_id, shader_composition_idx);
 
-        app.setSelectedObject(id);
-        _ = try app.createPath();
+        _ = try app.createPath(id);
 
-        app.setSelectedObject(shader_id);
-        const path_id = try app.createPath();
+        const path_id = try app.createPath(shader_id);
 
-        app.setSelectedObject(path_id);
-        try app.updatePathDisplayObj(id);
+        try app.updatePathDisplayObj(path_id, id);
     }
 
     try loadFonts(&app);
 
-    _ = try app.addDrawing();
+    {
+        var id_iter = app.objects.idIter();
+        _ = try app.addDrawing(id_iter.next().?);
+    }
 
     var font_ids = app.fonts.idIter();
     _ = font_ids.next(); // Discard first id, it will be used by default
     const second_font_id = font_ids.next() orelse return error.NotEnoughFonts;
 
     const text_id = try app.addText();
-    app.setSelectedObject(text_id);
 
-    try app.updateTextObjectContent("hello world");
-    try app.updateFontId(second_font_id);
-    try app.updateFontSize(10.0);
+    try app.updateTextObjectContent(text_id, "hello world");
+    try app.updateFontId(text_id, second_font_id);
+    try app.updateFontSize(text_id, 10.0);
 
     var it = app.objects.idIter();
     while (it.next()) |i| {
         scratch_gl.reset();
-        app.setSelectedObject(i);
-        try inputOnCanvas(&app, &view_state, now);
+        app_view.setSelectedObject(i);
+        try inputOnCanvas(&app_view, now);
     }
 
     var save_path_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -293,7 +294,7 @@ pub fn main() !void {
     it = app.objects.idIter();
     while (it.next()) |i| {
         scratch_gl.reset();
-        app.setSelectedObject(i);
-        try inputOnCanvas(&app, &view_state, now);
+        app_view.setSelectedObject(i);
+        try inputOnCanvas(&app_view, now);
     }
 }

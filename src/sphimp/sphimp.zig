@@ -8,3 +8,5 @@ pub const object = @import("object.zig");
 pub const shader_storage = @import("shader_storage.zig");
 pub const tool = @import("tool.zig");
 pub const ViewState = @import("ViewState.zig");
+pub const InputState = @import("InputState.zig");
+pub const AppView = @import("AppView.zig");

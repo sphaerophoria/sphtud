@@ -2,54 +2,59 @@
 
 const std = @import("std");
 const sphimp = @import("sphimp");
+const ObjectId = sphimp.object.ObjectId;
 
 pub const SelectedObjectName = struct {
     app: *sphimp.App,
+    selected: *ObjectId,
 
-    pub fn init(app: *sphimp.App) SelectedObjectName {
-        return .{ .app = app };
+    pub fn init(app: *sphimp.App, selected: *ObjectId) SelectedObjectName {
+        return .{ .app = app, .selected = selected };
     }
 
     pub fn getText(self: *SelectedObjectName) []const u8 {
-        return self.app.selectedObject().name;
+        return self.app.objects.get(self.selected.*).name;
     }
 };
 
 pub const SelectedObjectWidth = struct {
     app: *sphimp.App,
+    selected: *ObjectId,
     buf: [10]u8 = undefined,
 
-    pub fn init(app: *sphimp.App) SelectedObjectWidth {
-        return .{ .app = app };
+    pub fn init(app: *sphimp.App, selected: *ObjectId) SelectedObjectWidth {
+        return .{ .app = app, .selected = selected };
     }
 
     pub fn getText(self: *SelectedObjectWidth) []const u8 {
-        return std.fmt.bufPrint(&self.buf, "{d}", .{self.app.selectedDims()[0]}) catch "error";
+        return std.fmt.bufPrint(&self.buf, "{d}", .{self.app.objectDims(self.selected.*)[0]}) catch "error";
     }
 };
 
 pub const SelectedObjectHeight = struct {
     app: *sphimp.App,
+    selected: *ObjectId,
     buf: [10]u8 = undefined,
 
-    pub fn init(app: *sphimp.App) SelectedObjectHeight {
-        return .{ .app = app };
+    pub fn init(app: *sphimp.App, selected: *ObjectId) SelectedObjectHeight {
+        return .{ .app = app, .selected = selected };
     }
 
     pub fn getText(self: *SelectedObjectHeight) []const u8 {
-        return std.fmt.bufPrint(&self.buf, "{d}", .{self.app.selectedObject().dims(&self.app.objects)[1]}) catch "error";
+        return std.fmt.bufPrint(&self.buf, "{d}", .{self.app.objectDims(self.selected.*)[1]}) catch "error";
     }
 };
 
 pub const TextObjectContent = struct {
     app: *sphimp.App,
+    id: ObjectId,
 
-    pub fn init(app: *sphimp.App) TextObjectContent {
-        return .{ .app = app };
+    pub fn init(app: *sphimp.App, id: ObjectId) TextObjectContent {
+        return .{ .app = app, .id = id };
     }
 
     pub fn getText(self: TextObjectContent) []const u8 {
-        const text_obj = self.app.selectedObject().asText() orelse return "";
+        const text_obj = self.app.objects.get(self.id).asText() orelse return "";
         return text_obj.current_text;
     }
 };
@@ -76,18 +81,20 @@ pub fn stackBuf(comptime fmt: []const u8, args: anytype, comptime max_len: usize
 
 pub const CompositionObjName = struct {
     app: *sphimp.App,
-    idx: usize,
+    id: ObjectId,
+    composition_idx: usize,
 
-    pub fn init(app: *sphimp.App, idx: usize) CompositionObjName {
+    pub fn init(app: *sphimp.App, id: ObjectId, composition_idx: usize) CompositionObjName {
         return .{
             .app = app,
-            .idx = idx,
+            .id = id,
+            .composition_idx = composition_idx,
         };
     }
 
     pub fn getText(self: @This()) []const u8 {
-        const comp_data = self.app.selectedObject().asComposition() orelse return "";
-        const comp_obj = comp_data.objects.items[self.idx];
+        const comp_data = self.app.objects.get(self.id).asComposition() orelse return "";
+        const comp_obj = comp_data.objects.items[self.composition_idx];
         const obj = self.app.objects.get(comp_obj.id);
         return obj.name;
     }
@@ -95,10 +102,11 @@ pub const CompositionObjName = struct {
 
 pub const ShaderImageUniformName = struct {
     app: *sphimp.App,
+    id: ObjectId,
     uniform_idx: usize,
 
     pub fn getText(self: ShaderImageUniformName) []const u8 {
-        const object = self.app.selectedObject();
+        const object = self.app.objects.get(self.id);
         const bindings = object.shaderBindings() orelse return "";
         switch (bindings[self.uniform_idx]) {
             .image => |id| {
@@ -111,9 +119,10 @@ pub const ShaderImageUniformName = struct {
 
 pub const DrawingDisplayObjectName = struct {
     app: *sphimp.App,
+    id: ObjectId,
 
     pub fn getText(self: DrawingDisplayObjectName) []const u8 {
-        const drawing = self.app.selectedObject().asDrawing() orelse return "";
+        const drawing = self.app.objects.get(self.id).asDrawing() orelse return "";
         const id = drawing.display_object;
         return self.app.objects.get(id).name;
     }
@@ -121,9 +130,10 @@ pub const DrawingDisplayObjectName = struct {
 
 pub const SelectedBrushName = struct {
     app: *sphimp.App,
+    id: ObjectId,
 
     pub fn getText(self: SelectedBrushName) []const u8 {
-        const drawing = self.app.selectedObject().asDrawing() orelse return "";
+        const drawing = self.app.objects.get(self.id).asDrawing() orelse return "";
         const id = drawing.brush;
         return self.app.brushes.get(id).name;
     }
@@ -131,19 +141,21 @@ pub const SelectedBrushName = struct {
 
 pub const PathDisplayObjectName = struct {
     app: *sphimp.App,
+    id: ObjectId,
 
     pub fn getText(self: PathDisplayObjectName) []const u8 {
-        const path = self.app.selectedObject().asPath() orelse return "";
+        const path = self.app.objects.get(self.id).asPath() orelse return "";
         const id = path.display_object;
         return self.app.objects.get(id).name;
     }
 };
 
-pub const SelectedFontName = struct {
+pub const TextObjectFont = struct {
     app: *sphimp.App,
+    id: ObjectId,
 
-    pub fn getText(self: SelectedFontName) []const u8 {
-        const text = self.app.selectedObject().asText() orelse return "";
+    pub fn getText(self: TextObjectFont) []const u8 {
+        const text = self.app.objects.get(self.id).asText() orelse return "";
         const id = text.font;
         return self.app.fonts.get(id).path;
     }

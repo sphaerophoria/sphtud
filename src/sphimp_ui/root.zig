@@ -18,7 +18,7 @@ const MemoryWidget = gui.memory_widget.MemoryWidget;
 
 const Gui = struct {
     sidebar: sidebar_mod.Handle,
-    app_widget: gui.Widget(UiAction),
+    app_widget: *AppWidget,
     memory_widget: gui.Widget(UiAction),
     state: *WidgetState(UiAction),
     runner: gui.runner.Runner(UiAction),
@@ -32,6 +32,9 @@ pub fn makeGui(alloc: RenderAlloc, app: *App, scratch: *ScratchAlloc, scratch_gl
 
     const widget_factory = widget_state.factory(alloc);
 
+    const app_widget = try AppWidget.init(alloc.heap.arena(), app, .{ .heap = scratch, .gl = scratch_gl }, drag_source);
+    const selected_id = app_widget.selectedObjectPtr();
+
     const image_drawer = try ImageDrawer.init(
         app,
         alloc,
@@ -39,6 +42,7 @@ pub fn makeGui(alloc: RenderAlloc, app: *App, scratch: *ScratchAlloc, scratch_gl
         gui.widget_factory.StyleColors.default_color,
         sidebar_width,
         widget_state,
+        selected_id,
     );
 
     var image_drawer_tab = try ImageDrawerTab.init(
@@ -66,13 +70,12 @@ pub fn makeGui(alloc: RenderAlloc, app: *App, scratch: *ScratchAlloc, scratch_gl
 
     try non_drawer_stack.pushWidget(sidebar_then_main_viewport.asWidget(), .{});
 
-    const sidebar = try sidebar_mod.makeSidebar(alloc, app, sidebar_width, widget_state);
+    const sidebar = try sidebar_mod.makeSidebar(alloc, app, selected_id, sidebar_width, widget_state);
     try sidebar_then_main_viewport.pushWidget(sidebar.widget);
 
     const memory_widget = try widget_factory.makeMemoryWidget(memory_tracker);
 
-    const app_widget = try AppWidget.init(alloc.heap.arena(), app, drag_source);
-    try sidebar_then_main_viewport.pushWidget(app_widget);
+    try sidebar_then_main_viewport.pushWidget(app_widget.asWidget());
 
     try non_drawer_stack.pushWidget(image_drawer_tab.asWidget(), .{
         .horizontal_justify = .right,

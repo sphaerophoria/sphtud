@@ -217,9 +217,8 @@ pub fn main() !void {
             }
 
             if (items.images.len == 0) {
-                _ = try app.addShaderObject("background", background_shader_id);
-                const drawing = try app.addDrawing();
-                app.setSelectedObject(drawing);
+                const background = try app.addShaderObject("background", background_shader_id);
+                _ = try app.addDrawing(background);
             }
         },
     }
@@ -260,115 +259,110 @@ pub fn main() !void {
             .height = @intCast(height),
         };
 
-        const selected_object = app.input_state.selected_object;
+        const selected_object = ui.app_widget.selectedObjectPtr();
+        var next_object = selected_object.*;
         if (try ui.runner.step(delta_s, window_size, &window.queue)) |action| exec_action: {
             switch (action) {
                 .update_selected_object => |id| {
-                    app.setSelectedObject(id);
-                    ui.app_widget.reset();
+                    next_object = id;
                 },
                 .create_path => {
-                    const new_obj = app.createPath() catch |e| {
+                    const new_obj = app.createPath(selected_object.*) catch |e| {
                         logError("failed to create path", e, @errorReturnTrace());
                         break :exec_action;
                     };
-                    app.setSelectedObject(new_obj);
-                    ui.app_widget.reset();
+                    next_object = new_obj;
                 },
                 .create_composition => {
                     const new_obj = app.addComposition() catch |e| {
                         logError("failed to create composition", e, @errorReturnTrace());
                         break :exec_action;
                     };
-                    app.setSelectedObject(new_obj);
-                    ui.app_widget.reset();
+                    next_object = new_obj;
                 },
                 .create_drawing => {
-                    const new_obj = app.addDrawing() catch |e| {
+                    const new_obj = app.addDrawing(selected_object.*) catch |e| {
                         logError("failed to create drawing", e, @errorReturnTrace());
                         break :exec_action;
                     };
 
-                    app.setSelectedObject(new_obj);
-                    ui.app_widget.reset();
+                    next_object = new_obj;
                 },
                 .create_text => {
                     const new_obj = app.addText() catch |e| {
                         logError("failed to create text", e, @errorReturnTrace());
                         break :exec_action;
                     };
-                    app.setSelectedObject(new_obj);
-                    ui.app_widget.reset();
+                    next_object = new_obj;
                 },
                 .create_shader => |id| {
                     const new_obj = app.addShaderObject("new shader", id) catch |e| {
                         logError("failed to create shader", e, @errorReturnTrace());
                         break :exec_action;
                     };
-                    app.setSelectedObject(new_obj);
-                    ui.app_widget.reset();
+                    next_object = new_obj;
                 },
                 .delete_selected_object => {
-                    app.deleteSelectedObject() catch |e| {
+                    next_object = app.deleteObject(selected_object.*) catch |e| {
                         logError("failed to delete object", e, @errorReturnTrace());
                         break :exec_action;
                     };
                 },
                 .edit_selected_object_name => |params| {
-                    const name = app.objects.get(app.input_state.selected_object).name;
+                    const name = app.objects.get(selected_object.*).name;
                     var edit_name = std.ArrayListUnmanaged(u8){};
 
                     // FIXME: Should we crash on failure?
                     try edit_name.appendSlice(allocators.scratch.allocator(), name);
                     try gui.textbox.executeTextEditOnArrayList(allocators.scratch.allocator(), &edit_name, params.pos, params.notifier, params.items);
 
-                    try app.updateSelectedObjectName(edit_name.items);
+                    try app.objects.get(selected_object.*).updateName(edit_name.items);
                 },
                 .update_composition_width => |new_width| {
-                    app.updateSelectedWidth(new_width) catch |e| {
+                    app.updateObjectWidth(selected_object.*, new_width) catch |e| {
                         logError("Failed to update selected object width", e, @errorReturnTrace());
                     };
                 },
                 .update_composition_height => |new_height| {
-                    app.updateSelectedHeight(new_height) catch |e| {
+                    app.updateObjectHeight(selected_object.*, new_height) catch |e| {
                         logError("Failed to update selected object width", e, @errorReturnTrace());
                     };
                 },
                 .update_shader_float => |params| {
-                    app.setShaderFloat(params.uniform_idx, params.float_idx, params.val) catch |e| {
+                    app.setShaderFloat(selected_object.*, params.uniform_idx, params.float_idx, params.val) catch |e| {
                         logError("Failed to update shader float", e, @errorReturnTrace());
                     };
                 },
                 .update_shader_color => |params| {
                     inline for (&.{ "r", "g", "b" }, 0..) |field, i| {
-                        app.setShaderFloat(params.uniform_idx, i, @field(params.color, field)) catch |e| {
+                        app.setShaderFloat(selected_object.*, params.uniform_idx, i, @field(params.color, field)) catch |e| {
                             logError("Failed to update shader " ++ field, e, @errorReturnTrace());
                         };
                     }
                 },
                 .update_shader_image => |params| {
-                    app.setShaderImage(params.uniform_idx, params.image) catch |e| {
+                    app.setShaderImage(selected_object.*, params.uniform_idx, params.image) catch |e| {
                         logError("Failed to update shader image", e, @errorReturnTrace());
                     };
                 },
                 .update_drawing_source => |id| {
-                    app.updateDrawingDisplayObj(id) catch |e| {
+                    app.updateDrawingDisplayObj(selected_object.*, id) catch |e| {
                         logError("Failed to update drawing source", e, @errorReturnTrace());
                     };
                 },
                 .update_brush => |id| {
-                    app.setDrawingObjectBrush(id) catch |e| {
+                    app.setDrawingObjectBrush(selected_object.*, id) catch |e| {
                         logError("Failed to chnage brush", e, @errorReturnTrace());
                     };
-                    try ui.sidebar.updateObjectProperties();
+                    try ui.sidebar.updateObjectProperties(selected_object);
                 },
                 .update_path_source => |id| {
-                    app.updatePathDisplayObj(id) catch |e| {
+                    app.updatePathDisplayObj(selected_object.*, id) catch |e| {
                         logError("Failed to update path source", e, @errorReturnTrace());
                     };
                 },
                 .update_text_obj_name => |params| text_update: {
-                    const text = app.selectedObject().asText() orelse break :text_update;
+                    const text = app.objects.get(selected_object.*).asText() orelse break :text_update;
 
                     var edit = std.ArrayListUnmanaged(u8){};
 
@@ -376,32 +370,32 @@ pub fn main() !void {
                     try edit.appendSlice(allocators.scratch.allocator(), text.current_text);
                     try gui.textbox.executeTextEditOnArrayList(allocators.scratch.allocator(), &edit, params.pos, params.notifier, params.items);
 
-                    app.updateTextObjectContent(edit.items) catch |e| {
+                    app.updateTextObjectContent(selected_object.*, edit.items) catch |e| {
                         logError("Failed to set text content", e, @errorReturnTrace());
                     };
                 },
                 .update_selected_font => |font_id| {
-                    app.updateFontId(font_id) catch |e| {
+                    app.updateFontId(selected_object.*, font_id) catch |e| {
                         logError("Failed to set font id", e, @errorReturnTrace());
                     };
                 },
                 .update_text_size => |size| {
-                    app.updateFontSize(size) catch |e| {
+                    app.updateFontSize(selected_object.*, size) catch |e| {
                         logError("Failed to set font size", e, @errorReturnTrace());
                     };
                 },
                 .add_to_composition => |id| blk: {
-                    _ = app.addToComposition(id) catch |e| {
+                    _ = app.addToComposition(selected_object.*, id) catch |e| {
                         logError("Failed to add object to composition", e, @errorReturnTrace());
                         break :blk;
                     };
-                    try ui.sidebar.updateObjectProperties();
+                    try ui.sidebar.updateObjectProperties(selected_object);
                 },
                 .delete_from_composition => |idx| {
-                    app.deleteFromComposition(.{ .value = idx }) catch |e| {
+                    app.deleteFromComposition(selected_object.*, .{ .value = idx }) catch |e| {
                         logError("Failed to delete object from composition", e, @errorReturnTrace());
                     };
-                    try ui.sidebar.updateObjectProperties();
+                    try ui.sidebar.updateObjectProperties(selected_object);
                 },
                 .toggle_composition_debug => {
                     app.toggleCompositionDebug() catch |e| {
@@ -413,7 +407,7 @@ pub fn main() !void {
                 },
                 .set_drawing_tool => |t| {
                     app.tool_params.active_drawing_tool = t;
-                    try ui.sidebar.updateObjectProperties();
+                    try ui.sidebar.updateObjectProperties(selected_object);
                 },
                 .change_eraser_size => |size| {
                     app.tool_params.eraser_width = @max(size, 0.0);
@@ -441,8 +435,9 @@ pub fn main() !void {
             ui.state.drag_layer.reset();
         }
 
-        if (selected_object.value != app.input_state.selected_object.value) {
-            try ui.sidebar.updateObjectProperties();
+        if (selected_object.value != next_object.value) {
+            ui.app_widget.app_view.setSelectedObject(next_object);
+            try ui.sidebar.updateObjectProperties(selected_object);
             ui.sidebar.notifyObjectChanged();
         }
 

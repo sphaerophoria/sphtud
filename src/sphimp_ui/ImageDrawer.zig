@@ -40,6 +40,7 @@ pub fn init(
     highlight_color: gui.Color,
     drawer_width: u31,
     widget_state: *gui.widget_factory.WidgetState(UiAction),
+    selected_object: *ObjectId,
 ) !*ImageDrawer {
     const factory = widget_state.factory(alloc);
 
@@ -85,6 +86,7 @@ pub fn init(
         .refs = .{
             .app = app,
             .widget_state = widget_state,
+            .selected_object = selected_object,
         },
         .style = .{
             .background_color = background_color,
@@ -237,8 +239,9 @@ fn updateWidgets(self: *ImageDrawer) !void {
             .parent = self,
             .objects = &self.refs.app.objects,
             .thumbnail_cache = &self.thumbnail_cache,
-            .frame_renderer = self.refs.app.makeFrameRenderer(self.thumbnail_widget_alloc),
+            .frame_renderer = self.refs.app.makeFrameRenderer(self.thumbnail_widget_alloc.heap.general(), self.thumbnail_widget_alloc.gl),
             .factory = self.refs.widget_state.factory(self.thumbnail_widget_alloc),
+            .selected_object = self.refs.selected_object,
         };
 
         for (0..num_items) |idx| {
@@ -256,6 +259,7 @@ const ThumbnailFactory = struct {
     thumbnail_cache: *ThumbnailCache,
     frame_renderer: sphimp.Renderer.FrameRenderer,
     factory: gui.widget_factory.WidgetFactory(UiAction),
+    selected_object: *ObjectId,
 
     fn makeThumbnail(self: *ThumbnailFactory, idx: usize) !gui.Widget(UiAction) {
         const obj_id = self.thumbnail_cache.ids[idx];
@@ -270,6 +274,7 @@ const ThumbnailFactory = struct {
             thumbnail,
             HighlightRetriever{
                 .parent = self.parent,
+                .selected = self.selected_object,
                 .id = obj_id,
             },
         );
@@ -306,10 +311,11 @@ const ThumbnailRetriever = struct {
 
 const HighlightRetriever = struct {
     parent: *const ImageDrawer,
+    selected: *ObjectId,
     id: ObjectId,
 
     pub fn getColor(self: HighlightRetriever) ?gui.Color {
-        if (self.parent.refs.app.selectedObjectId().value == self.id.value) {
+        if (self.selected.value == self.id.value) {
             return self.parent.style.highlight_color;
         } else {
             return null;
@@ -326,6 +332,7 @@ const Style = struct {
 const Refs = struct {
     app: *App,
     widget_state: *gui.widget_factory.WidgetState(UiAction),
+    selected_object: *ObjectId,
 };
 
 const DrawerState = union(enum) {
@@ -359,7 +366,7 @@ const ThumbnailCache = struct {
         const new_textures = try self.alloc.heap.arena().alloc(sphrender.Texture, num_items);
         const new_sizes = try self.alloc.heap.arena().alloc(PixelSize, num_items);
 
-        var fr = app.makeFrameRenderer(self.alloc);
+        var fr = app.makeFrameRenderer(self.alloc.heap.general(), self.alloc.gl);
 
         var it = app.objects.idIter();
         var idx: usize = 0;

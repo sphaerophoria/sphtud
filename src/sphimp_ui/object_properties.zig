@@ -17,6 +17,7 @@ const WidgetFactory = gui.widget_factory.WidgetFactory(UiAction);
 
 pub const PropertyWidgetGenerator = struct {
     app: *App,
+    selected_object: ObjectId,
     widget_factory: WidgetFactory,
     property_list: *Grid,
 
@@ -25,12 +26,17 @@ pub const PropertyWidgetGenerator = struct {
     pub fn addImageToPropertyList(self: PropertyWidgetGenerator, uniform_idx: usize, name: []const u8) !void {
         const uniform_label = try self.widget_factory.makeLabel(name);
         const preview = try self.widget_factory.makeLabel(
-            label_adaptors.ShaderImageUniformName{ .app = self.app, .uniform_idx = uniform_idx },
+            label_adaptors.ShaderImageUniformName{
+                .app = self.app,
+                .id = self.selected_object,
+                .uniform_idx = uniform_idx,
+            },
         );
 
         const value_widget = try self.widget_factory.makeComboBox(
             preview,
             ShaderSelectableListGenerator{
+                .id = self.selected_object,
                 .widget_state = self.widget_factory.state,
                 .uniform_idx = uniform_idx,
                 .app = self.app,
@@ -45,6 +51,7 @@ pub const PropertyWidgetGenerator = struct {
         const value_widget = try self.widget_factory.makeDragFloat(
             float_adaptors.ShaderUniform{
                 .app = self.app,
+                .id = self.selected_object,
                 .uniform_idx = uniform_idx,
                 .float_idx = 0,
             },
@@ -72,6 +79,7 @@ pub const PropertyWidgetGenerator = struct {
             const value_widget = try self.widget_factory.makeDragFloat(
                 float_adaptors.ShaderUniform{
                     .app = self.app,
+                    .id = self.selected_object,
                     .uniform_idx = uniform_idx,
                     .float_idx = idx,
                 },
@@ -93,6 +101,7 @@ pub const PropertyWidgetGenerator = struct {
         const value_widget = try self.widget_factory.makeColorPicker(
             color_adaptors.ShaderUniform{
                 .app = self.app,
+                .id = self.selected_object,
                 .uniform_idx = uniform_idx,
             },
             ui_action.ShaderColor{ .uniform_idx = uniform_idx },
@@ -104,10 +113,11 @@ pub const PropertyWidgetGenerator = struct {
 };
 
 const ShaderImage = struct {
+    id: ObjectId,
     uniform_idx: usize,
 
     pub fn selectedObject(self: @This(), a: *App) ?ObjectId {
-        const object = a.selectedObject();
+        const object = a.objects.get(self.id);
 
         const bindings = object.shaderBindings() orelse return null;
 
@@ -121,12 +131,13 @@ const ShaderImage = struct {
 const ShaderSelectableListGenerator = struct {
     widget_state: *gui.widget_factory.WidgetState(UiAction),
     app: *App,
+    id: ObjectId,
     uniform_idx: usize,
 
     pub fn makeWidget(self: ShaderSelectableListGenerator, alloc: gui.GuiAlloc) !gui.Widget(UiAction) {
         const factory = self.widget_state.factory(alloc);
         return try factory.makeSelectableList(
-            list_io.objectListRetriever(ShaderImage{ .uniform_idx = self.uniform_idx }, self.app),
+            list_io.objectListRetriever(ShaderImage{ .id = self.id, .uniform_idx = self.uniform_idx }, self.app),
             ui_action.ShaderImage{
                 .app = self.app,
                 .uniform_idx = self.uniform_idx,

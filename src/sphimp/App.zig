@@ -51,7 +51,6 @@ shaders: ShaderStorage(ShaderId),
 brushes: ShaderStorage(BrushId),
 fonts: FontStorage,
 renderer: Renderer,
-input_state: InputState = .{},
 tool_params: ToolParams = .{},
 io_alloc: *Sphalloc,
 io_thread: *IoThread,
@@ -144,14 +143,15 @@ pub fn save(self: *App, path: []const u8) !void {
     );
 }
 
-pub fn exportImage(self: *App, path: [:0]const u8) !void {
+pub fn exportImage(self: *App, id: ObjectId, path: [:0]const u8) !void {
     {
         self.io_thread.mutex.lock();
         defer self.io_thread.mutex.unlock();
         if (self.io_thread.protected.save_request != null) return;
     }
 
-    const dims = self.selectedDims();
+    const obj = self.objects.get(id);
+    const dims = obj.dims(&self.objects);
 
     // All allocations are freed in App.step() if the save request is complete.
     // This allows us to have an allocator that is only accessed from this
@@ -170,7 +170,7 @@ pub fn exportImage(self: *App, path: [:0]const u8) !void {
         &self.brushes,
     );
 
-    const texture = try fr.renderObjectToTexture(self.selectedObject().*);
+    const texture = try fr.renderObjectToTexture(obj.*);
 
     const out_buf = try alloc.alloc(u8, dims[0] * dims[1] * 4);
 
@@ -268,37 +268,12 @@ pub fn load(self: *App, path: []const u8) !void {
     // Loaded drawings do not generate distance fields
     try self.regenerateDistanceFields();
     try self.regenerateAllTextObjects();
-
-    var id_it = self.objects.idIter();
-    if (id_it.next()) |id| {
-        // Select the first object to create a sane initial input state
-        self.input_state.selectObject(id, &self.objects);
-    }
 }
 
-pub fn render(self: *App, view_state: ViewState, now: std.time.Instant) !void {
-    const checkpoint = self.scratch.checkpoint();
-    defer self.scratch.restore(checkpoint);
-    var frame_renderer = self.renderer.makeFrameRenderer(
-        self.scratch.heap.allocator(),
-        self.scratch.gl,
-        self.scratch.heap.allocator(),
-        &self.objects,
-        &self.shaders,
-        &self.brushes,
-    );
-
-    const transform = view_state.objectToClipTransform(self.selectedDims());
-    try frame_renderer.render(self.input_state.selected_object, transform);
-
-    const ui_renderer = frame_renderer.makeUiRenderer(self.tool_params, self.input_state.mouse_pos, now);
-    try ui_renderer.render(self.objects.get(self.input_state.selected_object).*, transform);
-}
-
-pub fn makeFrameRenderer(self: *App, alloc: RenderAlloc) Renderer.FrameRenderer {
+pub fn makeFrameRenderer(self: *App, alloc: Allocator, gl_alloc: *GlAlloc) Renderer.FrameRenderer {
     return self.renderer.makeFrameRenderer(
-        alloc.heap.general(),
-        alloc.gl,
+        alloc,
+        gl_alloc,
         self.scratch.heap.allocator(),
         &self.objects,
         &self.shaders,
@@ -306,63 +281,7 @@ pub fn makeFrameRenderer(self: *App, alloc: RenderAlloc) Renderer.FrameRenderer 
     );
 }
 
-pub fn setKeyDown(self: *App, view_state: *ViewState, key: u8, ctrl: bool) !void {
-    const checkpoint = self.scratch.checkpoint();
-    defer self.scratch.restore(checkpoint);
-
-    var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, self.scratch.heap.allocator(), &self.objects, &self.shaders, &self.brushes);
-
-    const action = try self.input_state.setKeyDown(key, ctrl, &self.objects, &fr);
-    try self.handleInputAction(view_state, action);
-}
-
-pub fn setMouseDown(self: *App, view_state: *ViewState) !void {
-    var fr = self.renderer.makeFrameRenderer(
-        self.scratch.heap.allocator(),
-        self.scratch.gl,
-        self.scratch.heap.allocator(),
-        &self.objects,
-        &self.shaders,
-        &self.brushes,
-    );
-
-    const action = try self.input_state.setMouseDown(self.tool_params, &self.objects, &fr);
-    try self.handleInputAction(view_state, action);
-}
-
-pub fn setMouseUp(self: *App) void {
-    self.input_state.setMouseUp();
-}
-
-pub fn setMiddleDown(self: *App) void {
-    self.input_state.setMiddleDown();
-}
-
-pub fn setMiddleUp(self: *App) void {
-    self.input_state.setMiddleUp();
-}
-
-pub fn setRightDown(self: *App, view_state: *ViewState) !void {
-    const input_action = self.input_state.setRightDown();
-    try self.handleInputAction(view_state, input_action);
-}
-
-pub fn setSelectedObject(self: *App, id: ObjectId) void {
-    self.input_state.selectObject(id, &self.objects);
-}
-
-// FIXME: Can we just pass mouse pos in object space here?
-pub fn setMousePos(self: *App, view_state: *ViewState, xpos: f32, ypos: f32) !void {
-    const new_x = view_state.windowToClipX(xpos);
-    const new_y = view_state.windowToClipY(ypos);
-    const selected_dims = self.selectedDims();
-    const new_pos = view_state.clipToObject(Vec2{ new_x, new_y }, selected_dims);
-    const input_action = self.input_state.setMousePos(self.tool_params, new_pos, &self.objects);
-
-    try self.handleInputAction(view_state, input_action);
-}
-
-pub fn createPath(self: *App) !ObjectId {
+pub fn createPath(self: *App, source: ObjectId) !ObjectId {
     const initial_positions: []const Vec2 = &.{
         Vec2{ -0.5, -0.5 },
         Vec2{ 0.5, 0.5 },
@@ -376,7 +295,7 @@ pub fn createPath(self: *App) !ObjectId {
         const path_obj = try obj_mod.PathObject.init(
             obj_alloc.heap.general(),
             initial_positions,
-            self.input_state.selected_object,
+            source,
             try self.renderer.path_program.makeBuffer(obj_alloc.gl),
         );
 
@@ -391,7 +310,7 @@ pub fn createPath(self: *App) !ObjectId {
 
     const mask_id = self.objects.nextId();
     {
-        const selected_dims = self.objects.get(self.input_state.selected_object).dims(&self.objects);
+        const selected_dims = self.objects.get(source).dims(&self.objects);
 
         const obj_alloc = try self.objects.alloc.makeSubAlloc(obj_mod.getAllocName(.generated_mask));
         errdefer obj_alloc.deinit();
@@ -419,7 +338,7 @@ pub fn createPath(self: *App) !ObjectId {
         errdefer obj_alloc.deinit();
 
         var shader_obj = try obj_mod.ShaderObject.init(obj_alloc.heap.general(), self.mul_fragment_shader, self.shaders, 0);
-        try shader_obj.setUniform(0, .{ .image = self.input_state.selected_object });
+        try shader_obj.setUniform(0, .{ .image = source });
         try shader_obj.setUniform(1, .{ .image = mask_id });
         try self.objects.append(.{
             .alloc = obj_alloc,
@@ -433,24 +352,19 @@ pub fn createPath(self: *App) !ObjectId {
     return path_id;
 }
 
-pub fn updateSelectedObjectName(self: *App, name: []const u8) !void {
-    const selected_object = self.selectedObject();
-    try selected_object.updateName(name);
-}
-
-pub fn updateTextObjectContent(self: *App, text: []const u8) !void {
-    const selected_obj = self.selectedObject();
+pub fn updateTextObjectContent(self: *App, id: ObjectId, text: []const u8) !void {
+    const selected_obj = self.objects.get(id);
     const text_obj = selected_obj.asText() orelse return error.NotText;
     try text_obj.update(selected_obj.alloc.heap.general(), self.scratch.heap, self.scratch.gl, text, self.fonts, self.renderer.distance_field_generator);
 }
 
-pub fn updateFontId(self: *App, id: FontStorage.FontId) !void {
-    const selected_obj = self.selectedObject();
+pub fn updateFontId(self: *App, text_id: ObjectId, id: FontStorage.FontId) !void {
+    const selected_obj = self.objects.get(text_id);
     const text_obj = selected_obj.asText() orelse return error.NotText;
     try text_obj.updateFont(self.scratch.heap, self.scratch.gl, id, self.fonts, self.renderer.distance_field_generator);
 }
 
-pub fn updateFontSize(self: *App, requested_size: f32) !void {
+pub fn updateFontSize(self: *App, text_id: ObjectId, requested_size: f32) !void {
     // NOTE: This feels like it should be done somewhere down the stack,
     // however this is an application level decision. Lower down elements
     // could probably handle smaller fonts, but we don't really think they
@@ -459,13 +373,14 @@ pub fn updateFontSize(self: *App, requested_size: f32) !void {
     // We also don't error as UI will spam us with these requests. Heal and move on
     const size = @max(requested_size, 6.0);
 
-    const selected_obj = self.selectedObject();
+    const selected_obj = self.objects.get(text_id);
     const text_obj = selected_obj.asText() orelse return error.NotText;
     try text_obj.updateFontSize(self.scratch.heap, self.scratch.gl, size, self.fonts, self.renderer.distance_field_generator);
 }
 
-pub fn deleteSelectedObject(self: *App) !void {
-    if (self.objects.isDependedUpon(self.input_state.selected_object)) {
+// Returns which object is "adjacent" to to_delete
+pub fn deleteObject(self: *App, to_delete: ObjectId) !ObjectId {
+    if (self.objects.isDependedUpon(to_delete)) {
         return error.DeletionCausesInvalidState;
     }
 
@@ -474,7 +389,7 @@ pub fn deleteSelectedObject(self: *App) !void {
     var prev: ?ObjectId = null;
 
     while (object_ids.next()) |id| {
-        if (id.value == self.input_state.selected_object.value) {
+        if (id.value == to_delete.value) {
             break;
         }
         prev = id;
@@ -482,17 +397,17 @@ pub fn deleteSelectedObject(self: *App) !void {
 
     const next: ?ObjectId = object_ids.next();
 
-    self.objects.remove(self.input_state.selected_object);
+    self.objects.remove(to_delete);
 
     if (next) |v| {
-        self.input_state.selectObject(v, &self.objects);
-    } else if (prev) |v| {
-        self.input_state.selectObject(v, &self.objects);
+        return v;
+    } else {
+        return prev.?;
     }
 }
 
-pub fn updateSelectedWidth(self: *App, width: f32) !void {
-    const obj = self.selectedObject();
+pub fn updateObjectWidth(self: *App, id: ObjectId, width: f32) !void {
+    const obj = self.objects.get(id);
     switch (obj.data) {
         .composition => |*c| {
             c.dims[0] = @intFromFloat(width);
@@ -501,8 +416,8 @@ pub fn updateSelectedWidth(self: *App, width: f32) !void {
     }
 }
 
-pub fn updateSelectedHeight(self: *App, height: f32) !void {
-    const obj = self.selectedObject();
+pub fn updateObjectHeight(self: *App, id: ObjectId, height: f32) !void {
+    const obj = self.objects.get(id);
     switch (obj.data) {
         .composition => |*c| {
             c.dims[1] = @intFromFloat(height);
@@ -511,8 +426,8 @@ pub fn updateSelectedHeight(self: *App, height: f32) !void {
     }
 }
 
-pub fn addToComposition(self: *App, id: obj_mod.ObjectId) !obj_mod.CompositionIdx {
-    const selected_object = self.objects.get(self.input_state.selected_object);
+pub fn addToComposition(self: *App, composition: ObjectId, id: obj_mod.ObjectId) !obj_mod.CompositionIdx {
+    const selected_object = self.objects.get(composition);
 
     if (selected_object.data != .composition) {
         return error.SelectedItemNotComposition;
@@ -521,20 +436,18 @@ pub fn addToComposition(self: *App, id: obj_mod.ObjectId) !obj_mod.CompositionId
     const new_idx = try selected_object.data.composition.addObj(id);
     errdefer selected_object.data.composition.removeObj(new_idx);
 
-    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), self.input_state.selected_object, &self.objects);
+    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), composition, &self.objects);
     return new_idx;
 }
 
-pub fn deleteFromComposition(self: *App, id: obj_mod.CompositionIdx) !void {
-    const selected_object = self.objects.get(self.input_state.selected_object);
+pub fn deleteFromComposition(self: *App, composition: ObjectId, id: obj_mod.CompositionIdx) !void {
+    const selected_object = self.objects.get(composition);
 
     if (selected_object.data != .composition) {
         return error.SelectedItemNotComposition;
     }
 
     selected_object.data.composition.removeObj(id);
-    // Force input state to release any references to a composition object
-    self.input_state.setMouseUp();
 }
 
 pub fn toggleCompositionDebug(self: *App) !void {
@@ -555,18 +468,18 @@ pub fn addComposition(self: *App) !ObjectId {
     return id;
 }
 
-pub fn updatePathDisplayObj(self: *App, id: ObjectId) !void {
-    const path_data = self.selectedObject().asPath() orelse return error.SelectedItemNotPath;
+pub fn updatePathDisplayObj(self: *App, path: ObjectId, id: ObjectId) !void {
+    const path_data = self.objects.get(path).asPath() orelse return error.SelectedItemNotPath;
     const prev = path_data.display_object;
 
     path_data.display_object = id;
     errdefer path_data.display_object = prev;
 
-    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), self.input_state.selected_object, &self.objects);
+    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), path, &self.objects);
 }
 
-pub fn setShaderFloat(self: *App, uniform_idx: usize, float_idx: usize, val: f32) !void {
-    const obj = self.selectedObject();
+pub fn setShaderFloat(self: *App, id: ObjectId, uniform_idx: usize, float_idx: usize, val: f32) !void {
+    const obj = self.objects.get(id);
     const bindings = switch (obj.data) {
         .shader => |s| s.bindings,
         .drawing => |d| d.bindings,
@@ -587,8 +500,8 @@ pub fn setShaderFloat(self: *App, uniform_idx: usize, float_idx: usize, val: f32
     }
 }
 
-pub fn setShaderImage(self: *App, idx: usize, image: ObjectId) !void {
-    const obj = self.selectedObject();
+pub fn setShaderImage(self: *App, object: ObjectId, idx: usize, image: ObjectId) !void {
+    const obj = self.objects.get(object);
     const bindings = switch (obj.data) {
         .shader => |s| s.bindings,
         .drawing => |d| d.bindings,
@@ -603,30 +516,16 @@ pub fn setShaderImage(self: *App, idx: usize, image: ObjectId) !void {
     bindings[idx] = .{ .image = image };
     errdefer bindings[idx] = prev_val;
 
-    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), self.input_state.selected_object, &self.objects);
+    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), object, &self.objects);
 }
 
-pub fn setBrushDependency(self: *App, idx: usize, val: Renderer.UniformValue) !void {
-    const drawing_data = self.selectedObject().asDrawing() orelse return error.SelectedItemNotDrawing;
-    if (idx >= drawing_data.bindings.len) {
-        return error.InvalidShaderIdx;
-    }
-
-    const prev_val = drawing_data.bindings[idx];
-
-    try drawing_data.setUniform(idx, val);
-    errdefer drawing_data.bindings[idx] = prev_val;
-
-    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), self.input_state.selected_object, &self.objects);
-}
-
-pub fn setDrawingObjectBrush(self: *App, id: BrushId) !void {
-    const selected_object = self.selectedObject();
+pub fn setDrawingObjectBrush(self: *App, drawing: ObjectId, id: BrushId) !void {
+    const selected_object = self.objects.get(drawing);
     const drawing_data = selected_object.asDrawing() orelse return error.SelectedItemNotDrawing;
     try drawing_data.updateBrush(id, self.brushes);
 }
 
-pub fn addDrawing(self: *App) !ObjectId {
+pub fn addDrawing(self: *App, source: ObjectId) !ObjectId {
     const id = self.objects.nextId();
 
     const obj_alloc = try self.objects.alloc.makeSubAlloc(obj_mod.getAllocName(.drawing));
@@ -642,7 +541,7 @@ pub fn addDrawing(self: *App) !ObjectId {
             .drawing = try obj_mod.DrawingObject.init(
                 obj_alloc.heap.general(),
                 obj_alloc.gl,
-                self.input_state.selected_object,
+                source,
                 first_brush,
                 self.brushes,
             ),
@@ -672,22 +571,13 @@ pub fn addText(self: *App) !ObjectId {
     return id;
 }
 
-pub fn setShaderPrimaryInput(self: *App, idx: usize) !void {
-    const shader_data = self.selectedObject().asShader() orelse return error.SelectedItemNotShader;
-    if (idx >= shader_data.bindings.len) {
-        return error.InvalidShaderIdx;
-    }
-
-    shader_data.primary_input_idx = idx;
-}
-
-pub fn updateDrawingDisplayObj(self: *App, id: ObjectId) !void {
-    const drawing_data = self.selectedObject().asDrawing() orelse return error.SelectedItemNotDrawing;
+pub fn updateDrawingDisplayObj(self: *App, drawing: ObjectId, display_obj: ObjectId) !void {
+    const drawing_data = self.objects.get(drawing).asDrawing() orelse return error.SelectedItemNotDrawing;
     const previous_id = drawing_data.display_object;
-    drawing_data.display_object = id;
+    drawing_data.display_object = display_obj;
     errdefer drawing_data.display_object = previous_id;
 
-    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), self.input_state.selected_object, &self.objects);
+    try dependency_loop.ensureNoDependencyLoops(self.scratch.heap.allocator(), drawing, &self.objects);
 }
 
 pub fn loadImage(self: *App, path: [:0]const u8) !ObjectId {
@@ -774,16 +664,24 @@ pub fn addShaderObject(self: *App, name: []const u8, shader_id: ShaderId) !Objec
     return object_id;
 }
 
-pub fn selectedObjectId(self: App) ObjectId {
-    return self.input_state.selected_object;
+pub fn objectDims(self: *App, id: ObjectId) PixelDims {
+    return self.objects.get(id).dims(&self.objects);
 }
 
-pub fn selectedObject(self: *App) *Object {
-    return self.objects.get(self.input_state.selected_object);
+pub fn addPathPoint(self: *App, id: ObjectId, point: Vec2) !void {
+    const obj = self.objects.get(id);
+    if (obj.asPath()) |p| {
+        try p.addPoint(point);
+        try self.regeneratePathMasks(id);
+    }
 }
 
-pub fn selectedDims(self: *App) PixelDims {
-    return self.objects.get(self.input_state.selected_object).dims(&self.objects);
+pub fn movePathPoint(self: *App, id: ObjectId, path_idx: obj_mod.PathIdx, amount: Vec2) !void {
+    const obj = self.objects.get(id);
+    if (obj.asPath()) |path| {
+        path.movePoint(path_idx, amount);
+        try self.regeneratePathMasks(id);
+    }
 }
 
 const MaskIterator = struct {
@@ -802,72 +700,6 @@ const MaskIterator = struct {
         return null;
     }
 };
-
-fn handleInputAction(self: *App, view_state: *ViewState, action: ?InputState.InputAction) !void {
-    switch (action orelse return) {
-        .add_path_elem => |obj_loc| {
-            const selected_object = self.selectedObject();
-            if (selected_object.asPath()) |p| {
-                try p.addPoint(obj_loc);
-                try self.regeneratePathMasks(self.input_state.selected_object);
-            }
-        },
-        .set_composition_transform => |movement| {
-            const selected_object = self.selectedObject();
-            if (selected_object.asComposition()) |composition| {
-                composition.setTransform(movement.idx, movement.transform);
-            }
-        },
-        .move_path_point => |movement| {
-            const selected_object = self.selectedObject();
-            if (selected_object.asPath()) |path| {
-                path.movePoint(
-                    movement.idx,
-                    movement.amount,
-                );
-                try self.regeneratePathMasks(self.input_state.selected_object);
-            }
-        },
-        .add_draw_stroke => |pos| {
-            const selected_object = self.selectedObject();
-            if (selected_object.asDrawing()) |d| {
-                try d.addStroke(self.scratch.heap, self.scratch.gl, pos, &self.objects, self.renderer.distance_field_generator);
-            }
-        },
-        .add_stroke_sample => |pos| {
-            const selected_object = self.selectedObject();
-            if (selected_object.asDrawing()) |d| {
-                try d.addSample(self.scratch.heap, self.scratch.gl, pos, &self.objects, self.renderer.distance_field_generator);
-            }
-        },
-        .remove_stroke_samples => |pos| {
-            // FIXME: Error consistency the whole way down
-            const selected_object = self.selectedObject();
-            if (selected_object.asDrawing()) |d| {
-                try d.removePointsWithinRange(
-                    self.scratch.heap,
-                    self.scratch.gl,
-                    pos,
-                    self.tool_params.eraser_width,
-                    &self.objects,
-                    self.renderer.distance_field_generator,
-                );
-            }
-        },
-        .set_drawing_tool => |t| {
-            self.tool_params.active_drawing_tool = t;
-        },
-        .save => {
-            try self.save("save.json");
-        },
-        .export_image => {
-            try self.exportImage("image.png");
-        },
-        .pan => |amount| {
-            view_state.pan(amount);
-        },
-    }
-}
 
 fn regenerateMask(self: *App, mask: *obj_mod.GeneratedMaskObject) !void {
     const path_obj = self.objects.get(mask.source);
