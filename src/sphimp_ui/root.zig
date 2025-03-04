@@ -18,6 +18,7 @@ const MemoryWidget = gui.memory_widget.MemoryWidget;
 
 const Gui = struct {
     sidebar: sidebar_mod.Handle,
+    app_widget: gui.Widget(UiAction),
     memory_widget: gui.Widget(UiAction),
     state: *WidgetState(UiAction),
     runner: gui.runner.Runner(UiAction),
@@ -82,6 +83,7 @@ pub fn makeGui(alloc: RenderAlloc, app: *App, scratch: *ScratchAlloc, scratch_gl
 
     return .{
         .sidebar = sidebar.handle,
+        .app_widget = app_widget,
         .memory_widget = memory_widget,
         .state = widget_state,
         .runner = gui_runner,

@@ -13,6 +13,7 @@ const GlAlloc = sphrender.GlAlloc;
 app: *sphimp.App,
 size: gui.PixelSize = .{},
 drag_source: *?ObjectId,
+view_state: sphimp.ViewState = .{},
 now: std.time.Instant = undefined,
 
 const AppWidget = @This();
@@ -42,7 +43,7 @@ const widget_vtable = gui.Widget(UiAction).VTable{
     // didn't try is better than going out of our way to do something stupid.
     // If this ever becomes a problem we can revisit
     .setFocused = null,
-    .reset = null,
+    .reset = AppWidget.reset,
 };
 
 pub fn init(alloc: Allocator, app: *App, drag_source: *?ObjectId) !gui.Widget(UiAction) {
@@ -78,7 +79,7 @@ fn render(ctx: ?*anyopaque, widget_bounds: gui.PixelBBox, window_bounds: gui.Pix
         widget_bounds.calcHeight(),
     );
 
-    self.app.render(self.now) catch return;
+    self.app.render(self.view_state, self.now) catch return;
 }
 
 fn getSize(ctx: ?*anyopaque) gui.PixelSize {
@@ -90,8 +91,8 @@ fn update(ctx: ?*anyopaque, available_size: gui.PixelSize, _: f32) anyerror!void
     const self: *AppWidget = @ptrCast(@alignCast(ctx));
     self.size = available_size;
     self.now = try std.time.Instant.now();
-    self.app.view_state.window_width = available_size.width;
-    self.app.view_state.window_height = available_size.height;
+    self.view_state.window_width = available_size.width;
+    self.view_state.window_height = available_size.height;
 }
 
 fn setInputState(ctx: ?*anyopaque, widget_bounds: gui.PixelBBox, input_bounds: gui.PixelBBox, input_state: gui.InputState) gui.InputResponse(UiAction) {
@@ -111,6 +112,11 @@ fn setInputState(ctx: ?*anyopaque, widget_bounds: gui.PixelBBox, input_bounds: g
     return .{};
 }
 
+fn reset(ctx: ?*anyopaque) void {
+    const self: *AppWidget = @ptrCast(@alignCast(ctx));
+    self.view_state.reset();
+}
+
 fn trySetInputState(self: *AppWidget, widget_bounds: gui.PixelBBox, input_bounds: gui.PixelBBox, input_state: gui.InputState) !?UiAction {
     var ret: ?UiAction = null;
 
@@ -125,6 +131,7 @@ fn trySetInputState(self: *AppWidget, widget_bounds: gui.PixelBBox, input_bounds
     }
 
     try self.app.setMousePos(
+        &self.view_state,
         input_state.mouse_pos.x - @as(f32, @floatFromInt(widget_bounds.left)),
         input_state.mouse_pos.y - @as(f32, @floatFromInt(widget_bounds.top)),
     );
@@ -133,17 +140,17 @@ fn trySetInputState(self: *AppWidget, widget_bounds: gui.PixelBBox, input_bounds
         return ret;
     }
 
-    if (input_state.mouse_right_pressed) try self.app.setRightDown();
+    if (input_state.mouse_right_pressed) try self.app.setRightDown(&self.view_state);
     if (input_state.mouse_middle_pressed) self.app.setMiddleDown();
-    if (input_state.mouse_pressed) try self.app.setMouseDown();
+    if (input_state.mouse_pressed) try self.app.setMouseDown(&self.view_state);
 
     for (input_state.key_tracker.pressed_this_frame.items) |key| {
         if (key.key == .ascii) {
-            try self.app.setKeyDown(key.key.ascii, key.ctrl);
+            try self.app.setKeyDown(&self.view_state, key.key.ascii, key.ctrl);
         }
     }
 
-    self.app.scroll(input_state.frame_scroll);
+    self.view_state.zoom(input_state.frame_scroll);
 
     return ret;
 }

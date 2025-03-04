@@ -9,8 +9,8 @@ const PixelDims = obj_mod.PixelDims;
 
 const ViewState = @This();
 
-window_width: usize,
-window_height: usize,
+window_width: usize = 0,
+window_height: usize = 0,
 viewport_center: Vec2 = .{ 0.0, 0.0 },
 zoom_level: f32 = 1.0,
 
@@ -51,7 +51,7 @@ pub fn windowToClipY(self: ViewState, ypos: f32) f32 {
     return (1.0 - (ypos / window_height_f) - 0.5) * 2;
 }
 
-pub fn clipToObject(self: *ViewState, val: Vec2, object_dims: PixelDims) Vec2 {
+pub fn clipToObject(self: ViewState, val: Vec2, object_dims: PixelDims) Vec2 {
     const transform = self.objectToClipTransform(object_dims).invert();
     return sphmath.applyHomogenous(transform.apply(Vec3{ val[0], val[1], 1.0 }));
 }

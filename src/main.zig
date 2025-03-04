@@ -190,8 +190,6 @@ pub fn main() !void {
         &allocators.scratch,
         scratch_gl,
         args.exe_path,
-        window_width,
-        window_height,
     );
     defer app.deinit();
 
@@ -267,6 +265,7 @@ pub fn main() !void {
             switch (action) {
                 .update_selected_object => |id| {
                     app.setSelectedObject(id);
+                    ui.app_widget.reset();
                 },
                 .create_path => {
                     const new_obj = app.createPath() catch |e| {
@@ -274,6 +273,7 @@ pub fn main() !void {
                         break :exec_action;
                     };
                     app.setSelectedObject(new_obj);
+                    ui.app_widget.reset();
                 },
                 .create_composition => {
                     const new_obj = app.addComposition() catch |e| {
@@ -281,6 +281,7 @@ pub fn main() !void {
                         break :exec_action;
                     };
                     app.setSelectedObject(new_obj);
+                    ui.app_widget.reset();
                 },
                 .create_drawing => {
                     const new_obj = app.addDrawing() catch |e| {
@@ -289,6 +290,7 @@ pub fn main() !void {
                     };
 
                     app.setSelectedObject(new_obj);
+                    ui.app_widget.reset();
                 },
                 .create_text => {
                     const new_obj = app.addText() catch |e| {
@@ -296,6 +298,7 @@ pub fn main() !void {
                         break :exec_action;
                     };
                     app.setSelectedObject(new_obj);
+                    ui.app_widget.reset();
                 },
                 .create_shader => |id| {
                     const new_obj = app.addShaderObject("new shader", id) catch |e| {
@@ -303,6 +306,7 @@ pub fn main() !void {
                         break :exec_action;
                     };
                     app.setSelectedObject(new_obj);
+                    ui.app_widget.reset();
                 },
                 .delete_selected_object => {
                     app.deleteSelectedObject() catch |e| {

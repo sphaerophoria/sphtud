@@ -50,7 +50,6 @@ shaders: ShaderStorage(ShaderId),
 brushes: ShaderStorage(BrushId),
 fonts: FontStorage,
 renderer: Renderer,
-view_state: ViewState,
 input_state: InputState = .{},
 tool_params: ToolParams = .{},
 io_alloc: *Sphalloc,
@@ -62,7 +61,7 @@ mul_fragment_shader: ShaderId,
 const shader_alloc_name = "shaders";
 const brush_alloc_name = "brushes";
 
-pub fn init(alloc: RenderAlloc, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc, exe_path: []const u8, window_width: usize, window_height: usize) !App {
+pub fn init(alloc: RenderAlloc, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc, exe_path: []const u8) !App {
     const objects = Objects.init(try alloc.makeSubAlloc("object storage"));
 
     const renderer = try Renderer.init(alloc.gl);
@@ -106,10 +105,6 @@ pub fn init(alloc: RenderAlloc, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAll
         .brushes = brushes,
         .fonts = fonts,
         .renderer = renderer,
-        .view_state = .{
-            .window_width = window_width,
-            .window_height = window_height,
-        },
         .mul_fragment_shader = mul_fragment_shader_id,
         .io_alloc = io_alloc,
         .io_thread = io_thread,
@@ -280,7 +275,7 @@ pub fn load(self: *App, path: []const u8) !void {
     }
 }
 
-pub fn render(self: *App, now: std.time.Instant) !void {
+pub fn render(self: *App, view_state: ViewState, now: std.time.Instant) !void {
     const checkpoint = self.scratch.checkpoint();
     defer self.scratch.restore(checkpoint);
     var frame_renderer = self.renderer.makeFrameRenderer(
@@ -292,7 +287,7 @@ pub fn render(self: *App, now: std.time.Instant) !void {
         self.input_state.mouse_pos,
     );
 
-    const transform = self.view_state.objectToClipTransform(self.selectedDims());
+    const transform = view_state.objectToClipTransform(self.selectedDims());
     try frame_renderer.render(self.input_state.selected_object, transform);
 
     const ui_renderer = self.renderer.makeUiRenderer(self.tool_params, self.input_state.mouse_pos, now);
@@ -310,21 +305,21 @@ pub fn makeFrameRenderer(self: *App, alloc: RenderAlloc) Renderer.FrameRenderer 
     );
 }
 
-pub fn setKeyDown(self: *App, key: u8, ctrl: bool) !void {
+pub fn setKeyDown(self: *App, view_state: *ViewState, key: u8, ctrl: bool) !void {
     const checkpoint = self.scratch.checkpoint();
     defer self.scratch.restore(checkpoint);
 
     var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
 
     const action = try self.input_state.setKeyDown(key, ctrl, &self.objects, &fr);
-    try self.handleInputAction(action);
+    try self.handleInputAction(view_state, action);
 }
 
-pub fn setMouseDown(self: *App) !void {
+pub fn setMouseDown(self: *App, view_state: *ViewState) !void {
     var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
 
     const action = try self.input_state.setMouseDown(self.tool_params, &self.objects, &fr);
-    try self.handleInputAction(action);
+    try self.handleInputAction(view_state, action);
 }
 
 pub fn setMouseUp(self: *App) void {
@@ -339,28 +334,24 @@ pub fn setMiddleUp(self: *App) void {
     self.input_state.setMiddleUp();
 }
 
-pub fn setRightDown(self: *App) !void {
+pub fn setRightDown(self: *App, view_state: *ViewState) !void {
     const input_action = self.input_state.setRightDown();
-    try self.handleInputAction(input_action);
+    try self.handleInputAction(view_state, input_action);
 }
 
 pub fn setSelectedObject(self: *App, id: ObjectId) void {
     self.input_state.selectObject(id, &self.objects);
-    self.view_state.reset();
 }
 
-pub fn scroll(self: *App, amount: f32) void {
-    self.view_state.zoom(amount);
-}
-
-pub fn setMousePos(self: *App, xpos: f32, ypos: f32) !void {
-    const new_x = self.view_state.windowToClipX(xpos);
-    const new_y = self.view_state.windowToClipY(ypos);
+// FIXME: Can we just pass mouse pos in object space here?
+pub fn setMousePos(self: *App, view_state: *ViewState, xpos: f32, ypos: f32) !void {
+    const new_x = view_state.windowToClipX(xpos);
+    const new_y = view_state.windowToClipY(ypos);
     const selected_dims = self.selectedDims();
-    const new_pos = self.view_state.clipToObject(Vec2{ new_x, new_y }, selected_dims);
+    const new_pos = view_state.clipToObject(Vec2{ new_x, new_y }, selected_dims);
     const input_action = self.input_state.setMousePos(self.tool_params, new_pos, &self.objects);
 
-    try self.handleInputAction(input_action);
+    try self.handleInputAction(view_state, input_action);
 }
 
 pub fn createPath(self: *App) !ObjectId {
@@ -805,7 +796,7 @@ const MaskIterator = struct {
     }
 };
 
-fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
+fn handleInputAction(self: *App, view_state: *ViewState, action: ?InputState.InputAction) !void {
     switch (action orelse return) {
         .add_path_elem => |obj_loc| {
             const selected_object = self.selectedObject();
@@ -866,7 +857,7 @@ fn handleInputAction(self: *App, action: ?InputState.InputAction) !void {
             try self.exportImage("image.png");
         },
         .pan => |amount| {
-            self.view_state.pan(amount);
+            view_state.pan(amount);
         },
     }
 }

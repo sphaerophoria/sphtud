@@ -17,6 +17,7 @@ const ScratchAlloc = sphalloc.ScratchAlloc;
 const sphrender = @import("sphrender");
 const RenderAlloc = sphrender.RenderAlloc;
 const GlAlloc = sphrender.GlAlloc;
+const ViewState = sphimp.ViewState;
 
 pub const EglContext = struct {
     display: egl.EGLDisplay,
@@ -79,29 +80,29 @@ pub fn writeDummyImage(alloc: Allocator, path: [:0]const u8) !void {
     }
 }
 
-pub fn inputOnCanvas(app: *App, now: std.time.Instant) !void {
+pub fn inputOnCanvas(app: *App, view_state: *ViewState, now: std.time.Instant) !void {
     const selected_object = app.objects.get(app.input_state.selected_object);
     var new_name_buf: [1024]u8 = undefined;
     const new_name = try std.fmt.bufPrint(&new_name_buf, "{s}1", .{selected_object.name});
     try app.updateSelectedObjectName(new_name);
 
     // Try dragging some stuff around
-    try app.setMousePos(300, 300);
-    try app.setMouseDown();
-    try app.render(now);
+    try app.setMousePos(view_state, 300, 300);
+    try app.setMouseDown(view_state);
+    try app.render(view_state.*, now);
 
-    try app.setMousePos(100, 100);
+    try app.setMousePos(view_state, 100, 100);
     app.setMouseUp();
-    try app.render(now);
+    try app.render(view_state.*, now);
 
     // Try panning
-    try app.setMousePos(100, 100);
+    try app.setMousePos(view_state, 100, 100);
     app.setMiddleDown();
-    try app.render(now);
+    try app.render(view_state.*, now);
 
-    try app.setMousePos(200, 200);
+    try app.setMousePos(view_state, 200, 200);
     app.setMiddleUp();
-    try app.render(now);
+    try app.render(view_state.*, now);
 
     // Render sometimes in debug mode
     if (selected_object.data == .composition) {
@@ -109,35 +110,35 @@ pub fn inputOnCanvas(app: *App, now: std.time.Instant) !void {
     }
 
     // Click the right mouse button a few times (create path elements)
-    try app.setMousePos(400, 400);
-    try app.setRightDown();
-    try app.render(now);
+    try app.setMousePos(view_state, 400, 400);
+    try app.setRightDown(view_state);
+    try app.render(view_state.*, now);
 
-    try app.setMousePos(200, 300);
-    try app.setRightDown();
-    try app.render(now);
+    try app.setMousePos(view_state, 200, 300);
+    try app.setRightDown(view_state);
+    try app.render(view_state.*, now);
 
     const keys = [_]u8{ 'S', 'R' };
     for (keys) |key| {
         // Try to apply transformation to an object
-        try app.setKeyDown(key, false);
-        try app.render(now);
+        try app.setKeyDown(view_state, key, false);
+        try app.render(view_state.*, now);
 
-        try app.setMousePos(400, 400);
-        try app.render(now);
+        try app.setMousePos(view_state, 400, 400);
+        try app.render(view_state.*, now);
 
         // Cancel the transformation
-        try app.setRightDown();
+        try app.setRightDown(view_state);
 
         // Try to apply transformation to an object
-        try app.setKeyDown(key, false);
-        try app.render(now);
+        try app.setKeyDown(view_state, key, false);
+        try app.render(view_state.*, now);
 
-        try app.setMousePos(400, 400);
-        try app.render(now);
+        try app.setMousePos(view_state, 400, 400);
+        try app.render(view_state.*, now);
 
         // Submit the transformation
-        try app.setMouseDown();
+        try app.setMouseDown(view_state);
         app.setMouseUp();
     }
 }
@@ -205,7 +206,7 @@ pub fn main() !void {
 
     const scratch_gl = try root_gl_alloc.makeSubAlloc(&root_alloc);
 
-    var app = try App.init(root_render_alloc, &scratch_alloc, scratch_gl, args[0], 640, 480);
+    var app = try App.init(root_render_alloc, &scratch_alloc, scratch_gl, args[0]);
     defer app.deinit();
 
     var tmpdir = std.testing.tmpDir(.{});
@@ -220,6 +221,11 @@ pub fn main() !void {
 
     const swap_colors_id = try app.addShaderFromFragmentSource("swap colors", swap_colors_frag);
     _ = try app.addBrushFromFragmnetSource("default brush", default_brush);
+
+    var view_state: ViewState = .{
+        .window_width = 800,
+        .window_height = 600,
+    };
 
     const now = try std.time.Instant.now();
 
@@ -272,7 +278,7 @@ pub fn main() !void {
     while (it.next()) |i| {
         scratch_gl.reset();
         app.setSelectedObject(i);
-        try inputOnCanvas(&app, now);
+        try inputOnCanvas(&app, &view_state, now);
     }
 
     var save_path_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -281,13 +287,13 @@ pub fn main() !void {
     try app.save(save_path);
     app.deinit();
 
-    app = try App.init(root_render_alloc, &scratch_alloc, scratch_gl, args[0], 640, 480);
+    app = try App.init(root_render_alloc, &scratch_alloc, scratch_gl, args[0]);
     try app.load(save_path);
 
     it = app.objects.idIter();
     while (it.next()) |i| {
         scratch_gl.reset();
         app.setSelectedObject(i);
-        try inputOnCanvas(&app, now);
+        try inputOnCanvas(&app, &view_state, now);
     }
 }
