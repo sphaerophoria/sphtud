@@ -386,7 +386,6 @@ pub const CompositionObject = struct {
 
     objects: std.ArrayListUnmanaged(ComposedObject) = .{},
     dims: PixelDims = .{ 1920, 1080 },
-    debug_masks: bool = false,
 
     pub fn setTransform(self: *CompositionObject, idx: CompositionIdx, transform: Transform) void {
         const obj = &self.objects.items[idx.value];

@@ -113,7 +113,6 @@ pub const FrameRenderer = struct {
     shaders: *const ShaderStorage(ShaderId),
     brushes: *const ShaderStorage(BrushId),
     texture_cache: TextureCache,
-    mouse_pos: sphmath.Vec2,
 
     pub fn render(self: *FrameRenderer, selected_object: ObjectId, transform: Transform) !void {
         gl.glClearColor(0.0, 0.0, 0.0, 1.0);
@@ -215,21 +214,6 @@ pub const FrameRenderer = struct {
 
                     try self.renderObjectWithTransform(next_object.*, next_transform);
                 }
-
-                if (c.debug_masks) {
-                    // Res?
-                    const output_tex = try self.renderCompositionIdMask(object, 50, self.mouse_pos);
-
-                    const preview_scale = 0.2;
-
-                    const preview_transform = Transform.scale(preview_scale, preview_scale)
-                        .then(Transform.translate(1.0 - preview_scale, preview_scale - 1.0));
-
-                    self.renderer.display_id_program.render(self.renderer.display_id_buffer, .{
-                        .input_image = output_tex,
-                        .transform = preview_transform.inner,
-                    });
-                }
             },
             .filesystem => |f| {
                 self.renderer.sampler_program.render(self.renderer.sampler_buffer, .{
@@ -323,6 +307,15 @@ pub const FrameRenderer = struct {
         return texture;
     }
 
+    pub fn makeUiRenderer(self: *FrameRenderer, tool_params: ToolParams, mouse_pos: sphmath.Vec2, now: std.time.Instant) UiRenderer {
+        return .{
+            .frame_renderer = self,
+            .tool_params = tool_params,
+            .mouse_pos = mouse_pos,
+            .now = now,
+        };
+    }
+
     fn resolveUniform(
         self: *FrameRenderer,
         uniform: UniformValue,
@@ -343,7 +336,14 @@ pub const FrameRenderer = struct {
     }
 };
 
-pub fn makeFrameRenderer(self: *Renderer, alloc: Allocator, gl_alloc: *GlAlloc, objects: *Objects, shaders: *const ShaderStorage(ShaderId), brushes: *const ShaderStorage(BrushId), mouse_pos: sphmath.Vec2) FrameRenderer {
+pub fn makeFrameRenderer(
+    self: *Renderer,
+    alloc: Allocator,
+    gl_alloc: *GlAlloc,
+    objects: *Objects,
+    shaders: *const ShaderStorage(ShaderId),
+    brushes: *const ShaderStorage(BrushId),
+) FrameRenderer {
     return .{
         .alloc = alloc,
         .gl_alloc = gl_alloc,
@@ -352,67 +352,78 @@ pub fn makeFrameRenderer(self: *Renderer, alloc: Allocator, gl_alloc: *GlAlloc, 
         .shaders = shaders,
         .brushes = brushes,
         .texture_cache = TextureCache.init(alloc, objects),
-        .mouse_pos = mouse_pos,
     };
 }
 
 pub const UiRenderer = struct {
-    renderer: *Renderer,
+    frame_renderer: *FrameRenderer,
     tool_params: ToolParams,
     mouse_pos: sphmath.Vec2,
     now: std.time.Instant,
 
-    pub fn render(self: *const UiRenderer, object: Object, transform: Transform) void {
+    pub fn render(self: *const UiRenderer, object: Object, transform: Transform) !void {
         switch (object.data) {
-            .drawing => {},
-            else => return,
-        }
+            .drawing => {
+                switch (self.tool_params.active_drawing_tool) {
+                    .brush => {},
+                    .eraser => blk: {
+                        // Render preview
+                        const inv = transform.invert();
+                        const screen_pos_w = transform.apply(.{ self.mouse_pos[0], self.mouse_pos[1], 1.0 });
+                        const screen_pos = sphmath.applyHomogenous(screen_pos_w);
 
-        switch (self.tool_params.active_drawing_tool) {
-            .brush => {},
-            .eraser => blk: {
-                // Render preview
-                const inv = transform.invert();
-                const screen_pos_w = transform.apply(.{ self.mouse_pos[0], self.mouse_pos[1], 1.0 });
-                const screen_pos = sphmath.applyHomogenous(screen_pos_w);
+                        const mouse_off_screen = screen_pos[0] < -1.0 or screen_pos[0] > 1.0 or
+                            screen_pos[1] < -1.0 or screen_pos[1] > 1.0;
 
-                const mouse_off_screen = screen_pos[0] < -1.0 or screen_pos[0] > 1.0 or
-                    screen_pos[1] < -1.0 or screen_pos[1] > 1.0;
+                        const renderer = self.frame_renderer.renderer;
 
-                const wants_preview = self.renderer.eraser_preview_start != null and self.now.since(self.renderer.eraser_preview_start.?) < 500 * std.time.ns_per_ms;
+                        const wants_preview = renderer.eraser_preview_start != null and self.now.since(renderer.eraser_preview_start.?) < 500 * std.time.ns_per_ms;
 
-                // FIXME: Obviously split a fn
-                const eraser_preview_center: sphmath.Vec2 =
-                    if (mouse_off_screen and wants_preview)
-                    sphmath.applyHomogenous(inv.apply(.{ 0.0, 0.0, 1.0 }))
-                else if (!mouse_off_screen)
-                    self.mouse_pos
-                else
-                    break :blk;
+                        // FIXME: Obviously split a fn
+                        const eraser_preview_center: sphmath.Vec2 =
+                            if (mouse_off_screen and wants_preview)
+                            sphmath.applyHomogenous(inv.apply(.{ 0.0, 0.0, 1.0 }))
+                        else if (!mouse_off_screen)
+                            self.mouse_pos
+                        else
+                            break :blk;
 
-                const preview_transform = Transform.scale(
-                    self.tool_params.eraser_width,
-                    self.tool_params.eraser_width,
-                )
-                    .then(Transform.translate(eraser_preview_center[0], eraser_preview_center[1]))
-                    .then(transform);
+                        const preview_transform = Transform.scale(
+                            self.tool_params.eraser_width,
+                            self.tool_params.eraser_width,
+                        )
+                            .then(Transform.translate(eraser_preview_center[0], eraser_preview_center[1]))
+                            .then(transform);
 
-                self.renderer.eraser_preview_program.render(self.renderer.eraser_preview_buffer, .{
-                    .transform = preview_transform.inner,
-                });
+                        renderer.eraser_preview_program.render(renderer.eraser_preview_buffer, .{
+                            .transform = preview_transform.inner,
+                        });
+                    },
+                }
             },
+            .composition => {
+                if (self.tool_params.composition_debug) {
+                    // Res?
+                    const output_tex = try self.frame_renderer.renderCompositionIdMask(object, 50, self.mouse_pos);
+
+                    const preview_scale = 0.2;
+
+                    const preview_transform = Transform.scale(preview_scale, preview_scale)
+                        .then(Transform.translate(1.0 - preview_scale, preview_scale - 1.0));
+
+                    const renderer = self.frame_renderer.renderer;
+
+                    renderer.display_id_program.render(renderer.display_id_buffer, .{
+                        .input_image = output_tex,
+                        .transform = preview_transform.inner,
+                    });
+                }
+            },
+            else => return,
         }
     }
 };
 
-pub fn makeUiRenderer(self: *Renderer, tool_params: ToolParams, mouse_pos: sphmath.Vec2, now: std.time.Instant) UiRenderer {
-    return .{
-        .renderer = self,
-        .tool_params = tool_params,
-        .mouse_pos = mouse_pos,
-        .now = now,
-    };
-}
 pub const UniformValue = union(UniformType) {
     image: ?ObjectId,
     float: f32,

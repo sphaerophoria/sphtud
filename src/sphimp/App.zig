@@ -167,7 +167,6 @@ pub fn exportImage(self: *App, path: [:0]const u8) !void {
         &self.objects,
         &self.shaders,
         &self.brushes,
-        self.input_state.mouse_pos,
     );
 
     const texture = try fr.renderObjectToTexture(self.selectedObject().*);
@@ -285,14 +284,13 @@ pub fn render(self: *App, view_state: ViewState, now: std.time.Instant) !void {
         &self.objects,
         &self.shaders,
         &self.brushes,
-        self.input_state.mouse_pos,
     );
 
     const transform = view_state.objectToClipTransform(self.selectedDims());
     try frame_renderer.render(self.input_state.selected_object, transform);
 
-    const ui_renderer = self.renderer.makeUiRenderer(self.tool_params, self.input_state.mouse_pos, now);
-    ui_renderer.render(self.objects.get(self.input_state.selected_object).*, transform);
+    const ui_renderer = frame_renderer.makeUiRenderer(self.tool_params, self.input_state.mouse_pos, now);
+    try ui_renderer.render(self.objects.get(self.input_state.selected_object).*, transform);
 }
 
 pub fn makeFrameRenderer(self: *App, alloc: RenderAlloc) Renderer.FrameRenderer {
@@ -302,7 +300,6 @@ pub fn makeFrameRenderer(self: *App, alloc: RenderAlloc) Renderer.FrameRenderer 
         &self.objects,
         &self.shaders,
         &self.brushes,
-        self.input_state.mouse_pos,
     );
 }
 
@@ -310,14 +307,14 @@ pub fn setKeyDown(self: *App, view_state: *ViewState, key: u8, ctrl: bool) !void
     const checkpoint = self.scratch.checkpoint();
     defer self.scratch.restore(checkpoint);
 
-    var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
+    var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, &self.objects, &self.shaders, &self.brushes);
 
     const action = try self.input_state.setKeyDown(key, ctrl, &self.objects, &fr);
     try self.handleInputAction(view_state, action);
 }
 
 pub fn setMouseDown(self: *App, view_state: *ViewState) !void {
-    var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, &self.objects, &self.shaders, &self.brushes, self.input_state.mouse_pos);
+    var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, &self.objects, &self.shaders, &self.brushes);
 
     const action = try self.input_state.setMouseDown(self.tool_params, &self.objects, &fr);
     try self.handleInputAction(view_state, action);
@@ -531,8 +528,7 @@ pub fn deleteFromComposition(self: *App, id: obj_mod.CompositionIdx) !void {
 }
 
 pub fn toggleCompositionDebug(self: *App) !void {
-    const composition = self.selectedObject().asComposition() orelse return error.NotComposition;
-    composition.debug_masks = !composition.debug_masks;
+    self.tool_params.composition_debug = !self.tool_params.composition_debug;
 }
 
 pub fn addComposition(self: *App) !ObjectId {

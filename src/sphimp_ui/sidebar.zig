@@ -199,12 +199,14 @@ pub const Handle = struct {
                         app: *App,
 
                         pub fn checked(r: @This()) bool {
-                            const composition = r.app.selectedObject().asComposition() orelse return false;
-                            return composition.debug_masks;
+                            return r.app.tool_params.composition_debug;
                         }
                     };
 
-                    const debug_checkbox = try self.removable_content_widget_factory.makeCheckbox(CheckedRetriever{ .app = self.app }, UiAction.toggle_composition_debug);
+                    const debug_checkbox = try self.removable_content_widget_factory.makeCheckbox(
+                        CheckedRetriever{ .app = self.app },
+                        UiAction.toggle_composition_debug,
+                    );
                     try property_list.pushWidget(debug_label);
                     try property_list.pushWidget(debug_checkbox);
                 }
