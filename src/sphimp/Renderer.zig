@@ -6,6 +6,7 @@ const shader_storage = @import("shader_storage.zig");
 const sphrender = @import("sphrender");
 const sphmath = @import("sphmath");
 const sphtext = @import("sphtext");
+const sphutil = @import("sphutil");
 const tool = @import("tool.zig");
 const ToolParams = tool.ToolParams;
 const TextRenderer = sphtext.TextRenderer;
@@ -106,7 +107,7 @@ pub fn init(gl_alloc: *GlAlloc) !Renderer {
 }
 
 pub const FrameRenderer = struct {
-    alloc: Allocator,
+    scratch: Allocator,
     gl_alloc: *GlAlloc,
     renderer: *Renderer,
     objects: *Objects,
@@ -222,8 +223,10 @@ pub const FrameRenderer = struct {
                 });
             },
             .shader => |s| {
-                var sources = std.ArrayList(ResolvedUniformValue).init(self.alloc);
-                defer sources.deinit();
+                var sources = try sphutil.RuntimeBoundedArray(ResolvedUniformValue).init(
+                    self.scratch,
+                    s.bindings.len,
+                );
 
                 for (s.bindings) |binding| {
                     try sources.append(try self.resolveUniform(binding));
@@ -258,8 +261,10 @@ pub const FrameRenderer = struct {
                 const dims = display_object.dims(self.objects);
                 try self.renderObjectWithTransform(display_object.*, transform);
 
-                var sources = std.ArrayList(ResolvedUniformValue).init(self.alloc);
-                defer sources.deinit();
+                var sources = try sphutil.RuntimeBoundedArray(ResolvedUniformValue).init(
+                    self.scratch,
+                    d.bindings.len,
+                );
 
                 for (d.bindings) |binding| {
                     try sources.append(try self.resolveUniform(binding));
@@ -336,22 +341,25 @@ pub const FrameRenderer = struct {
     }
 };
 
+// Scratch and gpa are allowed to be the same, but it means that framerenderer
+// never resets the scratch area
 pub fn makeFrameRenderer(
     self: *Renderer,
-    alloc: Allocator,
+    gpa: Allocator,
     gl_alloc: *GlAlloc,
+    scratch: Allocator,
     objects: *Objects,
     shaders: *const ShaderStorage(ShaderId),
     brushes: *const ShaderStorage(BrushId),
 ) FrameRenderer {
     return .{
-        .alloc = alloc,
+        .scratch = scratch,
         .gl_alloc = gl_alloc,
         .renderer = self,
         .objects = objects,
         .shaders = shaders,
         .brushes = brushes,
-        .texture_cache = TextureCache.init(alloc, objects),
+        .texture_cache = TextureCache.init(gpa, objects),
     };
 }
 

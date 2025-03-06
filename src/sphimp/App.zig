@@ -164,6 +164,7 @@ pub fn exportImage(self: *App, path: [:0]const u8) !void {
     var fr = self.renderer.makeFrameRenderer(
         self.scratch.heap.allocator(),
         self.scratch.gl,
+        self.scratch.heap.allocator(),
         &self.objects,
         &self.shaders,
         &self.brushes,
@@ -281,6 +282,7 @@ pub fn render(self: *App, view_state: ViewState, now: std.time.Instant) !void {
     var frame_renderer = self.renderer.makeFrameRenderer(
         self.scratch.heap.allocator(),
         self.scratch.gl,
+        self.scratch.heap.allocator(),
         &self.objects,
         &self.shaders,
         &self.brushes,
@@ -297,6 +299,7 @@ pub fn makeFrameRenderer(self: *App, alloc: RenderAlloc) Renderer.FrameRenderer 
     return self.renderer.makeFrameRenderer(
         alloc.heap.general(),
         alloc.gl,
+        self.scratch.heap.allocator(),
         &self.objects,
         &self.shaders,
         &self.brushes,
@@ -307,14 +310,21 @@ pub fn setKeyDown(self: *App, view_state: *ViewState, key: u8, ctrl: bool) !void
     const checkpoint = self.scratch.checkpoint();
     defer self.scratch.restore(checkpoint);
 
-    var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, &self.objects, &self.shaders, &self.brushes);
+    var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, self.scratch.heap.allocator(), &self.objects, &self.shaders, &self.brushes);
 
     const action = try self.input_state.setKeyDown(key, ctrl, &self.objects, &fr);
     try self.handleInputAction(view_state, action);
 }
 
 pub fn setMouseDown(self: *App, view_state: *ViewState) !void {
-    var fr = self.renderer.makeFrameRenderer(self.scratch.heap.allocator(), self.scratch.gl, &self.objects, &self.shaders, &self.brushes);
+    var fr = self.renderer.makeFrameRenderer(
+        self.scratch.heap.allocator(),
+        self.scratch.gl,
+        self.scratch.heap.allocator(),
+        &self.objects,
+        &self.shaders,
+        &self.brushes,
+    );
 
     const action = try self.input_state.setMouseDown(self.tool_params, &self.objects, &fr);
     try self.handleInputAction(view_state, action);
