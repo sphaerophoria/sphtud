@@ -5,6 +5,7 @@ pub const shader_program = @import("shader_program.zig");
 pub const xyuvt_program = @import("xyuvt.zig");
 pub const xyt_program = @import("xyt.zig");
 pub const GlAlloc = @import("GlAlloc.zig");
+pub const Scratch = @import("Scratch.zig");
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

@@ -27,6 +27,7 @@ const GlAlloc = sphrender.GlAlloc;
 const sphalloc = @import("sphalloc");
 const ScratchAlloc = sphalloc.ScratchAlloc;
 const Sphalloc = sphalloc.Sphalloc;
+const RenderScratch = sphrender.Scratch;
 
 const Object = obj_mod.Object;
 const ObjectId = obj_mod.ObjectId;
@@ -44,7 +45,7 @@ const BrushId = shader_storage.BrushId;
 const App = @This();
 
 alloc: RenderAlloc,
-scratch: Scratch,
+scratch: RenderScratch,
 objects: Objects,
 shaders: ShaderStorage(ShaderId),
 brushes: ShaderStorage(BrushId),
@@ -1006,28 +1007,6 @@ const IoThread = struct {
             }
             self.cv.wait(&self.mutex);
         }
-    }
-};
-
-const Scratch = struct {
-    heap: *ScratchAlloc,
-    gl: *GlAlloc,
-
-    const Checkpoint = struct {
-        heap: ScratchAlloc.Checkpoint,
-        gl: GlAlloc.Checkpoint,
-    };
-
-    fn checkpoint(self: Scratch) Checkpoint {
-        return .{
-            .heap = self.heap.checkpoint(),
-            .gl = self.gl.checkpoint(),
-        };
-    }
-
-    fn restore(self: *Scratch, from: Checkpoint) void {
-        self.heap.restore(from.heap);
-        self.gl.restore(from.gl);
     }
 };
 
