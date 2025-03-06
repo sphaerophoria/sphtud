@@ -184,6 +184,10 @@ pub fn Grid(comptime Action: type) type {
                 if (item_response.action != null) {
                     ret.action = item_response.action;
                 }
+
+                if (item_response.cursor_style != null) {
+                    ret.cursor_style = item_response.cursor_style;
+                }
             }
 
             return ret;

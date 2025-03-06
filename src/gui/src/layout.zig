@@ -139,6 +139,10 @@ pub fn Layout(comptime Action: type) type {
                 if (input_response.action) |action| {
                     ret.action = action;
                 }
+
+                if (input_response.cursor_style) |cursor_style| {
+                    ret.cursor_style = cursor_style;
+                }
             }
 
             return ret;

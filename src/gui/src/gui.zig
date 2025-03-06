@@ -20,7 +20,6 @@ pub const selectable_list = @import("selectable_list.zig");
 pub const SquircleRenderer = @import("SquircleRenderer.zig");
 pub const widget_factory = @import("widget_factory.zig");
 pub const runner = @import("runner.zig");
-pub const even_vert_layout = @import("even_vert_layout.zig");
 pub const frame = @import("frame.zig");
 pub const null_widget = @import("null.zig");
 pub const combo_box = @import("combo_box.zig");
@@ -268,10 +267,16 @@ pub const PixelBBox = struct {
     }
 };
 
+pub const CursorStyle = enum {
+    default,
+    hidden,
+};
+
 pub fn InputResponse(comptime Action: type) type {
     return struct {
         wants_focus: bool = false,
         action: ?Action = null,
+        cursor_style: ?CursorStyle = null,
     };
 }
 

@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const gui = @import("gui.zig");
+const CursorStyle = gui.CursorStyle;
 
 pub fn Runner(comptime Action: type) type {
     return struct {
@@ -18,7 +19,12 @@ pub fn Runner(comptime Action: type) type {
             };
         }
 
-        pub fn step(self: *Self, delta_s: f32, window_size: gui.PixelSize, input_queue: anytype) !?Action {
+        pub const Response = struct {
+            action: ?Action,
+            cursor_style: ?CursorStyle,
+        };
+
+        pub fn step(self: *Self, delta_s: f32, window_size: gui.PixelSize, input_queue: anytype) !Response {
             try self.root.update(window_size, delta_s);
 
             self.input_state.startFrame();
@@ -45,7 +51,10 @@ pub fn Runner(comptime Action: type) type {
             const input_response = self.root.setInputState(widget_bounds, widget_bounds, self.input_state);
             self.root.setFocused(input_response.wants_focus);
             self.root.render(widget_bounds, window_bounds);
-            return input_response.action;
+            return .{
+                .action = input_response.action,
+                .cursor_style = input_response.cursor_style,
+            };
         }
     };
 }

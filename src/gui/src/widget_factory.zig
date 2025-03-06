@@ -133,13 +133,6 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
         .squircle_renderer = &ret.squircle_renderer,
     };
 
-    ret.even_vert_layout_shared = gui.even_vert_layout.Shared{
-        .corner_radius = 0,
-        .border_size = @intFromFloat(unit / 2),
-        .border_color = StyleColors.background_color3,
-        .squircle_renderer = &ret.squircle_renderer,
-    };
-
     ret.combo_box_shared = try gui.combo_box.Shared(Action).init(
         .{
             .gl_alloc = gui_alloc.gl,
@@ -253,7 +246,6 @@ pub fn WidgetState(comptime Action: type) type {
         shared_textbox_state: gui.textbox.SharedTextboxState,
         shared_selecatble_list_state: gui.selectable_list.SharedState,
         frame_shared: gui.frame.Shared,
-        even_vert_layout_shared: gui.even_vert_layout.Shared,
         combo_box_shared: gui.combo_box.Shared(Action),
         checkbox_shared: gui.checkbox.Shared,
         memory_widget_shared: gui.memory_widget.Shared,

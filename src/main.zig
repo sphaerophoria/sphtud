@@ -261,7 +261,9 @@ pub fn main() !void {
 
         const selected_object = ui.app_widget.selectedObjectPtr();
         var next_object = selected_object.*;
-        if (try ui.runner.step(delta_s, window_size, &window.queue)) |action| exec_action: {
+
+        const step_response = try ui.runner.step(delta_s, window_size, &window.queue);
+        if (step_response.action) |action| exec_action: {
             switch (action) {
                 .update_selected_object => |id| {
                     next_object = id;
@@ -413,6 +415,13 @@ pub fn main() !void {
                     app.tool_params.eraser_width = @max(size, 0.0);
                     app.renderer.eraser_preview_start = try std.time.Instant.now();
                 },
+            }
+        }
+
+        if (step_response.cursor_style) |style| {
+            switch (style) {
+                .default => window.enableCursor(),
+                .hidden => window.disableCursor(),
             }
         }
 

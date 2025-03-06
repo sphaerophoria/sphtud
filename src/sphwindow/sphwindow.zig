@@ -66,6 +66,14 @@ pub const Window = struct {
         glfwb.glfwSwapBuffers(self.window);
         glfwb.glfwPollEvents();
     }
+
+    pub fn enableCursor(self: *Window) void {
+        glfwb.glfwSetInputMode(self.window, glfwb.GLFW_CURSOR, glfwb.GLFW_CURSOR_NORMAL);
+    }
+
+    pub fn disableCursor(self: *Window) void {
+        glfwb.glfwSetInputMode(self.window, glfwb.GLFW_CURSOR, glfwb.GLFW_CURSOR_DISABLED);
+    }
 };
 
 fn logError(comptime msg: []const u8, e: anyerror, trace: ?*std.builtin.StackTrace) void {
