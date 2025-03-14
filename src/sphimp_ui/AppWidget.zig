@@ -136,7 +136,12 @@ fn trySetInputState(self: *AppWidget, widget_bounds: gui.PixelBBox, input_bounds
     if (input_state.mouse_released) {
         if (input_bounds.containsMousePos(input_state.mouse_pos)) {
             if (self.drag_source.*) |id| {
-                ret = UiAction{ .add_to_composition = id };
+                ret = UiAction{
+                    .add_to_composition = .{
+                        .composition = self.app_view.selectedObjectId(),
+                        .to_add = id,
+                    },
+                };
             }
         }
         self.app_view.setMouseUp();

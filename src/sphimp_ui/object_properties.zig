@@ -55,10 +55,15 @@ pub const PropertyWidgetGenerator = struct {
                 .uniform_idx = uniform_idx,
                 .float_idx = 0,
             },
-            ui_action.ShaderFloat{
-                .uniform_idx = uniform_idx,
-                .float_idx = 0,
-            },
+            ui_action.bundledFloatParam(
+                .update_shader_float,
+                "val",
+                .{
+                    .object = self.selected_object,
+                    .uniform_idx = uniform_idx,
+                    .float_idx = 0,
+                },
+            ),
             drag_speed,
         );
         try self.property_list.pushWidget(uniform_label);
@@ -83,10 +88,15 @@ pub const PropertyWidgetGenerator = struct {
                     .uniform_idx = uniform_idx,
                     .float_idx = idx,
                 },
-                ui_action.ShaderFloat{
-                    .uniform_idx = uniform_idx,
-                    .float_idx = idx,
-                },
+                ui_action.bundledFloatParam(
+                    .update_shader_float,
+                    "val",
+                    .{
+                        .object = self.selected_object,
+                        .uniform_idx = uniform_idx,
+                        .float_idx = idx,
+                    },
+                ),
                 drag_speed,
             );
 
@@ -104,7 +114,10 @@ pub const PropertyWidgetGenerator = struct {
                 .id = self.selected_object,
                 .uniform_idx = uniform_idx,
             },
-            ui_action.ShaderColor{ .uniform_idx = uniform_idx },
+            ui_action.ShaderColor{
+                .uniform_idx = uniform_idx,
+                .object = self.selected_object,
+            },
         );
 
         try self.property_list.pushWidget(uniform_label);
@@ -140,6 +153,7 @@ const ShaderSelectableListGenerator = struct {
             list_io.objectListRetriever(ShaderImage{ .id = self.id, .uniform_idx = self.uniform_idx }, self.app),
             ui_action.ShaderImage{
                 .app = self.app,
+                .object = self.id,
                 .uniform_idx = self.uniform_idx,
             },
         );

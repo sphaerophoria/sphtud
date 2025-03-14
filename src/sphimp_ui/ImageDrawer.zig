@@ -408,14 +408,26 @@ const CreateObjectListGenerator = struct {
             try factory.makeSelectableList(
                 list_io.ShaderListRetriever{ .app = self.app },
                 list_io.itListAction(
-                    &self.app.shaders,
-                    &sphimp.shader_storage.ShaderStorage(sphimp.shader_storage.ShaderId).idIter,
-                    .create_shader,
+                    ListCtx{ .app = self.app },
                 ),
             ),
         );
         return layout.asWidget();
     }
+
+    const ListCtx = struct {
+        app: *App,
+
+        pub fn makeIt(self: ListCtx) sphimp.shader_storage.ShaderStorage(sphimp.shader_storage.ShaderId).ShaderIdIterator {
+            return self.app.shaders.idIter();
+        }
+
+        pub fn makeAction(_: ListCtx, id: sphimp.shader_storage.ShaderId) UiAction {
+            return .{
+                .create_shader = id,
+            };
+        }
+    };
 
     const NewItemListRetriever = struct {
         pub fn selectedId(_: NewItemListRetriever) usize {

@@ -42,7 +42,8 @@ pub fn makeButton(
 ) !Widget(Action) {
     const label = try label_mod.makeLabel(Action, alloc, text_retriever, shared.text_shared);
 
-    const button = try alloc.heap.arena().create(Button(Action));
+    const T = Button(Action, @TypeOf(click_action));
+    const button = try alloc.heap.arena().create(T);
     button.* = .{
         .label = label,
         .click_action = click_action,
@@ -50,17 +51,17 @@ pub fn makeButton(
     };
 
     return .{
-        .vtable = &Button(Action).widget_vtable,
+        .vtable = &T.widget_vtable,
         .name = "button",
         .ctx = @ptrCast(button),
     };
 }
 
-pub fn Button(comptime Action: type) type {
+pub fn Button(comptime Action: type, comptime ActionGenerator: type) type {
     return struct {
         label: Widget(Action),
 
-        click_action: Action,
+        click_action: ActionGenerator,
 
         shared: *const SharedButtonState,
 
@@ -112,7 +113,7 @@ pub fn Button(comptime Action: type) type {
                 self.state = .clicked;
 
                 if (input_state.mouse_released) {
-                    ret = self.click_action;
+                    ret = getAction(Action, &self.click_action);
                 }
             } else if (cursor_in_box) {
                 self.state = .hovered;
@@ -142,4 +143,20 @@ pub fn Button(comptime Action: type) type {
             self.label.render(label_bounds, window);
         }
     };
+}
+
+fn getAction(comptime Action: type, generator: anytype) Action {
+    const Ptr = @TypeOf(generator);
+    const T = @typeInfo(Ptr).Pointer.child;
+
+    switch (@typeInfo(T)) {
+        .Struct => {
+            if (@hasDecl(T, "generate")) {
+                return generator.generate();
+            }
+        },
+        else => {},
+    }
+
+    return generator.*;
 }

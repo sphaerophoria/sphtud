@@ -123,23 +123,21 @@ pub const BrushRetriever = struct {
 ///
 /// We handle this automatically by making an iterator, advancing it N times,
 /// and creating the requested action type
-pub fn ItListAction(comptime Ctx: type, comptime MakeIt: type, comptime tag: UiActionType) type {
+pub fn ItListAction(comptime Ctx: type) type {
     return struct {
         ctx: Ctx,
-        makeIt: MakeIt,
 
         pub fn generate(self: @This(), idx: usize) UiAction {
-            var it = self.makeIt(self.ctx.*);
+            var it = self.ctx.makeIt();
             const id = idxToId(@TypeOf(it.next().?), idx, &it);
-            return @unionInit(UiAction, @tagName(tag), id);
+            return self.ctx.makeAction(id);
         }
     };
 }
 
-pub fn itListAction(ctx: anytype, makeIt: anytype, comptime tag: UiActionType) ItListAction(@TypeOf(ctx), @TypeOf(makeIt), tag) {
+pub fn itListAction(ctx: anytype) ItListAction(@TypeOf(ctx)) {
     return .{
         .ctx = ctx,
-        .makeIt = makeIt,
     };
 }
 

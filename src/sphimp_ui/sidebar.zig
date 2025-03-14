@@ -81,14 +81,17 @@ fn makeObjectProperties(app: *App, selected_object: *ObjectId, widget_factory: g
             const name_label = try widget_factory.makeLabel("Name");
             const name_box = try widget_factory.makeTextbox(
                 label_adaptors.SelectedObjectName.init(app, selected_object),
-                &UiAction.makeEditName,
+                ui_action.TextEditRequestGenerator(.edit_object_name){ .id = selected_object },
             );
             try property_list.pushWidget(name_label);
             try property_list.pushWidget(name_box);
         }
 
         {
-            const delete_button = try widget_factory.makeButton("Delete", .delete_selected_object);
+            const delete_button = try widget_factory.makeButton(
+                "Delete",
+                ui_action.DeleteObjectGenerator{ .id = selected_object },
+            );
             try property_list.pushWidget(gui.null_widget.makeNull(UiAction));
             try property_list.pushWidget(delete_button);
         }
@@ -175,7 +178,7 @@ pub const Handle = struct {
                     const width_label = try self.removable_content_widget_factory.makeLabel("Width");
                     const width_dragger = try self.removable_content_widget_factory.makeDragFloat(
                         float_adaptors.SelectedObjectWidth.init(self.app, id),
-                        &UiAction.makeUpdateCompositionWidth,
+                        ui_action.bundledFloatParam(.update_composition_width, "width", .{ .object = id.* }),
                         1.0,
                     );
                     try property_list.pushWidget(width_label);
@@ -186,7 +189,7 @@ pub const Handle = struct {
                     const height_label = try self.removable_content_widget_factory.makeLabel("Height");
                     const height_dragger = try self.removable_content_widget_factory.makeDragFloat(
                         float_adaptors.SelectedObjectHeight.init(self.app, id),
-                        &UiAction.makeUpdateCompositionHeight,
+                        ui_action.bundledFloatParam(.update_composition_height, "height", .{ .object = id.* }),
                         1.0,
                     );
                     try property_list.pushWidget(height_label);
@@ -212,35 +215,17 @@ pub const Handle = struct {
                     try property_list.pushWidget(debug_checkbox);
                 }
 
-                {
-                    const add_label = try self.removable_content_widget_factory.makeLabel("Add");
-
-                    const preview = try self.removable_content_widget_factory.makeLabel(
-                        "Select to add",
-                    );
-
-                    const RetrieverCtx = struct {
-                        pub fn selectedObject(_: @This(), _: *App) ?ObjectId {
-                            return null;
-                        }
-                    };
-
-                    const add_combobox = try self.removable_content_widget_factory.makeComboBox(
-                        preview,
-                        objectListGenerator(
-                            .add_to_composition,
-                            self.removable_content_widget_factory.state,
-                            self.app,
-                            RetrieverCtx{},
-                        ),
-                    );
-                    try property_list.pushWidget(add_label);
-                    try property_list.pushWidget(add_combobox);
-                }
-
                 for (0..comp.objects.items.len) |comp_idx| {
                     const name_label = try self.removable_content_widget_factory.makeLabel(label_adaptors.CompositionObjName.init(self.app, id.*, comp_idx));
-                    const delete_button = try self.removable_content_widget_factory.makeButton("Delete", .{ .delete_from_composition = comp_idx });
+                    const delete_button = try self.removable_content_widget_factory.makeButton(
+                        "Delete",
+                        .{
+                            .delete_from_composition = .{
+                                .composition = id.*,
+                                .idx = .{ .value = comp_idx },
+                            },
+                        },
+                    );
                     try property_list.pushWidget(name_label);
                     try property_list.pushWidget(delete_button);
                 }
@@ -259,12 +244,11 @@ pub const Handle = struct {
 
                     const combobox = try self.removable_content_widget_factory.makeComboBox(
                         preview,
-                        objectListGenerator(
-                            .update_drawing_source,
-                            self.removable_content_widget_factory.state,
-                            self.app,
-                            DrawingDisplayObjectCtx{ .id = id.* },
-                        ),
+                        UpdateDrawingSourceListGenerator{
+                            .widget_state = self.removable_content_widget_factory.state,
+                            .app = self.app,
+                            .drawing = id.*,
+                        },
                     );
                     try property_list.pushWidget(source_label);
                     try property_list.pushWidget(combobox);
@@ -361,12 +345,11 @@ pub const Handle = struct {
                     try self.removable_content_widget_factory.makeLabel(
                         label_adaptors.PathDisplayObjectName{ .app = self.app, .id = id.* },
                     ),
-                    objectListGenerator(
-                        .update_path_source,
-                        self.removable_content_widget_factory.state,
-                        self.app,
-                        PathDisplayObjectCtx{ .id = id.* },
-                    ),
+                    UpdatePathSourceListGenerator{
+                        .widget_state = self.removable_content_widget_factory.state,
+                        .app = self.app,
+                        .path = id.*,
+                    },
                 );
 
                 try property_list.pushWidget(source_label);
@@ -377,7 +360,7 @@ pub const Handle = struct {
                     const key = try self.removable_content_widget_factory.makeLabel("Text");
                     const value_widget = try self.removable_content_widget_factory.makeTextbox(
                         label_adaptors.TextObjectContent.init(self.app, id.*),
-                        &UiAction.makeTextObjChange,
+                        ui_action.TextEditRequestGenerator(.edit_text_obj_content){ .id = id },
                     );
                     try property_list.pushWidget(key);
                     try property_list.pushWidget(value_widget);
@@ -403,7 +386,7 @@ pub const Handle = struct {
                     const key = try self.removable_content_widget_factory.makeLabel("Font size");
                     const value_widget = try self.removable_content_widget_factory.makeDragFloat(
                         &t.renderer.point_size,
-                        &UiAction.makeChangeTextSize,
+                        ui_action.UpdateTextSizeGenerator{ .id = id.* },
                         0.05,
                     );
                     try property_list.pushWidget(key);
@@ -559,11 +542,27 @@ const FontListGenerator = struct {
     app: *App,
     id: ObjectId,
 
+    const ListCtx = struct {
+        app: *App,
+        id: ObjectId,
+
+        pub fn makeIt(self: ListCtx) FontStorage.IdIter {
+            return self.app.fonts.idIter();
+        }
+
+        pub fn makeAction(self: ListCtx, font_id: FontStorage.FontId) UiAction {
+            return .{ .update_selected_font = .{
+                .object = self.id,
+                .font = font_id,
+            } };
+        }
+    };
+
     pub fn makeWidget(self: FontListGenerator, alloc: gui.GuiAlloc) !gui.Widget(UiAction) {
         const factory = self.widget_state.factory(alloc);
         return try factory.makeSelectableList(
             list_io.FontRetriever{ .app = self.app, .id = self.id },
-            list_io.itListAction(&self.app.fonts, &FontStorage.idIter, .update_selected_font),
+            list_io.itListAction(ListCtx{ .app = self.app, .id = self.id }),
         );
     }
 };
@@ -586,45 +585,116 @@ const DrawingDisplayObjectCtx = struct {
     }
 };
 
-fn ObjectListGenerator(comptime RetrieverCtx: type, comptime action: ui_action.UiActionType) type {
-    return struct {
-        widget_state: *gui.widget_factory.WidgetState(UiAction),
-        app: *App,
-        ctx: RetrieverCtx,
-
-        pub fn makeWidget(self: @This(), alloc: gui.GuiAlloc) !gui.Widget(UiAction) {
-            const factory = self.widget_state.factory(alloc);
-            return try factory.makeSelectableList(
-                list_io.objectListRetriever(self.ctx, self.app),
-                list_io.itListAction(&self.app.objects, &sphimp.object.Objects.idIter, action),
-            );
-        }
-    };
-}
-
-fn objectListGenerator(
-    comptime action: ui_action.UiActionType,
+const UpdatePathSourceListGenerator = struct {
     widget_state: *gui.widget_factory.WidgetState(UiAction),
     app: *App,
-    ctx: anytype,
-) ObjectListGenerator(@TypeOf(ctx), action) {
-    return .{
-        .widget_state = widget_state,
-        .app = app,
-        .ctx = ctx,
+    path: ObjectId,
+
+    const RetrieverCtx = struct {
+        path: ObjectId,
+
+        pub fn selectedObject(self: RetrieverCtx, app: *App) ?ObjectId {
+            const path = app.objects.get(self.path).asPath() orelse return null;
+            return path.display_object;
+        }
     };
-}
+
+    const ListCtx = struct {
+        app: *App,
+        id: ObjectId,
+
+        pub fn makeIt(self: ListCtx) sphimp.object.Objects.IdIter {
+            return self.app.objects.idIter();
+        }
+
+        pub fn makeAction(self: ListCtx, source: ObjectId) UiAction {
+            return .{
+                .update_path_source = .{
+                    .object = self.id,
+                    .source = source,
+                },
+            };
+        }
+    };
+
+    pub fn makeWidget(self: @This(), alloc: gui.GuiAlloc) !gui.Widget(UiAction) {
+        const factory = self.widget_state.factory(alloc);
+        return try factory.makeSelectableList(
+            list_io.objectListRetriever(RetrieverCtx{ .path = self.path }, self.app),
+            list_io.itListAction(ListCtx{ .app = self.app, .id = self.path }),
+        );
+    }
+};
+
+const UpdateDrawingSourceListGenerator = struct {
+    widget_state: *gui.widget_factory.WidgetState(UiAction),
+    app: *App,
+    drawing: ObjectId,
+
+    const RetrieverCtx = struct {
+        drawing: ObjectId,
+
+        pub fn selectedObject(self: RetrieverCtx, app: *App) ?ObjectId {
+            const drawing = app.objects.get(self.drawing).asPath() orelse return null;
+            return drawing.display_object;
+        }
+    };
+
+    const ListCtx = struct {
+        app: *App,
+        id: ObjectId,
+
+        pub fn makeIt(self: ListCtx) sphimp.object.Objects.IdIter {
+            return self.app.objects.idIter();
+        }
+
+        pub fn makeAction(self: ListCtx, source: ObjectId) UiAction {
+            return .{
+                .update_drawing_source = .{
+                    .drawing = self.id,
+                    .source = source,
+                },
+            };
+        }
+    };
+
+    pub fn makeWidget(self: @This(), alloc: gui.GuiAlloc) !gui.Widget(UiAction) {
+        const factory = self.widget_state.factory(alloc);
+        return try factory.makeSelectableList(
+            list_io.objectListRetriever(RetrieverCtx{ .drawing = self.drawing }, self.app),
+            list_io.itListAction(ListCtx{ .app = self.app, .id = self.drawing }),
+        );
+    }
+};
 
 const BrushListGenerator = struct {
     state: *gui.widget_factory.WidgetState(UiAction),
     app: *App,
     id: ObjectId,
 
+    const ListCtx = struct {
+        app: *App,
+        id: ObjectId,
+
+        pub fn makeIt(self: ListCtx) sphimp.shader_storage.ShaderStorage(sphimp.shader_storage.BrushId).ShaderIdIterator {
+            return self.app.brushes.idIter();
+        }
+
+        pub fn makeAction(self: ListCtx, id: sphimp.shader_storage.BrushId) UiAction {
+            return .{
+                .update_brush = .{
+                    .object = self.id,
+                    .brush = id,
+                },
+            };
+        }
+    };
+
     pub fn makeWidget(self: BrushListGenerator, alloc: gui.GuiAlloc) !gui.Widget(UiAction) {
         const factory = self.state.factory(alloc);
         return try factory.makeSelectableList(
             list_io.BrushRetriever.init(self.app, self.id),
-            list_io.itListAction(&self.app.brushes, &shader_storage.ShaderStorage(BrushId).idIter, .update_brush),
+            list_io.itListAction(ListCtx{ .app = self.app, .id = self.id }),
         );
     }
 };
