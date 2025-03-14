@@ -10,7 +10,7 @@ const gui = @import("sphui");
 const list_io = @import("list_io.zig");
 const DrawingTool = sphimp.tool.DrawingTool;
 
-pub const UiActionType = @typeInfo(UiAction).Union.tag_type.?;
+pub const UiActionType = @typeInfo(UiAction).@"union".tag_type.?;
 
 pub const TextEditRequest = struct {
     object: ObjectId,

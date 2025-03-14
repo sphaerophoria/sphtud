@@ -71,7 +71,7 @@ pub fn ScrollView(comptime Action: type) type {
             for (scrollbar_options) |scrollbar_present| {
                 self.scrollbar_present = scrollbar_present;
 
-                const adjusted_window_size = .{
+                const adjusted_window_size: PixelSize = .{
                     .width = available_size.width - self.scrollbarWidth(),
                     .height = available_size.height,
                 };

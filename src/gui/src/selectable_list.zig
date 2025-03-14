@@ -302,15 +302,15 @@ fn makeTextLabels(
 
 fn generateAction(comptime Action: type, action_generator: anytype, idx: usize) Action {
     const Ptr = @TypeOf(action_generator);
-    const T = @typeInfo(Ptr).Pointer.child;
+    const T = @typeInfo(Ptr).pointer.child;
 
     switch (@typeInfo(T)) {
-        .Struct => {
+        .@"struct" => {
             if (@hasDecl(T, "generate")) {
                 return action_generator.generate(idx);
             }
         },
-        .Pointer => |p| {
+        .pointer => |p| {
             switch (@typeInfo(p.child)) {
                 .Fn => {
                     return action_generator.*(idx);

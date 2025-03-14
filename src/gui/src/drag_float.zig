@@ -147,17 +147,17 @@ pub fn LabelAdaptor(comptime Retriever: type) type {
 
 fn generateAction(comptime Action: type, action_generator: anytype, val: f32) Action {
     const Ptr = @TypeOf(action_generator);
-    const T = @typeInfo(Ptr).Pointer.child;
+    const T = @typeInfo(Ptr).pointer.child;
 
     switch (@typeInfo(T)) {
-        .Struct => {
+        .@"struct" => {
             if (@hasDecl(T, "generate")) {
                 return action_generator.generate(val);
             }
         },
-        .Pointer => |p| {
+        .pointer => |p| {
             switch (@typeInfo(p.child)) {
-                .Fn => {
+                .@"fn" => {
                     return action_generator.*(val);
                 },
                 else => {},
@@ -169,20 +169,20 @@ fn generateAction(comptime Action: type, action_generator: anytype, val: f32) Ac
 
 fn getVal(val_retreiver: anytype) f32 {
     const Ptr = @TypeOf(val_retreiver);
-    const T = @typeInfo(Ptr).Pointer.child;
+    const T = @typeInfo(Ptr).pointer.child;
 
     switch (@typeInfo(T)) {
-        .Struct => {
+        .@"struct" => {
             if (@hasDecl(T, "getVal")) {
                 return val_retreiver.getVal();
             }
         },
-        .Pointer => |p| {
+        .pointer => |p| {
             if (p.child == f32) {
                 return val_retreiver.*.*;
             }
         },
-        .Float => |f| {
+        .float => |f| {
             if (f.bits == 32) {
                 return val_retreiver.*;
             }

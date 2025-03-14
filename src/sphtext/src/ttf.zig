@@ -266,12 +266,12 @@ fn fixEndianness(val: anytype) @TypeOf(val) {
     }
 
     switch (@typeInfo(@TypeOf(val))) {
-        .Struct => {
+        .@"struct" => {
             var ret = val;
             std.mem.byteSwapAllFields(@TypeOf(val), &ret);
             return ret;
         },
-        .Int => {
+        .int => {
             return std.mem.bigToNative(@TypeOf(val), val);
         },
         inline else => @compileError("Cannot fix endianness for " ++ @typeName(@TypeOf(val))),
@@ -805,7 +805,7 @@ fn sortRemoveDuplicateCurvePoints(alloc: Allocator, points: *std.ArrayList(RowCu
         }
     }
 
-    while (to_remove.popOrNull()) |i| {
+    while (to_remove.pop()) |i| {
         if (points.items.len == 1) break;
         _ = points.swapRemove(i);
     }

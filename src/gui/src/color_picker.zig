@@ -314,15 +314,15 @@ fn WidgetGenerator(comptime Action: type, comptime ColorRetriever: type, comptim
 
 fn generateAction(comptime Action: type, color_generator: anytype, color: Color) Action {
     const Ptr = @TypeOf(color_generator);
-    const T = @typeInfo(Ptr).Pointer.child;
+    const T = @typeInfo(Ptr).pointer.child;
 
     switch (@typeInfo(T)) {
-        .Struct => {
+        .@"struct" => {
             if (@hasDecl(T, "generate")) {
                 return color_generator.generate(color);
             }
         },
-        .Pointer => |p| {
+        .pointer => |p| {
             switch (@typeInfo(p.child)) {
                 .Fn => {
                     return color_generator.*(color);
@@ -345,15 +345,15 @@ fn calcLightness(color: Color) f32 {
 
 fn getColor(color_retriever: anytype) Color {
     const Ptr = @TypeOf(color_retriever);
-    const T = @typeInfo(Ptr).Pointer.child;
+    const T = @typeInfo(Ptr).pointer.child;
 
     switch (@typeInfo(T)) {
-        .Struct => {
+        .@"struct" => {
             if (@hasDecl(T, "getColor")) {
                 return color_retriever.*.getColor();
             }
         },
-        .Pointer => {
+        .pointer => {
             return color_retriever.*.*;
         },
         else => {},

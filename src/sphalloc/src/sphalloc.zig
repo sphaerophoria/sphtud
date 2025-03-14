@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Alignment = std.mem.Alignment;
 const buddy_impl = @import("buddy_impl.zig");
 
 pub const MemoryTracker = @import("MemoryTracker.zig");
@@ -23,8 +24,9 @@ const BumpAlloc = struct {
 
     const allocator_vtable = std.mem.Allocator.VTable{
         .alloc = BumpAlloc.alloc,
-        .resize = BumpAlloc.resize,
-        .free = BumpAlloc.free,
+        .resize = nullResize,
+        .free = nullFree,
+        .remap = nullRemap,
     };
 
     fn allocator(self: *BumpAlloc) std.mem.Allocator {
@@ -34,11 +36,11 @@ const BumpAlloc = struct {
         };
     }
 
-    fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+    fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
         const self: *BumpAlloc = @ptrCast(@alignCast(ctx));
 
         {
-            const alloc_start = std.mem.alignForwardLog2(self.cursor, ptr_align);
+            const alloc_start = alignment.forward(self.cursor);
             const alloc_end = alloc_start + len;
 
             if (alloc_end <= self.current_block.len) {
@@ -48,9 +50,9 @@ const BumpAlloc = struct {
         }
 
         const block_len = std.mem.alignForward(usize, len, self.pageSize());
-        const new_block = self.block_alloc.rawAlloc(block_len, ptr_align, ret_addr) orelse return null;
+        const new_block = self.block_alloc.rawAlloc(block_len, alignment, ret_addr) orelse return null;
         self.alloc_size_log2 = @min(
-            comptime std.math.log2_int(usize, std.mem.page_size),
+            comptime std.math.log2_int(usize, std.heap.pageSize()),
             @max(self.alloc_size_log2 + 1, std.math.log2_int_ceil(usize, block_len)),
         );
         self.current_block = new_block[0..block_len];
@@ -62,12 +64,18 @@ const BumpAlloc = struct {
         return @as(usize, 1) << @intCast(self.alloc_size_log2);
     }
 
-    fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
-        return false;
-    }
-
     fn free(_: *anyopaque, _: []u8, _: u8, _: usize) void {}
 };
+
+fn nullRemap(_: *anyopaque, _: []u8, _: Alignment, _: usize, _: usize) ?[*]u8 {
+    return null;
+}
+
+fn nullResize(_: *anyopaque, _: []u8, _: Alignment, _: usize, _: usize) bool {
+    return false;
+}
+
+fn nullFree(_: *anyopaque, _: []u8, _: Alignment, _: usize) void {}
 
 const BlockAllocator = struct {
     allocated_blocks: std.ArrayListUnmanaged(Block),
@@ -75,8 +83,9 @@ const BlockAllocator = struct {
 
     const allocator_vtable: Allocator.VTable = .{
         .alloc = BlockAllocator.alloc,
-        .resize = BlockAllocator.resize,
+        .resize = nullResize,
         .free = BlockAllocator.free,
+        .remap = nullRemap,
     };
 
     fn init(page_alloc: Allocator) !BlockAllocator {
@@ -118,40 +127,36 @@ const BlockAllocator = struct {
         // small pages.
         //
         // So we just do it here. Not ideal, but good enough for now
-        if (len < std.mem.page_size) {
+        if (len < std.heap.pageSize()) {
             const full_block_len_log2 = std.math.log2_int_ceil(usize, len);
             return @as(usize, 1) << @intCast(full_block_len_log2);
         } else {
-            return std.mem.alignForward(usize, len, std.mem.page_size);
+            return std.mem.alignForward(usize, len, std.heap.pageSize());
         }
     }
 
-    fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+    fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
         const self: *BlockAllocator = @ptrCast(@alignCast(ctx));
 
         const full_block_len = fullBlockLen(len);
 
-        const ret = self.page_alloc.rawAlloc(full_block_len, ptr_align, ret_addr) orelse {
+        const ret = self.page_alloc.rawAlloc(full_block_len, alignment, ret_addr) orelse {
             return null;
         };
 
-        std.debug.assert(ptr_align <= std.math.log2_int(usize, std.mem.page_size));
+        std.debug.assert(alignment.compare(.lte, .fromByteUnits(std.heap.pageSize())));
 
         self.allocated_blocks.append(self.page_alloc, @alignCast(ret[0..full_block_len])) catch unreachable;
         return ret;
     }
 
-    fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
-        return false;
-    }
-
-    fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
+    fn free(ctx: *anyopaque, buf: []u8, alignment: Alignment, ret_addr: usize) void {
         const self: *BlockAllocator = @ptrCast(@alignCast(ctx));
 
         if (self.findBlock(buf)) |idx| {
             _ = self.allocated_blocks.swapRemove(idx);
             std.debug.assert(self.findBlock(buf) == null);
-            self.page_alloc.rawFree(buf, buf_align, ret_addr);
+            self.page_alloc.rawFree(buf, alignment, ret_addr);
         } else {
             unreachable;
         }
@@ -232,7 +237,7 @@ pub fn TinyPageAllocator(comptime max_free_elems: comptime_int) type {
         // Allocations may happen more often
         // We do not have a more granular allocator yet
 
-        const page_size_log2 = std.math.log2(std.mem.page_size);
+        const page_size_log2 = std.math.log2(std.heap.pageSize());
         const num_lists = page_size_log2 - tiny_page_log2;
 
         page_allocator: Allocator,
@@ -243,8 +248,9 @@ pub fn TinyPageAllocator(comptime max_free_elems: comptime_int) type {
 
         const allocator_vtable: Allocator.VTable = .{
             .alloc = Self.alloc,
-            .resize = Self.resize,
+            .resize = nullResize,
             .free = Self.free,
+            .remap = nullRemap,
         };
 
         pub fn allocator(self: *Self) Allocator {
@@ -312,21 +318,12 @@ pub fn TinyPageAllocator(comptime max_free_elems: comptime_int) type {
             };
         }
 
-        fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
-            return buddy_impl.alloc(makeBuddyAllocCtx(ctx), len, ptr_align, ret_addr);
+        fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
+            return buddy_impl.alloc(makeBuddyAllocCtx(ctx), len, alignment, ret_addr);
         }
 
-        fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
-            _ = ctx;
-            _ = buf;
-            _ = buf_align;
-            _ = new_len;
-            _ = ret_addr;
-            return false;
-        }
-
-        fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
-            return buddy_impl.free(makeBuddyAllocCtx(ctx), buf, buf_align, ret_addr);
+        fn free(ctx: *anyopaque, buf: []u8, alignment: Alignment, ret_addr: usize) void {
+            return buddy_impl.free(makeBuddyAllocCtx(ctx), buf, alignment, ret_addr);
         }
     };
 }
@@ -346,14 +343,15 @@ const GeneralPurposeAllocator = struct {
     // ArrayLists may initially seem like a bad idea when the backing store
     // is a page allocator, but we are careful to initialize the initial
     // capacity to be ~1 tiny page, so there isn't much wasted space
-    free_lists: [num_lists]std.ArrayListUnmanaged([*]u8) = .{.{}} ** num_lists,
+    free_lists: [num_lists]std.ArrayListUnmanaged([*]u8) = @splat(.empty),
 
     const Self = @This();
 
     const allocator_vtable: Allocator.VTable = .{
         .alloc = Self.alloc,
-        .resize = Self.resize,
+        .resize = nullResize,
         .free = Self.free,
+        .remap = nullRemap,
     };
 
     pub fn allocator(self: *Self) Allocator {
@@ -391,7 +389,7 @@ const GeneralPurposeAllocator = struct {
         }
 
         pub fn popBlock(self: BuddyAllocImplCtx, list_idx: usize) ?[*]u8 {
-            const ret = self.parent.free_lists[list_idx].popOrNull();
+            const ret = self.parent.free_lists[list_idx].pop();
             if (self.parent.free_lists[list_idx].items.len == 0) {
                 self.parent.free_lists[list_idx].clearAndFree(self.parent.page_allocator);
             }
@@ -411,21 +409,12 @@ const GeneralPurposeAllocator = struct {
         };
     }
 
-    fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
-        return buddy_impl.alloc(makeBuddyAllocCtx(ctx), len, ptr_align, ret_addr);
+    fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
+        return buddy_impl.alloc(makeBuddyAllocCtx(ctx), len, alignment, ret_addr);
     }
 
-    fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
-        _ = ctx;
-        _ = buf;
-        _ = buf_align;
-        _ = new_len;
-        _ = ret_addr;
-        return false;
-    }
-
-    fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
-        return buddy_impl.free(makeBuddyAllocCtx(ctx), buf, buf_align, ret_addr);
+    fn free(ctx: *anyopaque, buf: []u8, alignment: Alignment, ret_addr: usize) void {
+        return buddy_impl.free(makeBuddyAllocCtx(ctx), buf, alignment, ret_addr);
     }
 };
 
@@ -610,7 +599,7 @@ test "Sphalloc sanity" {
     var child1 = try sphalloc.makeSubAlloc("child1");
     var child2 = try sphalloc.makeSubAlloc("child2");
 
-    var rng = std.rand.DefaultPrng.init(0);
+    var rng = std.Random.DefaultPrng.init(0);
     const rand = rng.random();
 
     const child1_alloations = try child1.arena().alloc(test_helpers.Allocation, 100);

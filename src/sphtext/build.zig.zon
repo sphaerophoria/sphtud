@@ -1,5 +1,5 @@
 .{
-    .name = "sphtext",
+    .name = .sphtext,
     .version = "0.0.1",
     .minimum_zig_version = "0.13.0",
     .dependencies = .{
@@ -16,4 +16,5 @@
     .paths = .{
         "src",
     },
+    .fingerprint = 0xf8435c5ebc225955,
 }

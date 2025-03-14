@@ -878,7 +878,7 @@ fn populateDefaultShaders(scratch: *ScratchAlloc, shaders: anytype, path: []cons
 }
 
 fn StorageId(comptime Ptr: type) type {
-    return @typeInfo(Ptr).Pointer.child.Id;
+    return @typeInfo(Ptr).pointer.child.Id;
 }
 
 fn loadShaderImpl(scratch: *ScratchAlloc, dir: std.fs.Dir, path: []const u8, storage: anytype) !StorageId(@TypeOf(storage)) {

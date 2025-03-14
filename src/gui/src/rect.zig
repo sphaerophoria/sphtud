@@ -75,10 +75,10 @@ pub fn Rect(comptime Action: type, comptime ColorRetriever: type) type {
 
 fn getColor(retriever: anytype) ?Color {
     const Ptr = @TypeOf(retriever);
-    const T = @typeInfo(Ptr).Pointer.child;
+    const T = @typeInfo(Ptr).pointer.child;
 
     switch (@typeInfo(T)) {
-        .Struct => {
+        .@"struct" => {
             if (T == Color) return retriever.*;
             if (@hasDecl(T, "getColor")) return retriever.getColor();
         },

@@ -1,13 +1,14 @@
 const std = @import("std");
+const Alignment = std.mem.Alignment;
 
-pub fn alloc(ctx: anytype, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+pub fn alloc(ctx: anytype, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
     const Ctx = @TypeOf(ctx);
     // Given len, which free list do we want
     const log2_len = std.math.log2_int_ceil(usize, len);
-    std.debug.assert(ptr_align <= log2_len);
+    std.debug.assert(alignment.compare(.lte, @enumFromInt(log2_len)));
 
     if (log2_len >= Ctx.max_size_log2) {
-        return ctx.page_allocator.rawAlloc(len, ptr_align, ret_addr) orelse {
+        return ctx.page_allocator.rawAlloc(len, alignment, ret_addr) orelse {
             return null;
         };
     }
@@ -22,10 +23,10 @@ pub fn alloc(ctx: anytype, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
     };
 }
 
-pub fn free(ctx: anytype, buf: []u8, buf_align: u8, ret_addr: usize) void {
+pub fn free(ctx: anytype, buf: []u8, alignment: Alignment, ret_addr: usize) void {
     const Ctx = @TypeOf(ctx);
     if (buf.len >= maxSize(Ctx)) {
-        ctx.page_allocator.rawFree(buf, buf_align, ret_addr);
+        ctx.page_allocator.rawFree(buf, alignment, ret_addr);
         return;
     }
 
@@ -41,7 +42,7 @@ pub fn free(ctx: anytype, buf: []u8, buf_align: u8, ret_addr: usize) void {
     }
 
     if (idx >= numLists(Ctx)) {
-        ctx.page_allocator.rawFree(ptr[0..maxSize(Ctx)], Ctx.max_size_log2, ret_addr);
+        ctx.page_allocator.rawFree(ptr[0..maxSize(Ctx)], @enumFromInt(Ctx.max_size_log2), ret_addr);
     } else {
         // Can't recover :(
         ctx.pushBlock(ptr, idx) catch unreachable;
@@ -82,11 +83,11 @@ fn splitDown(ctx: anytype, output_list: usize, ret_addr: usize) ![*]u8 {
 fn splitOrAllocBlock(ctx: anytype, list_idx: usize, ret_addr: usize) ![*]u8 {
     const Ctx = @TypeOf(ctx);
     if (list_idx == numLists(Ctx)) {
-        const a = ctx.page_allocator.rawAlloc(maxSize(Ctx), Ctx.max_size_log2, ret_addr) orelse return error.OutOfMemory;
+        const a = ctx.page_allocator.rawAlloc(maxSize(Ctx), @enumFromInt(Ctx.max_size_log2), ret_addr) orelse return error.OutOfMemory;
         const b = a + maxSize(Ctx) / 2;
 
         ctx.pushBlock(b, list_idx - 1) catch |e| {
-            ctx.page_allocator.rawFree(a[0..maxSize(Ctx)], Ctx.max_size_log2, ret_addr);
+            ctx.page_allocator.rawFree(a[0..maxSize(Ctx)], @enumFromInt(Ctx.max_size_log2), ret_addr);
             return e;
         };
 

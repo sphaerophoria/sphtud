@@ -146,25 +146,25 @@ pub fn GuiText(comptime TextRetriever: type) type {
 
 fn getText(text_retriever: anytype) []const u8 {
     const Ptr = @TypeOf(text_retriever);
-    const T = @typeInfo(Ptr).Pointer.child;
+    const T = @typeInfo(Ptr).pointer.child;
 
     switch (@typeInfo(T)) {
-        .Struct => {
+        .@"struct" => {
             if (@hasDecl(T, "getText")) {
                 return text_retriever.getText();
             }
         },
-        .Pointer => |p| {
-            if (p.child == u8 and p.size == .Slice) {
+        .pointer => |p| {
+            if (p.child == u8 and p.size == .slice) {
                 return text_retriever.*;
             }
 
             const child_info = @typeInfo(p.child);
-            if (child_info == .Array and child_info.Array.child == u8) {
+            if (child_info == .array and child_info.array.child == u8) {
                 return text_retriever.*;
             }
 
-            if (child_info == .Pointer and child_info.Pointer.child == u8 and child_info.Pointer.size == .Slice) {
+            if (child_info == .pointer and child_info.pointer.child == u8 and child_info.Pointer.size == .Slice) {
                 return text_retriever.*.*;
             }
         },

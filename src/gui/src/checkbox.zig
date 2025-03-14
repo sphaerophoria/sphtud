@@ -145,15 +145,15 @@ fn innerBounds(widget_bounds: PixelBBox, outer_size: u31, inner_size: u31) Pixel
 
 fn getChecked(retriever: anytype) bool {
     const Ptr = @TypeOf(retriever);
-    const T = @typeInfo(Ptr).Pointer.child;
+    const T = @typeInfo(Ptr).pointer.child;
 
     switch (@typeInfo(T)) {
-        .Struct => {
+        .@"struct" => {
             if (@hasDecl(T, "checked")) {
                 return retriever.checked();
             }
         },
-        .Pointer => |p| {
+        .pointer => |p| {
             if (p.child == bool and p.size == .One) {
                 return retriever.*.*;
             }

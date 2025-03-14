@@ -1,5 +1,5 @@
 .{
-    .name = "sphimp",
+    .name = .sphimp,
     .version = "0.0.1",
     .minimum_zig_version = "0.13.0",
     .dependencies = .{
@@ -32,4 +32,5 @@
         "build.zig",
         "build.zig.zon",
     },
+    .fingerprint = 0xfc647596d0e60f80,
 }

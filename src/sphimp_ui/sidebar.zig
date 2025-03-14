@@ -223,7 +223,7 @@ pub const Handle = struct {
                     const name_label = try self.removable_content_widget_factory.makeLabel(label_adaptors.CompositionObjName.init(self.app, self.property_object_id.*, comp_idx));
                     const delete_button = try self.removable_content_widget_factory.makeButton(
                         "Delete",
-                        .{
+                        UiAction{
                             .delete_from_composition = .{
                                 .composition = self.property_object_id.*,
                                 .idx = .{ .value = comp_idx },

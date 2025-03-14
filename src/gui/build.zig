@@ -46,7 +46,7 @@ pub fn build(b: *std.Build) !void {
         .name = "gui_test",
         .root_source_file = b.path("src/gui.zig"),
     });
-    deps.add(&gui_uts.root_module);
+    deps.add(gui_uts.root_module);
 
     const run_gui_uts = b.addRunArtifact(gui_uts);
     test_step.dependOn(&run_gui_uts.step);

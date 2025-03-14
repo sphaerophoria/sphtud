@@ -826,9 +826,9 @@ pub const DrawingObject = struct {
         const right_point_id = id.point_id + 1;
         const right_half: []const @Vector(2, f32) =
             if (right_point_id < stroke.points.items.len)
-            stroke.points.items[right_point_id..]
-        else
-            &.{};
+                stroke.points.items[right_point_id..]
+            else
+                &.{};
 
         if (right_half.len > 0) {
             try self.strokes.append(self.strokeAlloc(), Stroke{});

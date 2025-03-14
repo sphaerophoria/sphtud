@@ -177,7 +177,7 @@ pub const FrameRenderer = struct {
         // NxN window centered on mouse position
         const composition_to_viewport =
             Transform.translate(-center[0], -center[1])
-            .then(Transform.scale(obj_width_f / size_f, obj_height_f / size_f));
+                .then(Transform.scale(obj_width_f / size_f, obj_height_f / size_f));
 
         for (composition_data.objects.items, 0..) |item, comp_idx| {
             const tex = try self.renderedTexture(item.id);
@@ -390,11 +390,11 @@ pub const UiRenderer = struct {
                         // FIXME: Obviously split a fn
                         const eraser_preview_center: sphmath.Vec2 =
                             if (mouse_off_screen and wants_preview)
-                            sphmath.applyHomogenous(inv.apply(.{ 0.0, 0.0, 1.0 }))
-                        else if (!mouse_off_screen)
-                            self.mouse_pos
-                        else
-                            break :blk;
+                                sphmath.applyHomogenous(inv.apply(.{ 0.0, 0.0, 1.0 }))
+                            else if (!mouse_off_screen)
+                                self.mouse_pos
+                            else
+                                break :blk;
 
                         const preview_transform = Transform.scale(
                             self.tool_params.eraser_width,

@@ -1,5 +1,5 @@
 .{
-    .name = "sphutil_noalloc",
+    .name = .sphutil_noalloc,
     .version = "0.0.0",
     .dependencies = .{},
     .paths = .{
@@ -7,4 +7,5 @@
         "build.zig.zon",
         "src",
     },
+    .fingerprint = 0x17468b0e8345102e,
 }

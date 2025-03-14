@@ -1,9 +1,10 @@
 .{
-    .name = "sphmath",
+    .name = .sphmath,
     .version = "0.0.1",
     .minimum_zig_version = "0.13.0",
     .dependencies = .{},
     .paths = .{
         "sphmath.zig",
     },
+    .fingerprint = 0x6aefffd4dcebe1d4,
 }

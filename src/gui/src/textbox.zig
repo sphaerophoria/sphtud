@@ -364,17 +364,17 @@ fn getCursorOffsetFromText(
 
 fn generateAction(comptime Action: type, action_generator: anytype, notifier: TextboxNotifier, pos: usize, items: []const gui.KeyEvent) Action {
     const Ptr = @TypeOf(action_generator);
-    const T = @typeInfo(Ptr).Pointer.child;
+    const T = @typeInfo(Ptr).pointer.child;
 
     switch (@typeInfo(T)) {
-        .Struct => {
+        .@"struct" => {
             if (@hasDecl(T, "generate")) {
                 return action_generator.generate(notifier, pos, items);
             }
         },
-        .Pointer => |p| {
+        .pointer => |p| {
             switch (@typeInfo(p.child)) {
-                .Fn => {
+                .@"fn" => {
                     return action_generator.*(notifier, pos, items);
                 },
                 else => {},

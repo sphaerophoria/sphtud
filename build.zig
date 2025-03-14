@@ -99,9 +99,9 @@ const Builder = struct {
     }
 
     fn installAndCheck(self: *Builder, exe: *std.Build.Step.Compile) !void {
-        const check_exe = try self.b.allocator.create(std.Build.Step.Compile);
-        check_exe.* = exe.*;
-        self.check_step.dependOn(&check_exe.step);
+        // No errors emitted if -fno-emit-bin
+        // https://github.com/ziglang/zig/issues/22682
+        self.check_step.dependOn(&exe.step);
         self.b.installArtifact(exe);
     }
 };
