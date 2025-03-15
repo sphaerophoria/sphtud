@@ -99,10 +99,60 @@ const Builder = struct {
     }
 
     fn installAndCheck(self: *Builder, exe: *std.Build.Step.Compile) !void {
-        // No errors emitted if -fno-emit-bin
+        const check_exe = try self.b.allocator.create(std.Build.Step.Compile);
+        check_exe.* = exe.*;
+
         // https://github.com/ziglang/zig/issues/22682
-        self.check_step.dependOn(&exe.step);
+        //
+        // Recursively clone all modules and patch out any c source files. This
+        // is "fine" because...
+        //
+        // 1. Next zig upgrade we can just delete this
+        // 2. C source files are only used in linking, which we aren't doing
+        var patcher = ModulePatcher{};
+        check_exe.root_module = try ModulePatcher.cloneModule(self.b.allocator, exe.root_module);
+        try patcher.removeCSourceFiles(self.b.allocator, check_exe.root_module);
+
+        self.check_step.dependOn(&check_exe.step);
         self.b.installArtifact(exe);
+    }
+};
+
+const ModulePatcher = struct {
+    seen_modules: std.StringArrayHashMapUnmanaged(*std.Build.Module) = .empty,
+
+    fn cloneModule(alloc: std.mem.Allocator, old: *std.Build.Module) !*std.Build.Module {
+        const new = try alloc.create(std.Build.Module);
+
+        new.* = old.*;
+        new.link_objects = try old.link_objects.clone(alloc);
+        new.import_table = try old.import_table.clone(alloc);
+        return new;
+    }
+
+    fn removeCSourceFiles(self: *ModulePatcher, alloc: std.mem.Allocator, m: *std.Build.Module) !void {
+        var idx: usize = m.link_objects.items.len;
+        while (idx > 0) {
+            idx -= 1;
+
+            switch (m.link_objects.items[idx]) {
+                .c_source_file, .c_source_files => {
+                    _ = m.link_objects.swapRemove(idx);
+                },
+                else => {},
+            }
+        }
+
+        var it = m.import_table.iterator();
+        while (it.next()) |entry| {
+            const gop = try self.seen_modules.getOrPut(alloc, entry.key_ptr.*);
+            if (!gop.found_existing) {
+                const new = try cloneModule(alloc, entry.value_ptr.*);
+                try self.removeCSourceFiles(alloc, new);
+                gop.value_ptr.* = new;
+            }
+            entry.value_ptr.* = gop.value_ptr.*;
+        }
     }
 };
 
