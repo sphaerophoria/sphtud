@@ -1,5 +1,5 @@
 const std = @import("std");
-const gl = @import("gl.zig");
+const gl = @import("gl");
 const sphalloc = @import("sphalloc");
 const sphutil = @import("sphutil");
 const RuntimeSegmentedList = sphutil.RuntimeSegmentedList;

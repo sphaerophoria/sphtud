@@ -1,4 +1,4 @@
-pub const gl = @import("gl.zig");
+pub const gl = @import("gl");
 pub const geometry = @import("geometry.zig");
 pub const DistanceFieldGenerator = @import("DistanceFieldGenerator.zig");
 pub const shader_program = @import("shader_program.zig");
