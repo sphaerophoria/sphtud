@@ -587,6 +587,39 @@ pub const TemporaryScissor = struct {
     }
 };
 
+pub const TemporaryDepthTest = struct {
+    initial_depth_enable: gl.GLboolean,
+    initial_depth_func: gl.GLenum,
+
+    pub fn init(enable: bool, func: gl.GLenum) TemporaryDepthTest {
+        var initial_enable: gl.GLboolean = undefined;
+        gl.glGetBooleanv(gl.GL_DEPTH_TEST, &initial_enable);
+        var initial_func: gl.GLint = undefined;
+        gl.glGetIntegerv(gl.GL_DEPTH_FUNC, &initial_func);
+
+        setDepthTestState(enable);
+        gl.glDepthFunc(func);
+
+        return .{
+            .initial_depth_enable = initial_enable,
+            .initial_depth_func = @bitCast(initial_func),
+        };
+    }
+
+    pub fn restore(self: TemporaryDepthTest) void {
+        setDepthTestState(self.initial_depth_enable != 0);
+        gl.glDepthFunc(self.initial_depth_func);
+    }
+
+    fn setDepthTestState(enable: bool) void {
+        if (enable) {
+            gl.glEnable(gl.GL_DEPTH_TEST);
+        } else {
+            gl.glDisable(gl.GL_DEPTH_TEST);
+        }
+    }
+};
+
 pub const RenderAlloc = struct {
     heap: *Sphalloc,
     gl: *GlAlloc,

@@ -56,9 +56,8 @@ pub fn renderDistanceFieldToTexture(self: DistanceFieldGenerator, scratch_alloc:
 
     gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_DEPTH24_STENCIL8, width, height, 0, gl.GL_DEPTH_STENCIL, gl.GL_UNSIGNED_INT_24_8, null);
 
-    gl.glEnable(gl.GL_DEPTH_TEST);
-    // FIXME: Restore initial state, don't hard disable
-    defer gl.glDisable(gl.GL_DEPTH_TEST);
+    var depth_test = sphrender.TemporaryDepthTest.init(true, gl.GL_LESS);
+    defer depth_test.restore();
 
     {
         const fb = try sphrender.FramebufferRenderContext.init(out_texture, depth_texture);
