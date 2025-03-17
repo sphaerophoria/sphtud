@@ -349,8 +349,8 @@ pub fn updateTextBuffer(self: *TextRenderer, scratch_alloc: *ScratchAlloc, scrat
         new_buffer_data[buffer_idx + 1] = br;
         new_buffer_data[buffer_idx + 2] = tl;
         new_buffer_data[buffer_idx + 3] = br;
-        new_buffer_data[buffer_idx + 4] = tl;
-        new_buffer_data[buffer_idx + 5] = tr;
+        new_buffer_data[buffer_idx + 4] = tr;
+        new_buffer_data[buffer_idx + 5] = tl;
     }
 
     buffer.updateBuffer(new_buffer_data);
