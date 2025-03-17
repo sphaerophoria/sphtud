@@ -76,7 +76,15 @@ pub fn Program(comptime Vertex: type, comptime KnownUniforms: type) type {
             return self.renderWithExtra(buffer, options, UnknownUniforms.empty, &.{});
         }
 
+        pub fn renderLines(self: Self, buffer: Buffer(Vertex), options: KnownUniforms) void {
+            return self.renderInner(buffer, options, UnknownUniforms.empty, &.{}, gl.GL_LINES);
+        }
+
         pub fn renderWithExtra(self: Self, buffer: Buffer(Vertex), options: KnownUniforms, defs: UnknownUniforms, values: []const ResolvedUniformValue) void {
+            self.renderInner(buffer, options, defs, values, gl.GL_TRIANGLES);
+        }
+
+        fn renderInner(self: Self, buffer: Buffer(Vertex), options: KnownUniforms, defs: UnknownUniforms, values: []const ResolvedUniformValue, mode: gl.GLenum) void {
             gl.glUseProgram(self.program);
             gl.glBindVertexArray(buffer.vertex_array);
 
@@ -109,7 +117,7 @@ pub fn Program(comptime Vertex: type, comptime KnownUniforms: type) type {
                 sphrender.applyUniformAtLocation(uniform.loc, uniform.default, val, &texture_unit_alloc);
             }
 
-            gl.glDrawArrays(gl.GL_TRIANGLES, 0, @intCast(buffer.len));
+            gl.glDrawArrays(mode, 0, @intCast(buffer.len));
         }
     };
 }
