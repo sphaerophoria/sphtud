@@ -18,6 +18,7 @@ pub fn build(b: *std.Build) void {
         .name = "sphalloc",
         .root_source_file = b.path("src/sphalloc.zig"),
     });
+    uts.root_module.addImport("sphutil_noalloc", sphutil_noalloc_dep.module("sphutil_noalloc"));
 
     const run_uts = b.addRunArtifact(uts);
     test_step.dependOn(&run_uts.step);

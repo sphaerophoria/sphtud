@@ -221,6 +221,64 @@ pub const ScratchAlloc = struct {
     pub fn restore(self: *ScratchAlloc, restore_point: Checkpoint) void {
         self.backing.end_index = restore_point;
     }
+
+    pub fn restoreCheckpointAndPreserve(self: *ScratchAlloc, comptime T: type, alloc: Allocator, content: []const T, restore_point_base: Checkpoint) ![]T {
+        var restore_point = restore_point_base;
+        defer self.restore(restore_point);
+
+        const my_alloc = self.backing.allocator();
+        const is_same = my_alloc.vtable == alloc.vtable and my_alloc.ptr == alloc.ptr;
+        if (!is_same) {
+            return try alloc.dupe(T, content);
+        }
+
+        std.debug.assert(self.isPartOfUs(@ptrCast(content)));
+
+        const base_ptr: usize = @intFromPtr(self.backing.buffer.ptr);
+        const unaligned_alloc_start: usize = base_ptr + self.backing.end_index;
+        const aligned_alloc_start = std.mem.alignForward(usize, unaligned_alloc_start, @alignOf(T));
+        const alloc_end = aligned_alloc_start + @sizeOf(T) * content.len;
+
+        restore_point = alloc_end - base_ptr;
+
+        const out_buf: [*]T = @ptrFromInt(aligned_alloc_start);
+        const ret = out_buf[0..content.len];
+
+        std.mem.copyForwards(T, ret, content);
+        return ret;
+    }
+
+    fn isPartOfUs(self: *ScratchAlloc, content: [*]const u8) bool {
+        const buf_start_usize: usize = @intFromPtr(self.backing.buffer.ptr);
+        const content_usize: usize = @intFromPtr(content);
+        return content_usize >= buf_start_usize and content_usize < buf_start_usize + self.backing.buffer.len;
+    }
+
+    test "restoreCheckpointAndPreserve same allocator" {
+        var buf: [4096]u8 = undefined;
+        var scratch = ScratchAlloc.init(&buf);
+
+        // Initial state, intentionally unaligned
+        _ = try scratch.allocator().alloc(u8, 1009);
+
+        const content = blk: {
+            const restore_point = scratch.checkpoint();
+            // Pretend we did some work
+            _ = try scratch.allocator().alloc(i32, 10);
+            _ = try scratch.allocator().alloc(u8, 5);
+            const to_keep = try scratch.allocator().alloc(i32, 4);
+            for (0..4) |i| {
+                to_keep[i] = @intCast(i);
+            }
+            break :blk try scratch.restoreCheckpointAndPreserve(i32, scratch.allocator(), to_keep, restore_point);
+        };
+
+        const new_content = try scratch.allocator().alloc(u8, 10);
+        @memset(new_content, 0xff);
+
+        try std.testing.expectEqualSlices(i32, &.{ 0, 1, 2, 3 }, content);
+        try std.testing.expect(@as(usize, @intFromPtr(new_content.ptr)) >= @as(usize, @intFromPtr(content.ptr + content.len)));
+    }
 };
 
 pub const tiny_page_log2 = 8;
@@ -715,3 +773,7 @@ const test_helpers = struct {
         return buf[0..size];
     }
 };
+
+test {
+    std.testing.refAllDeclsRecursive(@This());
+}
