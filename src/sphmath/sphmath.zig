@@ -184,6 +184,16 @@ pub const Mat4x4 = struct {
         0.0, 0.0, 0.0, 1.0,
     },
 
+    pub fn to3x3(self: Mat4x4) Mat3x3 {
+        return .{
+            .data = .{
+                self.data[0], self.data[1], self.data[2],
+                self.data[4], self.data[5], self.data[6],
+                self.data[7], self.data[8], self.data[9],
+            },
+        };
+    }
+
     pub fn mul(self: Mat4x4, vec: Vec4) Vec4 {
         const x = self.data[0..4].* * vec;
         const y = self.data[4..8].* * vec;
