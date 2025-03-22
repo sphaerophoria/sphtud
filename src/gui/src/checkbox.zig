@@ -154,7 +154,7 @@ fn getChecked(retriever: anytype) bool {
             }
         },
         .pointer => |p| {
-            if (p.child == bool and p.size == .One) {
+            if (p.child == bool and p.size == .one) {
                 return retriever.*.*;
             }
         },
