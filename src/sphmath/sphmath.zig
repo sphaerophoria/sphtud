@@ -457,6 +457,52 @@ pub fn calcAspect(width: usize, height: usize) f32 {
     return width_f / height_f;
 }
 
+pub const Quaternion = struct {
+    r: f32,
+    x: f32,
+    y: f32,
+    z: f32,
+
+    pub const identity = Quaternion{ .r = 1.0, .x = 0, .y = 0, .z = 0 };
+
+    pub fn toTransform3D(q: Quaternion) Transform3D {
+        const r = q.r;
+        // Our quaternions rotate CCW around the given axis, math we had from
+        // https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation seems
+        // to rotate clockwise. Invert our axis to be CCW as expected :)
+        const i = -q.x;
+        const j = -q.y;
+        const k = -q.z;
+
+        // My friend claude wrote this kinda and we cross referenced with
+        // wikipedia :)
+        const m00 = 1.0 - 2.0 * (j * j + k * k);
+        const m01 = 2.0 * (i * j - k * r);
+        const m02 = 2.0 * (i * k + j * r);
+
+        const m10 = 2.0 * (i * j + k * r);
+        const m11 = 1.0 - 2.0 * (i * i + k * k);
+        const m12 = 2.0 * (j * k - i * r);
+
+        const m20 = 2.0 * (i * k - j * r);
+        const m21 = 2.0 * (j * k + i * r);
+        const m22 = 1.0 - 2.0 * (i * i + j * j);
+
+        var ret = Transform3D{
+            .inner = .{
+                .data = .{
+                    m00, m01, m02, 0.0,
+                    m10, m11, m12, 0.0,
+                    m20, m21, m22, 0.0,
+                    0.0, 0.0, 0.0, 1.0,
+                },
+            },
+        };
+
+        return ret.then(Transform3D.scale(1, 1, 1));
+    }
+};
+
 test {
     std.testing.refAllDecls(@This());
 }
