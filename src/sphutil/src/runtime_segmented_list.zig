@@ -170,7 +170,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             }
         }
 
-        pub fn makeContiguous(self: *Self, alloc: Allocator) ![]T {
+        pub fn makeContiguous(self: *const Self, alloc: Allocator) ![]T {
             var ret = try RuntimeBoundedArray(T).init(alloc, self.len);
             var slice_iter = self.sliceIter();
             while (slice_iter.next()) |s| {
