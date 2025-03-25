@@ -501,6 +501,41 @@ pub const Quaternion = struct {
 
         return ret.then(Transform3D.scale(1, 1, 1));
     }
+
+    pub fn slerp(q1: Quaternion, q2_in: Quaternion, t: f32) Quaternion {
+        // Geometric slerp from https://en.wikipedia.org/wiki/Slerp
+
+        var q2 = q2_in;
+
+        var cos = q1.r * q2.r + q1.x * q2.x + q1.y * q2.y + q1.z * q2.z;
+
+        // Force us to go the short way
+        if (cos < 0.0) {
+            q2.r = -q2.r;
+            q2.x = -q2.x;
+            q2.y = -q2.y;
+            q2.z = -q2.z;
+            cos = -cos;
+        }
+
+        const angle = std.math.acos(cos);
+        const sin = @sqrt(1.0 - cos * cos);
+
+        // Avoid divide by 0, they're basically the same quat
+        if (std.math.approxEqAbs(f32, sin, 0.0, 0.0001)) {
+            return q1;
+        }
+
+        const coeff1 = @sin((1.0 - t) * angle) / sin;
+        const coeff2 = @sin(t * angle) / sin;
+
+        return Quaternion{
+            .r = coeff1 * q1.r + coeff2 * q2.r,
+            .x = coeff1 * q1.x + coeff2 * q2.x,
+            .y = coeff1 * q1.y + coeff2 * q2.y,
+            .z = coeff1 * q1.z + coeff2 * q2.z,
+        };
+    }
 };
 
 test {
