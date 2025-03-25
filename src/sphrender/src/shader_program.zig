@@ -159,14 +159,25 @@ pub fn Buffer(comptime Elem: type) type {
                     const num_elems = switch (field.type) {
                         sphmath.Vec2 => 2,
                         sphmath.Vec3 => 3,
+                        sphmath.Vec4 => 4,
                         f32 => 1,
+                        u32 => 1,
                         else => @compileError("Unknown type"),
                     };
                     const elem_type = switch (field.type) {
-                        sphmath.Vec3, sphmath.Vec2, f32 => gl.GL_FLOAT,
+                        sphmath.Vec4, sphmath.Vec3, sphmath.Vec2, f32 => gl.GL_FLOAT,
+                        u32 => gl.GL_UNSIGNED_INT,
                         else => @compileError("Unknown type"),
                     };
-                    gl.glVertexArrayAttribFormat(vertex_array, @intCast(loc), num_elems, elem_type, gl.GL_FALSE, offs);
+                    switch (field.type) {
+                        sphmath.Vec4, sphmath.Vec3, sphmath.Vec2, f32 => {
+                            gl.glVertexArrayAttribFormat(vertex_array, @intCast(loc), num_elems, elem_type, gl.GL_FALSE, offs);
+                        },
+                        u32 => {
+                            gl.glVertexArrayAttribIFormat(vertex_array, @intCast(loc), num_elems, elem_type, offs);
+                        },
+                        else => @compileError("Unknown type"),
+                    }
                     gl.glVertexArrayAttribBinding(vertex_array, @intCast(loc), binding_index);
                 }
             }
