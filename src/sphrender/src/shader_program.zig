@@ -11,8 +11,29 @@ const sphutil = @import("sphutil");
 const sphalloc = @import("sphalloc");
 const ScratchAlloc = sphalloc.ScratchAlloc;
 
+pub fn IndexBuffer(comptime T: type) type {
+    return struct {
+        value: gl.GLuint,
+        len: usize,
+
+        const Self = @This();
+        pub fn init(gl_alloc: *GlAlloc) !Self {
+            return .{
+                .value = try gl_alloc.createBuffer(),
+                .len = 0,
+            };
+        }
+
+        pub fn bindData(self: *Self, data: []const T) void {
+            gl.glNamedBufferData(self.value, @intCast(data.len * @sizeOf(T)), data.ptr, gl.GL_STATIC_DRAW);
+            self.len = data.len;
+        }
+    };
+}
+
 pub const RenderSource = struct {
     vao: gl.GLuint,
+    index_type: ?gl.GLenum = null,
     len: usize,
 
     const Self = @This();
@@ -26,11 +47,7 @@ pub const RenderSource = struct {
 
     pub fn bindData(self: *RenderSource, comptime VertElem: type, program: ProgramHandle, data: Buffer(VertElem)) void {
         const fields = std.meta.fields(VertElem);
-        var field_locs: [fields.len]gl.GLint = undefined;
-
-        inline for (fields, 0..) |elem, i| {
-            field_locs[i] = gl.glGetAttribLocation(program.value, elem.name);
-        }
+        const field_locs = fieldLocs(fields, program);
 
         const binding_index = 0;
 
@@ -40,36 +57,130 @@ pub const RenderSource = struct {
             if (loc >= 0) {
                 const offs = @offsetOf(VertElem, field.name);
 
-                gl.glEnableVertexArrayAttrib(self.vao, @intCast(loc));
-                const num_elems = switch (field.type) {
-                    sphmath.Vec2 => 2,
-                    sphmath.Vec3 => 3,
-                    sphmath.Vec4 => 4,
-                    f32 => 1,
-                    u32 => 1,
-                    else => @compileError("Unknown type"),
-                };
-                const elem_type = switch (field.type) {
-                    sphmath.Vec4, sphmath.Vec3, sphmath.Vec2, f32 => gl.GL_FLOAT,
-                    u32 => gl.GL_UNSIGNED_INT,
-                    else => @compileError("Unknown type"),
-                };
-                switch (field.type) {
-                    sphmath.Vec4, sphmath.Vec3, sphmath.Vec2, f32 => {
-                        gl.glVertexArrayAttribFormat(self.vao, @intCast(loc), num_elems, elem_type, gl.GL_FALSE, offs);
-                    },
-                    u32, [4]u8 => {
-                        gl.glVertexArrayAttribIFormat(self.vao, @intCast(loc), num_elems, elem_type, offs);
-                    },
-                    else => @compileError("Unknown type"),
-                }
+                applyAttribFormat(self.vao, loc, field.type, offs);
                 gl.glVertexArrayAttribBinding(self.vao, @intCast(loc), binding_index);
             }
         }
 
         self.len = data.len;
     }
+
+    pub fn setIndexBuffer(self: *RenderSource, comptime T: type, buf: IndexBuffer(T)) void {
+        gl.glVertexArrayElementBuffer(self.vao, buf.value);
+        self.index_type = switch (T) {
+            u16 => gl.GL_UNSIGNED_SHORT,
+            else => @compileError("Unimplemented index buffer type"),
+        };
+        self.len = buf.len;
+    }
+
+    pub fn bindDataSplit(self: *RenderSource, comptime VertElem: type, program: ProgramHandle, data: SplitBuffers(VertElem)) void {
+        const fields = std.meta.fields(VertElem);
+        const field_locs = fieldLocs(fields, program);
+
+        var len: ?usize = null;
+        inline for (fields, field_locs, 0..) |field, loc, binding_index| {
+            if (loc >= 0) {
+                switch (@field(data, field.name)) {
+                    .default => |d| {
+                        switch (field.type) {
+                            [2]f32 => gl.glVertexAttrib2f(@intCast(loc), d[0], d[1]),
+                            [4]f32 => gl.glVertexAttrib4f(@intCast(loc), d[0], d[1], d[2], d[3]),
+                            [4]u8 => gl.glVertexAttrib4ubv(@intCast(loc), &d),
+                            else => unreachable,
+                        }
+                    },
+                    .populated => |buf| {
+                        if (len) |*l| {
+                            std.debug.assert(buf.len == l.*);
+                        } else {
+                            len = buf.len;
+                        }
+
+                        gl.glVertexArrayVertexBuffer(self.vao, binding_index, buf.vertex_buffer, 0, @sizeOf(field.type));
+                        applyAttribFormat(self.vao, loc, field.type, 0);
+                        gl.glVertexArrayAttribBinding(self.vao, @intCast(loc), binding_index);
+                    },
+                }
+            }
+        }
+
+        self.len = len.?;
+    }
 };
+
+fn fieldLocs(comptime fields: anytype, program: ProgramHandle) [fields.len]gl.GLint {
+    var field_locs: [fields.len]gl.GLint = undefined;
+
+    inline for (fields, 0..) |elem, i| {
+        field_locs[i] = gl.glGetAttribLocation(program.value, elem.name);
+    }
+    return field_locs;
+}
+
+fn arrayLen(comptime T: type) comptime_int {
+    const info = @typeInfo(T);
+    switch (info) {
+        .array => |ai| {
+            return ai.len;
+        },
+        .vector => |vi| {
+            return vi.len;
+        },
+        else => return 1,
+    }
+}
+
+fn toGlType(comptime T: type) gl.GLenum {
+    const info = @typeInfo(T);
+    switch (info) {
+        .array => |ai| {
+            return toGlType(ai.child);
+        },
+        .vector => |vi| {
+            return toGlType(vi.child);
+        },
+        .float => |fi| {
+            switch (fi.bits) {
+                32 => return gl.GL_FLOAT,
+                else => @compileError("Unhandled gl float bits"),
+            }
+        },
+        .int => |ii| {
+            switch (ii.signedness) {
+                .signed => @compileError("Unimplemented signed gl type"),
+                .unsigned => {
+                    switch (ii.bits) {
+                        8 => return gl.GL_UNSIGNED_BYTE,
+                        16 => return gl.GL_UNSIGNED_SHORT,
+                        32 => return gl.GL_UNSIGNED_INT,
+                        else => @compileError("Unhandled gl uint bits"),
+                    }
+                },
+            }
+        },
+        else => @compileError("Unhandled gl type"),
+    }
+}
+
+fn applyAttribFormat(vao: gl.GLuint, loc: gl.GLint, comptime Field: type, offs: usize) void {
+    if (loc < 0) return;
+
+    gl.glEnableVertexArrayAttrib(vao, @intCast(loc));
+
+    const num_elems = arrayLen(Field);
+    const gl_type = comptime toGlType(Field);
+
+    switch (gl_type) {
+        gl.GL_FLOAT => {
+            gl.glVertexArrayAttribFormat(vao, @intCast(loc), num_elems, gl_type, gl.GL_FALSE, @intCast(offs));
+        },
+        gl.GL_UNSIGNED_BYTE, gl.GL_UNSIGNED_SHORT, gl.GL_UNSIGNED_INT => {
+            gl.glVertexArrayAttribIFormat(vao, @intCast(loc), num_elems, gl_type, @intCast(offs));
+        },
+        else => @compileError("Unknown type"),
+    }
+}
 
 pub fn RenderSourceTyped(comptime Vertex: type) type {
     return struct {
@@ -184,7 +295,11 @@ pub fn Program(comptime KnownUniforms: type) type {
                 sphrender.applyUniformAtLocation(uniform.loc, uniform.default, val, &texture_unit_alloc);
             }
 
-            gl.glDrawArrays(mode, 0, @intCast(array.len));
+            if (array.index_type) |t| {
+                gl.glDrawElements(mode, @intCast(array.len), t, null);
+            } else {
+                gl.glDrawArrays(mode, 0, @intCast(array.len));
+            }
         }
     };
 }
@@ -224,6 +339,37 @@ fn resolvedUniformType(comptime T: type, val: anytype) sphrender.ResolvedUniform
         else => {},
     }
     @compileError("Unsupported uniform type " ++ @typeName(T));
+}
+
+pub fn SplitBufferVal(comptime T: type) type {
+    return union(enum) {
+        default: T,
+        populated: Buffer(T),
+    };
+}
+
+pub fn SplitBuffers(comptime T: type) type {
+    const fields = std.meta.fields(T);
+
+    var new_fields: [fields.len]std.builtin.Type.StructField = undefined;
+    inline for (fields, &new_fields) |in_field, *out_field| {
+        out_field.* = .{
+            .name = in_field.name,
+            .type = SplitBufferVal(in_field.type),
+            .is_comptime = false,
+            .alignment = @alignOf(?*anyopaque),
+            .default_value_ptr = null,
+        };
+    }
+
+    return @Type(.{
+        .@"struct" = .{
+            .layout = .auto,
+            .fields = &new_fields,
+            .decls = &.{},
+            .is_tuple = false,
+        },
+    });
 }
 
 pub fn Buffer(comptime Elem: type) type {
