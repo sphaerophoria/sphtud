@@ -454,6 +454,7 @@ pub const UniformValue = union(UniformType) {
     uint: u32,
     mat3x3: sphmath.Mat3x3,
     mat4x4: sphmath.Mat4x4,
+    mat4x4_arr: []sphmath.Mat4x4,
 
     pub fn fromDefault(default: UniformDefault) UniformValue {
         switch (default) {

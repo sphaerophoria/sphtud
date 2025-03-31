@@ -22,8 +22,19 @@ pub const UniformType = enum {
     uint,
     mat3x3,
     mat4x4,
+    mat4x4_arr,
 
-    pub fn fromGlType(typ: gl.GLenum) ?UniformType {
+    pub fn fromGlType(typ: gl.GLenum, size: gl.GLint) ?UniformType {
+        if (size > 1) {
+            switch (typ) {
+                gl.GL_FLOAT_MAT4_ARB => return .mat4x4_arr,
+                else => {
+                    std.log.warn("Unsupported GL uniform array type: 0x{x}", .{typ});
+                    return null;
+                },
+            }
+        }
+
         switch (typ) {
             gl.GL_SAMPLER_2D, gl.GL_UNSIGNED_INT_SAMPLER_2D, gl.GL_INT_SAMPLER_2D => return .image,
             gl.GL_FLOAT => return .float,
@@ -50,6 +61,7 @@ pub const UniformDefault = union(UniformType) {
     uint: u32,
     mat3x3: sphmath.Mat3x3,
     mat4x4: sphmath.Mat4x4,
+    mat4x4_arr: []sphmath.Mat4x4,
 };
 
 pub const ResolvedUniformValue = union(UniformType) {
@@ -61,6 +73,7 @@ pub const ResolvedUniformValue = union(UniformType) {
     uint: u32,
     mat3x3: sphmath.Mat3x3,
     mat4x4: sphmath.Mat4x4,
+    mat4x4_arr: []const sphmath.Mat4x4,
 };
 
 pub const ReservedUniformValue = struct {
@@ -172,51 +185,64 @@ pub const ProgramUniformIt = struct {
                 &self.name_buf,
             );
 
-            const parsed_typ = UniformType.fromGlType(uniform_type) orelse continue;
+            const parsed_typ = UniformType.fromGlType(uniform_type, uniform_size) orelse {
+                std.log.warn("Unhandled uniform type 0x{x}", .{uniform_type});
+                continue;
+            };
+
+            const loc = gl.glGetUniformLocation(self.program, &self.name_buf);
+
+            // Strip off trailing [0] for matching with struct names
+            if (uniform_size > 1) {
+                name_len -= 3;
+            }
 
             const default: UniformDefault = switch (parsed_typ) {
                 .image => .image,
                 .float => blk: {
                     var default: f32 = 0.0;
-                    gl.glGetUniformfv(self.program, @intCast(self.idx), &default);
+                    gl.glGetUniformfv(self.program, loc, &default);
                     break :blk .{ .float = default };
                 },
                 .float2 => blk: {
                     var default: [2]f32 = .{ 0.0, 0.0 };
-                    gl.glGetUniformfv(self.program, @intCast(self.idx), &default);
+                    gl.glGetUniformfv(self.program, loc, &default);
                     break :blk .{ .float2 = default };
                 },
                 .float3 => blk: {
                     var default: [3]f32 = .{ 0.0, 0.0, 0.0 };
-                    gl.glGetUniformfv(self.program, @intCast(self.idx), &default);
+                    gl.glGetUniformfv(self.program, loc, &default);
                     break :blk .{ .float3 = default };
                 },
                 .int => blk: {
                     var default: gl.GLint = 0;
-                    gl.glGetUniformiv(self.program, @intCast(self.idx), &default);
+                    gl.glGetUniformiv(self.program, loc, &default);
                     break :blk .{ .int = @intCast(default) };
                 },
                 .uint => blk: {
                     var default: gl.GLuint = 0;
-                    gl.glGetUniformuiv(self.program, @intCast(self.idx), &default);
+                    gl.glGetUniformuiv(self.program, loc, &default);
                     break :blk .{ .uint = @intCast(default) };
                 },
                 .mat3x3 => blk: {
                     var default: sphmath.Mat3x3 = .{};
-                    gl.glGetnUniformfv(self.program, @intCast(self.idx), @sizeOf(@TypeOf(default.data)), &default.data);
+                    gl.glGetnUniformfv(self.program, loc, @sizeOf(@TypeOf(default.data)), &default.data);
                     break :blk .{ .mat3x3 = default.transpose() };
                 },
                 .mat4x4 => blk: {
                     var default: sphmath.Mat4x4 = .{};
-                    gl.glGetnUniformfv(self.program, @intCast(self.idx), @sizeOf(@TypeOf(default.data)), &default.data);
+                    gl.glGetnUniformfv(self.program, loc, @sizeOf(@TypeOf(default.data)), &default.data);
                     break :blk .{ .mat4x4 = default.transpose() };
+                },
+                .mat4x4_arr => blk: {
+                    break :blk .{ .mat4x4_arr = &.{} };
                 },
             };
             if (name_len < 0) continue;
 
             return .{
                 .name = self.name_buf[0..@intCast(name_len)],
-                .loc = @intCast(self.idx),
+                .loc = loc,
                 .default = default,
             };
         }
@@ -337,6 +363,10 @@ pub fn applyUniformAtLocation(loc: gl.GLint, expected_type: UniformType, val: Re
         },
         .mat4x4 => |v| {
             gl.glUniformMatrix4fv(loc, 1, gl.GL_TRUE, &v.data);
+        },
+        .mat4x4_arr => |v| {
+            std.debug.assert(@sizeOf(sphmath.Mat4x4) == 16 * @sizeOf(f32));
+            gl.glUniformMatrix4fv(loc, @intCast(v.len), gl.GL_TRUE, @ptrCast(v.ptr));
         },
     }
 }

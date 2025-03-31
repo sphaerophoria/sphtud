@@ -174,22 +174,8 @@ pub fn Program(comptime KnownUniforms: type) type {
             inline for (option_fiels, 0..) |option, idx| {
                 const loc_opt = self.known_uniform_locations[idx];
                 if (loc_opt) |loc| {
-                    const uniform_type: sphrender.UniformType = switch (option.type) {
-                        sphmath.Vec3 => .float3,
-                        sphmath.Vec2 => .float2,
-                        f32 => .float,
-                        sphmath.Mat3x3 => .mat3x3,
-                        sphmath.Mat4x4 => .mat4x4,
-                        sphrender.Texture => .image,
-                        u32 => .uint,
-                        else => @compileError("Unsupported uniform type " ++ @typeName(option.type)),
-                    };
-                    const val: ResolvedUniformValue = switch (option.type) {
-                        sphrender.Texture => .{
-                            .image = @field(options, option.name).inner,
-                        },
-                        else => @unionInit(ResolvedUniformValue, @tagName(uniform_type), @field(options, option.name)),
-                    };
+                    const val = resolvedUniformType(option.type, &@field(options, option.name));
+                    const uniform_type = std.meta.stringToEnum(sphrender.UniformType, @tagName(val)).?;
                     sphrender.applyUniformAtLocation(loc, uniform_type, val, &texture_unit_alloc);
                 }
             }
@@ -201,6 +187,43 @@ pub fn Program(comptime KnownUniforms: type) type {
             gl.glDrawArrays(mode, 0, @intCast(array.len));
         }
     };
+}
+
+fn resolvedUniformType(comptime T: type, val: anytype) sphrender.ResolvedUniformValue {
+    switch (T) {
+        sphrender.Texture => return .{
+            .image = val.inner,
+        },
+        else => blk: {
+            const uniform_type = switch (T) {
+                sphmath.Vec3 => .float3,
+                sphmath.Vec2 => .float2,
+                f32 => .float,
+                sphmath.Mat3x3 => .mat3x3,
+                sphmath.Mat4x4 => .mat4x4,
+                sphrender.Texture => .image,
+                u32 => .uint,
+                else => break :blk,
+            };
+            return @unionInit(ResolvedUniformValue, @tagName(uniform_type), val.*);
+        },
+    }
+
+    const info = @typeInfo(T);
+    switch (info) {
+        .array => |a| {
+            switch (a.child) {
+                sphmath.Mat4x4 => {
+                    return .{
+                        .mat4x4_arr = val,
+                    };
+                },
+                else => {},
+            }
+        },
+        else => {},
+    }
+    @compileError("Unsupported uniform type " ++ @typeName(T));
 }
 
 pub fn Buffer(comptime Elem: type) type {
