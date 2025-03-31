@@ -15,6 +15,7 @@ const Builder = struct {
     sphwindow: *std.Build.Module,
     sphalloc: *std.Build.Module,
     sphutil: *std.Build.Module,
+    stbiw: *std.Build.Module,
 
     fn init(b: *std.Build) Builder {
         const target = b.standardTargetOptions(.{});
@@ -30,6 +31,13 @@ const Builder = struct {
         const sphalloc = b.dependency("sphalloc", .{}).module("sphalloc");
         const sphutil = b.dependency("sphutil", .{}).module("sphutil");
 
+        const stbiw_translate = b.addTranslateC(.{
+            .root_source_file = b.path("src/stb/stb_image_write.h"),
+            .target = target,
+            .optimize = opt,
+        });
+        const stbiw = stbiw_translate.createModule();
+
         const sphimp = b.createModule(.{
             .root_source_file = b.path("src/sphimp/sphimp.zig"),
         });
@@ -42,6 +50,7 @@ const Builder = struct {
             .root = b.path("src/stb"),
             .files = &.{ "stb_image.c", "stb_image_write.c" },
         });
+        sphimp.addImport("stbiw", stbiw);
         sphimp.addIncludePath(b.path("src/stb"));
 
         return .{
@@ -57,6 +66,7 @@ const Builder = struct {
             .sphwindow = sphwindow,
             .sphalloc = sphalloc,
             .sphutil = sphutil,
+            .stbiw = stbiw,
         };
     }
 
@@ -72,6 +82,7 @@ const Builder = struct {
         exe.root_module.addImport("sphimp", self.sphimp);
         exe.root_module.addImport("sphalloc", self.sphalloc);
         exe.root_module.addImport("sphutil", self.sphutil);
+        exe.root_module.addImport("stbiw", self.stbiw);
         exe.linkLibC();
     }
 

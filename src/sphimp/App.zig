@@ -13,9 +13,7 @@ const tool = @import("tool.zig");
 const ToolParams = tool.ToolParams;
 const dependency_loop = @import("dependency_loop.zig");
 const shader_storage = @import("shader_storage.zig");
-const stbiw = @cImport({
-    @cInclude("stb_image_write.h");
-});
+const stbiw = @import("stbiw");
 const sphrender = @import("sphrender");
 const sphutil = @import("sphutil");
 const memory_limits = @import("memory_limits.zig");
