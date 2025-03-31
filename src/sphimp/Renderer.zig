@@ -14,6 +14,7 @@ const gl = sphrender.gl;
 const ShaderProgram = sphrender.shader_program.Program;
 const PlaneProgram = sphrender.xyuvt_program.Program;
 const PlaneBuffer = sphrender.xyuvt_program.Buffer;
+const PlaneRenderSource = sphrender.xyuvt_program.RenderSource;
 const GlAlloc = sphrender.GlAlloc;
 
 pub const ResolvedUniformValue = sphrender.ResolvedUniformValue;
@@ -37,16 +38,16 @@ const TransformOnlyUniform = struct {
 };
 
 sampler_program: PlaneProgram(sphrender.xyuvt_program.ImageSamplerUniforms),
-sampler_buffer: PlaneBuffer,
+sampler_render_source: PlaneRenderSource,
 background_program: PlaneProgram(BackgroundUniforms),
-background_buffer: PlaneBuffer,
+background_render_source: PlaneRenderSource,
 path_program: PathRenderProgram,
 comp_id_program: PlaneProgram(IdUniforms),
-comp_id_buffer: PlaneBuffer,
+comp_id_render_source: PlaneRenderSource,
 display_id_program: PlaneProgram(DisplayIdUniforms),
-display_id_buffer: PlaneBuffer,
+display_id_render_source: PlaneRenderSource,
 eraser_preview_program: PlaneProgram(TransformOnlyUniform),
-eraser_preview_buffer: PlaneBuffer,
+eraser_preview_render_source: PlaneRenderSource,
 eraser_preview_start: ?std.time.Instant = null,
 distance_field_generator: sphrender.DistanceFieldGenerator,
 
@@ -77,7 +78,9 @@ pub fn init(gl_alloc: *GlAlloc) !Renderer {
 
     const background_program = try PlaneProgram(BackgroundUniforms).init(gl_alloc, checkerboard_fragment_shader);
 
-    const background_buffer = try background_program.makeFullScreenPlane(gl_alloc);
+    const full_screen_plane = try sphrender.xyuvt_program.makeFullScreenPlane(gl_alloc);
+    var background_render_source = try sphrender.xyuvt_program.RenderSource.init(gl_alloc);
+    background_render_source.bindData(background_program.handle(), full_screen_plane);
 
     const path_program = try PathRenderProgram.init(gl_alloc);
 
@@ -85,23 +88,33 @@ pub fn init(gl_alloc: *GlAlloc) !Renderer {
 
     const comp_id_program = try PlaneProgram(IdUniforms).init(gl_alloc, comp_id_frag);
 
-    const comp_id_buffer = try comp_id_program.makeFullScreenPlane(gl_alloc);
+    var comp_id_render_source = try sphrender.xyuvt_program.RenderSource.init(gl_alloc);
+    comp_id_render_source.bindData(comp_id_program.handle(), full_screen_plane);
 
     const display_id_prog = try PlaneProgram(DisplayIdUniforms).init(gl_alloc, display_id_frag);
-    const eraser_perview_program = try PlaneProgram(TransformOnlyUniform).init(gl_alloc, eraser_preview_shader);
+    const eraser_preview_program = try PlaneProgram(TransformOnlyUniform).init(gl_alloc, eraser_preview_shader);
+
+    var sampler_render_source = try sphrender.xyuvt_program.RenderSource.init(gl_alloc);
+    sampler_render_source.bindData(sampler_program.handle(), full_screen_plane);
+
+    var eraser_preview_render_source = try sphrender.xyuvt_program.RenderSource.init(gl_alloc);
+    eraser_preview_render_source.bindData(eraser_preview_program.handle(), full_screen_plane);
+
+    var display_id_render_source = try sphrender.xyuvt_program.RenderSource.init(gl_alloc);
+    display_id_render_source.bindData(display_id_prog.handle(), full_screen_plane);
 
     return .{
         .sampler_program = sampler_program,
-        .sampler_buffer = try sampler_program.makeFullScreenPlane(gl_alloc),
+        .sampler_render_source = sampler_render_source,
         .background_program = background_program,
-        .background_buffer = background_buffer,
+        .background_render_source = background_render_source,
         .path_program = path_program,
         .comp_id_program = comp_id_program,
-        .comp_id_buffer = comp_id_buffer,
-        .eraser_preview_program = eraser_perview_program,
-        .eraser_preview_buffer = try eraser_perview_program.makeFullScreenPlane(gl_alloc),
+        .comp_id_render_source = comp_id_render_source,
+        .eraser_preview_program = eraser_preview_program,
+        .eraser_preview_render_source = eraser_preview_render_source,
         .display_id_program = display_id_prog,
-        .display_id_buffer = try display_id_prog.makeFullScreenPlane(gl_alloc),
+        .display_id_render_source = display_id_render_source,
         .distance_field_generator = distance_field_generator,
     };
 }
@@ -125,7 +138,7 @@ pub const FrameRenderer = struct {
         const toplevel_aspect = sphmath.calcAspect(object_dims[0], object_dims[1]);
 
         self.renderer.background_program.render(
-            self.renderer.background_buffer,
+            self.renderer.background_render_source,
             .{
                 .aspect = toplevel_aspect,
                 .transform = transform.inner,
@@ -188,7 +201,7 @@ pub const FrameRenderer = struct {
 
             // Run render program that samples from tex
             self.renderer.comp_id_program.render(
-                self.renderer.comp_id_buffer,
+                self.renderer.comp_id_render_source,
                 .{
                     .input_image = tex,
                     .composition_idx = @intCast(comp_idx),
@@ -217,7 +230,7 @@ pub const FrameRenderer = struct {
                 }
             },
             .filesystem => |f| {
-                self.renderer.sampler_program.render(self.renderer.sampler_buffer, .{
+                self.renderer.sampler_program.render(self.renderer.sampler_render_source, .{
                     .input_image = f.texture,
                     .transform = transform.inner,
                 });
@@ -235,7 +248,7 @@ pub const FrameRenderer = struct {
                 const object_dims = object.dims(self.objects);
                 const shader = self.shaders.get(s.program);
                 shader.program.renderWithExtra(
-                    shader.buffer,
+                    shader.render_source,
                     .{
                         .aspect = sphmath.calcAspect(object_dims[0], object_dims[1]),
                         .transform = transform.inner,
@@ -251,7 +264,7 @@ pub const FrameRenderer = struct {
                 self.renderer.path_program.render(p.render_buffer, transform, p.points.items.len);
             },
             .generated_mask => |m| {
-                self.renderer.sampler_program.render(self.renderer.sampler_buffer, .{
+                self.renderer.sampler_program.render(self.renderer.sampler_render_source, .{
                     .input_image = m.texture,
                     .transform = transform.inner,
                 });
@@ -273,7 +286,7 @@ pub const FrameRenderer = struct {
                 const brush = self.brushes.get(d.brush);
 
                 if (d.hasPoints()) {
-                    brush.program.renderWithExtra(brush.buffer, .{
+                    brush.program.renderWithExtra(brush.render_source, .{
                         .aspect = sphmath.calcAspect(dims[0], dims[1]),
                         .distance_field = d.distance_field,
                         .transform = transform.inner,
@@ -281,7 +294,7 @@ pub const FrameRenderer = struct {
                 }
             },
             .text => |t| {
-                t.renderer.render(t.buffer, transform);
+                t.renderer.render(t.render_source, transform);
             },
         }
     }
@@ -403,7 +416,7 @@ pub const UiRenderer = struct {
                             .then(Transform.translate(eraser_preview_center[0], eraser_preview_center[1]))
                             .then(transform);
 
-                        renderer.eraser_preview_program.render(renderer.eraser_preview_buffer, .{
+                        renderer.eraser_preview_program.render(renderer.eraser_preview_render_source, .{
                             .transform = preview_transform.inner,
                         });
                     },
@@ -421,7 +434,7 @@ pub const UiRenderer = struct {
 
                     const renderer = self.frame_renderer.renderer;
 
-                    renderer.display_id_program.render(renderer.display_id_buffer, .{
+                    renderer.display_id_program.render(renderer.display_id_render_source, .{
                         .input_image = output_tex,
                         .transform = preview_transform.inner,
                     });

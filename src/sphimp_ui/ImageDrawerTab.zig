@@ -16,7 +16,7 @@ const ImageDrawerTab = @This();
 drawer: *ImageDrawer,
 squircle_renderer: *const SquircleRenderer,
 chevron_program: ChevronProgram,
-chevron_buffer: ChevronBuffer,
+chevron_render_source: ChevronRenderSource,
 tab_size: PixelSize,
 tab_hover_color: gui.Color,
 tab_state: enum {
@@ -34,7 +34,7 @@ pub fn init(
     const chevron_program = try ChevronProgram.init(alloc.gl, constant_color_shader);
     const width_clip = 0.7;
     const left_pos = -0.7;
-    const chevron_buffer = try chevron_program.inner.makeBuffer(alloc.gl, &.{
+    const chevron_buffer = try sphrender.xyt_program.Buffer.init(alloc.gl, &.{
         .{ .vPos = .{ left_pos, 1.0 } },
         .{ .vPos = .{ left_pos + width_clip, 1.0 } },
         .{ .vPos = .{ 1.0, 0.0 } },
@@ -52,6 +52,9 @@ pub fn init(
         .{ .vPos = .{ left_pos + width_clip, -1.0 } },
     });
 
+    var chevron_render_source = try ChevronRenderSource.init(alloc.gl);
+    chevron_render_source.bindData(chevron_program.handle(), chevron_buffer);
+
     const ret = try alloc.heap.arena().create(ImageDrawerTab);
     ret.* = .{
         .drawer = drawer,
@@ -59,7 +62,7 @@ pub fn init(
         .tab_size = tab_size,
         .tab_hover_color = tab_hover_color,
         .chevron_program = chevron_program,
-        .chevron_buffer = chevron_buffer,
+        .chevron_render_source = chevron_render_source,
     };
     return ret;
 }
@@ -112,7 +115,7 @@ fn render(ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) 
         sphmath.Transform.identity;
 
     self.chevron_program.render(
-        self.chevron_buffer,
+        self.chevron_render_source,
         .{
             .color = .{ 1.0, 1.0, 1.0 },
             .transform = initial_txfm.then(gui.util.widgetToClipTransform(chevron_bounds, window_bounds)).inner,
@@ -163,4 +166,4 @@ const ChevronUniform = struct {
 };
 
 const ChevronProgram = xyt.Program(ChevronUniform);
-const ChevronBuffer = xyt.Buffer;
+const ChevronRenderSource = xyt.RenderSource;

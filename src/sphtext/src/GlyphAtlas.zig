@@ -12,9 +12,10 @@ const Texture = sphrender.Texture;
 
 const PlaneRenderProgram = sphrender.xyuvt_program.Program(sphrender.xyuvt_program.ImageSamplerUniforms);
 const PlaneRenderBuffer = sphrender.xyuvt_program.Buffer;
+const RenderSource = sphrender.xyuvt_program.RenderSource;
 
 program: PlaneRenderProgram,
-glyph_buffer: PlaneRenderBuffer,
+glyph_render_source: RenderSource,
 texture: Texture,
 tex_width: u31,
 tex_height: u31,
@@ -69,10 +70,13 @@ pub fn init(gpa: Allocator, gl_alloc: *GlAlloc) !GlyphAtlas {
     const texture = try sphrender.makeTextureOfSize(gl_alloc, tex_width, tex_height, .rf32);
     try clearTexture(texture, tex_width, tex_height);
 
+    var render_source = try RenderSource.init(gl_alloc);
+    render_source.bindData(program.handle(), try sphrender.xyuvt_program.makeFullScreenPlane(gl_alloc));
+
     return .{
         .program = program,
         .glyph_locations = std.AutoHashMap(u8, UVBBox).init(gpa),
-        .glyph_buffer = try program.makeFullScreenPlane(gl_alloc),
+        .glyph_render_source = render_source,
         .texture = texture,
         .tex_width = tex_width,
         .tex_height = tex_height,
@@ -195,7 +199,7 @@ fn renderTextureIntoAtlas(self: *GlyphAtlas, bounds: PixelBBox, distance_field: 
 
     temp_scissor.setAbsolute(bounds.left, bounds.bottom, bounds.right - bounds.left, bounds.top - bounds.bottom);
 
-    self.program.render(self.glyph_buffer, .{
+    self.program.render(self.glyph_render_source, .{
         .input_image = distance_field,
     });
 }

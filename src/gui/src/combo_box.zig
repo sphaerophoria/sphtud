@@ -15,7 +15,10 @@ const GuiText = gui.gui_text.GuiText;
 const SquircleRenderer = @import("SquircleRenderer.zig");
 const GlAlloc = sphrender.GlAlloc;
 
-const TriangleProgram = sphrender.shader_program.Program(TriangleVertex, TriangleUniform);
+// FIXME: Use xyt program
+const TriangleProgram = sphrender.shader_program.Program(TriangleUniform);
+const TriangleBuffer = sphrender.shader_program.Buffer(TriangleVertex);
+const TriangleRenderSource = sphrender.shader_program.RenderSource;
 
 pub const Style = struct {
     background: Color,
@@ -37,7 +40,7 @@ pub fn Shared(comptime Action: type) type {
     return struct {
         style: Style,
         triangle_program: TriangleProgram,
-        triangle_buf: sphrender.shader_program.Buffer(TriangleVertex),
+        triangle_render_source: TriangleRenderSource,
         guitext_state: *const gui.gui_text.SharedState,
         squircle_renderer: *const SquircleRenderer,
         selectable: *const gui.selectable_list.SharedState,
@@ -61,7 +64,7 @@ pub fn Shared(comptime Action: type) type {
         pub fn init(options: Options) !Self {
             const triangle_program = try TriangleProgram.init(options.gl_alloc, triangle_vertex_shader, triangle_fragment_shader);
 
-            const triangle_buf = try triangle_program.makeBuffer(
+            const triangle_buf = try sphrender.shader_program.Buffer(TriangleVertex).init(
                 options.gl_alloc,
                 &.{
                     // Make a triangle that is pointing down and taking up the full
@@ -72,9 +75,12 @@ pub fn Shared(comptime Action: type) type {
                 },
             );
 
+            var triangle_render_source = try TriangleRenderSource.init(options.gl_alloc);
+            triangle_render_source.bindData(TriangleVertex, triangle_program.handle, triangle_buf);
+
             return .{
                 .triangle_program = triangle_program,
-                .triangle_buf = triangle_buf,
+                .triangle_render_source = triangle_render_source,
                 .style = options.style,
                 .guitext_state = options.guitext_state,
                 .squircle_renderer = options.squircle_renderer,
@@ -149,7 +155,7 @@ pub fn ComboBox(comptime Action: type, comptime OnClick: type) type {
             {
                 const triangle_bounds = sub_sizes.triangleBounds(widget_bounds);
                 const transform = util.widgetToClipTransform(triangle_bounds, window_bounds);
-                self.shared.triangle_program.render(self.shared.triangle_buf, .{
+                self.shared.triangle_program.render(self.shared.triangle_render_source, .{
                     .color = .{
                         self.shared.style.triangle_color.r,
                         self.shared.style.triangle_color.g,

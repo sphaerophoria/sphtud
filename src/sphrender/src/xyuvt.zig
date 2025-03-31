@@ -23,11 +23,13 @@ pub const image_sampler_frag =
     \\}
 ;
 
+pub const RenderSource = shader_program.RenderSourceTyped(Vertex);
+
 pub fn Program(comptime KnownUniforms: type) type {
     return struct {
         inner: InnerProgram,
 
-        const InnerProgram = shader_program.Program(Vertex, KnownUniforms);
+        const InnerProgram = shader_program.Program(KnownUniforms);
         const Self = @This();
 
         pub fn init(gl_alloc: *GlAlloc, fs: [:0]const u8) !Self {
@@ -41,44 +43,49 @@ pub fn Program(comptime KnownUniforms: type) type {
             return self.inner.unknownUniforms(scratch);
         }
 
-        pub fn makeFullScreenPlane(self: Self, gl_alloc: *GlAlloc) !Buffer {
-            return try self.inner.makeBuffer(gl_alloc, &.{
-                .{ .vPos = .{ -1.0, -1.0 }, .vUv = .{ 0.0, 0.0 } },
-                .{ .vPos = .{ 1.0, -1.0 }, .vUv = .{ 1.0, 0.0 } },
-                .{ .vPos = .{ -1.0, 1.0 }, .vUv = .{ 0.0, 1.0 } },
-
-                .{ .vPos = .{ 1.0, 1.0 }, .vUv = .{ 1.0, 1.0 } },
-                .{ .vPos = .{ -1.0, 1.0 }, .vUv = .{ 0.0, 1.0 } },
-                .{ .vPos = .{ 1.0, -1.0 }, .vUv = .{ 1.0, 0.0 } },
-            });
+        pub fn render(self: Self, render_source: RenderSource, options: KnownUniforms) void {
+            self.inner.render(render_source.inner, options);
         }
 
-        pub fn render(self: Self, buffer: Buffer, options: KnownUniforms) void {
-            self.inner.render(buffer, options);
+        pub fn renderWithExtra(self: Self, render_source: RenderSource, options: KnownUniforms, defs: shader_program.UnknownUniforms, values: []const sphrender.ResolvedUniformValue) void {
+            self.inner.renderWithExtra(render_source.inner, options, defs, values);
         }
 
-        pub fn renderWithExtra(self: Self, buffer: Buffer, options: KnownUniforms, defs: shader_program.UnknownUniforms, values: []const sphrender.ResolvedUniformValue) void {
-            self.inner.renderWithExtra(buffer, options, defs, values);
+        pub fn handle(self: Self) shader_program.ProgramHandle {
+            return self.inner.handle;
         }
     };
 }
 
+pub fn makeFullScreenPlane(gl_alloc: *GlAlloc) !Buffer {
+    return try Buffer.init(gl_alloc, &.{
+        .{ .vPos = .{ -1.0, -1.0 }, .vUv = .{ 0.0, 0.0 } },
+        .{ .vPos = .{ 1.0, -1.0 }, .vUv = .{ 1.0, 0.0 } },
+        .{ .vPos = .{ -1.0, 1.0 }, .vUv = .{ 0.0, 1.0 } },
+
+        .{ .vPos = .{ 1.0, 1.0 }, .vUv = .{ 1.0, 1.0 } },
+        .{ .vPos = .{ -1.0, 1.0 }, .vUv = .{ 0.0, 1.0 } },
+        .{ .vPos = .{ 1.0, -1.0 }, .vUv = .{ 1.0, 0.0 } },
+    });
+}
+
 pub const ImageRenderer = struct {
     prog: Program(ImageSamplerUniforms),
-    buffer: Buffer,
+    render_source: RenderSource,
 
     pub fn init(alloc: *GlAlloc) !ImageRenderer {
         const prog = try Program(ImageSamplerUniforms).init(alloc, image_sampler_frag);
-        const buffer = try prog.makeFullScreenPlane(alloc);
+        var render_source = try RenderSource.init(alloc);
+        render_source.bindData(prog.handle(), try makeFullScreenPlane(alloc));
 
         return .{
             .prog = prog,
-            .buffer = buffer,
+            .render_source = render_source,
         };
     }
 
     pub fn renderTexture(self: ImageRenderer, texture: sphrender.Texture, transform: sphmath.Transform) void {
-        self.prog.render(self.buffer, .{
+        self.prog.render(self.render_source, .{
             .input_image = texture,
             .transform = transform.inner,
         });

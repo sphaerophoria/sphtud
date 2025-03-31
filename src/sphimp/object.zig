@@ -920,6 +920,7 @@ pub const TextObject = struct {
     width: usize,
     height: usize,
     buffer: TextRenderer.Buffer,
+    render_source: TextRenderer.RenderSource,
 
     const null_width = 100;
     const null_height = 100;
@@ -928,11 +929,15 @@ pub const TextObject = struct {
     pub fn init(gpa: Allocator, gl_alloc: *GlAlloc, font_id: FontStorage.FontId) !TextObject {
         const renderer = try TextRenderer.init(gpa, gl_alloc, default_point_size);
 
-        const buffer = try renderer.program.makeFullScreenPlane(gl_alloc);
+        const buffer = try sphrender.xyuvt_program.makeFullScreenPlane(gl_alloc);
+        var render_source = try sphrender.xyuvt_program.RenderSource.init(gl_alloc);
+        render_source.bindData(renderer.program.handle(), buffer);
+
         return .{
             .font = font_id,
             .renderer = renderer,
             .buffer = buffer,
+            .render_source = render_source,
             .width = null_width,
             .height = null_height,
             .current_text = &.{},
@@ -962,6 +967,7 @@ pub const TextObject = struct {
     pub fn regenerate(self: *TextObject, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc, fonts: FontStorage, distance_field_renderer: sphrender.DistanceFieldGenerator) !void {
         if (self.current_text.len < 1) {
             self.buffer.updateBuffer(&.{});
+            self.render_source.setLen(0);
             self.width = null_width;
             self.height = null_height;
             return;
@@ -976,6 +982,7 @@ pub const TextObject = struct {
         );
 
         try self.renderer.updateTextBuffer(scratch_alloc, scratch_gl, layout, ttf.*, distance_field_renderer, &self.buffer);
+        self.render_source.setLen(self.buffer.len);
         self.width = layout.width();
         self.height = layout.height();
     }

@@ -11,7 +11,7 @@ pub fn Program(comptime KnownUniforms: type) type {
     return struct {
         inner: InnerProgram,
 
-        const InnerProgram = shader_program.Program(Vertex, KnownUniforms);
+        const InnerProgram = shader_program.Program(KnownUniforms);
         const Self = @This();
 
         pub fn init(gl_alloc: *GlAlloc, fs: [:0]const u8) !Self {
@@ -25,24 +25,16 @@ pub fn Program(comptime KnownUniforms: type) type {
             return self.inner.unknownUniforms(scratch);
         }
 
-        pub fn makeFullScreenPlane(self: Self, gl_alloc: *GlAlloc) !Buffer {
-            return try self.inner.makeBuffer(gl_alloc, &.{
-                .{ .vPos = .{ -1.0, -1.0 }, .vUv = .{ 0.0, 0.0 } },
-                .{ .vPos = .{ 1.0, -1.0 }, .vUv = .{ 1.0, 0.0 } },
-                .{ .vPos = .{ -1.0, 1.0 }, .vUv = .{ 0.0, 1.0 } },
-
-                .{ .vPos = .{ 1.0, -1.0 }, .vUv = .{ 1.0, 0.0 } },
-                .{ .vPos = .{ -1.0, 1.0 }, .vUv = .{ 0.0, 1.0 } },
-                .{ .vPos = .{ 1.0, 1.0 }, .vUv = .{ 1.0, 1.0 } },
-            });
-        }
-
-        pub fn render(self: Self, buffer: Buffer, options: KnownUniforms) void {
-            self.inner.render(buffer, options);
+        pub fn render(self: Self, buffer: RenderSource, options: KnownUniforms) void {
+            self.inner.render(buffer.inner, options);
         }
 
         pub fn renderWithExtra(self: Self, buffer: Buffer, options: KnownUniforms, defs: shader_program.UnknownUniforms, values: []const sphrender.ResolvedUniformValue) void {
             self.inner.renderWithExtra(buffer, options, defs, values);
+        }
+
+        pub fn handle(self: Self) shader_program.ProgramHandle {
+            return self.inner.handle;
         }
     };
 }
@@ -52,6 +44,7 @@ pub const Vertex = struct {
 };
 
 pub const Buffer = shader_program.Buffer(Vertex);
+pub const RenderSource = shader_program.RenderSourceTyped(Vertex);
 
 pub const vertex_shader =
     \\#version 330

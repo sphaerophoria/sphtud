@@ -15,7 +15,7 @@ pub const Shared = struct {
     guitext_shared: *const gui.gui_text.SharedState,
     scrollbar_style: *const gui.scrollbar.Style,
     squircle_renderer: *const gui.SquircleRenderer,
-    program: Program(Vert, Uniform),
+    program: Program(Uniform),
     label_width: u31,
     item_pad: u31,
 
@@ -28,7 +28,7 @@ pub const Shared = struct {
         scrollbar_style: *const gui.scrollbar.Style,
         squircle_renderer: *const gui.SquircleRenderer,
     ) !Shared {
-        const program = try Program(Vert, Uniform).init(alloc, vertex_shader, fragment_shader);
+        const program = try Program(Uniform).init(alloc, vertex_shader, fragment_shader);
         return .{
             .scratch = scratch,
             .guitext_shared = guitext_shared,
@@ -186,17 +186,18 @@ pub fn MemoryWidget(comptime Action: type) type {
                         NameRetriever{ .parent = self, .idx = i },
                         self.shared.guitext_shared,
                     );
-                    const graph = try self.item_alloc.heap.arena().create(Graph);
-                    const buffer = try self.shared.program.makeBuffer(self.item_alloc.gl, &.{});
 
-                    try self.item_alloc.gl.registerVbo(buffer.vertex_buffer);
-                    try self.item_alloc.gl.registerVao(buffer.vertex_array);
+                    const graph = try self.item_alloc.heap.arena().create(Graph);
+                    const buffer = try Buffer.init(self.item_alloc.gl, &.{});
+                    var render_source = try RenderSource.init(self.item_alloc.gl);
+                    render_source.bindData(Vert, self.shared.program.handle, buffer);
 
                     graph.* = .{
                         .parent = self,
                         .memory_tracker_idx = i,
                         .width = 0,
                         .buffer = buffer,
+                        .render_source = render_source,
                         .last_update_idx = 0,
                     };
                     try self.grid.pushWidget(label);
@@ -236,6 +237,7 @@ pub fn MemoryWidget(comptime Action: type) type {
             memory_tracker_idx: usize,
             width: u31,
             buffer: Buffer,
+            render_source: RenderSource,
             last_update_idx: usize = 0,
 
             const graph_height = 100;
@@ -251,7 +253,7 @@ pub fn MemoryWidget(comptime Action: type) type {
             fn render(ctx: ?*anyopaque, widget_bounds: gui.PixelBBox, window_bounds: gui.PixelBBox) void {
                 const self: *Graph = @ptrCast(@alignCast(ctx));
                 const transform = gui.util.widgetToClipTransform(widget_bounds, window_bounds);
-                self.parent.shared.program.render(self.buffer, .{ .transform = transform.inner });
+                self.parent.shared.program.render(self.render_source, .{ .transform = transform.inner });
             }
 
             fn getSize(ctx: ?*anyopaque) gui.PixelSize {
@@ -288,6 +290,7 @@ pub fn MemoryWidget(comptime Action: type) type {
                 }
 
                 self.buffer.updateBuffer(verts);
+                self.render_source.len = self.buffer.len;
             }
         };
 
@@ -324,8 +327,11 @@ pub fn MemoryWidget(comptime Action: type) type {
     };
 }
 
+// FIXME: Use xyt program
+// FIXME: Constant color program
 const Program = sphrender.shader_program.Program;
 const Buffer = sphrender.shader_program.Buffer(Vert);
+const RenderSource = sphrender.shader_program.RenderSource;
 
 const Uniform = struct {
     transform: sphmath.Mat3x3,

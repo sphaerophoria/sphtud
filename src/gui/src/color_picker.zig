@@ -32,9 +32,9 @@ pub const ColorStyle = struct {
 pub const SharedColorPickerState = struct {
     style: ColorStyle,
     hexagon_renderer: HexagonProgram,
-    hexagon_buffer: sphrender.xyuvt_program.Buffer,
+    hexagon_render_source: sphrender.xyuvt_program.RenderSource,
     lightness_renderer: LightnessProgram,
-    lightness_buffer: sphrender.xyuvt_program.Buffer,
+    lightness_render_source: sphrender.xyuvt_program.RenderSource,
     drag_shared: *const gui.drag_float.Shared,
     guitext_state: *const gui.gui_text.SharedState,
     squircle_renderer: *const SquircleRenderer,
@@ -58,13 +58,21 @@ pub const SharedColorPickerState = struct {
             lightness_slider_frag,
         );
 
+        const full_screen_plane = try sphrender.xyuvt_program.makeFullScreenPlane(gl_alloc);
+
+        var hexagon_render_source = try sphrender.xyuvt_program.RenderSource.init(gl_alloc);
+        hexagon_render_source.bindData(hexagon_renderer.handle(), full_screen_plane);
+
+        var lightness_render_source = try sphrender.xyuvt_program.RenderSource.init(gl_alloc);
+        lightness_render_source.bindData(lightness_renderer.handle(), full_screen_plane);
+
         return .{
             .style = style,
             .hexagon_renderer = hexagon_renderer,
-            .hexagon_buffer = try hexagon_renderer.makeFullScreenPlane(gl_alloc),
+            .hexagon_render_source = hexagon_render_source,
             .drag_shared = drag_shared,
             .lightness_renderer = lightness_renderer,
-            .lightness_buffer = try lightness_renderer.makeFullScreenPlane(gl_alloc),
+            .lightness_render_source = lightness_render_source,
             .guitext_state = guitext_state,
             .squircle_renderer = squircle_renderer,
             .frame = frame_shared,
@@ -480,7 +488,7 @@ fn ColorHexagon(comptime Action: type, comptime ColorRetriever: type, comptime C
             const split_bounds = splitHexagonBounds(self.shared, bounds, lightness);
 
             const transform = util.widgetToClipTransform(split_bounds.hexagon, window_bounds);
-            self.shared.hexagon_renderer.render(self.shared.hexagon_buffer, .{
+            self.shared.hexagon_renderer.render(self.shared.hexagon_render_source, .{
                 .lightness = lightness,
                 .selected_color = .{ color.r, color.g, color.b },
                 .transform = transform.inner,
@@ -488,7 +496,7 @@ fn ColorHexagon(comptime Action: type, comptime ColorRetriever: type, comptime C
 
             const lightness_transform = util.widgetToClipTransform(split_bounds.lightness, window_bounds);
             self.shared.lightness_renderer.render(
-                self.shared.lightness_buffer,
+                self.shared.lightness_render_source,
                 .{
                     .color = .{ max_brightness_color.r, max_brightness_color.g, max_brightness_color.b },
                     .total_size = .{

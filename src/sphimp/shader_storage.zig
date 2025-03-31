@@ -62,7 +62,7 @@ pub fn ShaderStorage(comptime IdType: type) type {
             name: []const u8,
             program: Program,
             uniforms: sphrender.shader_program.UnknownUniforms,
-            buffer: sphrender.xyuvt_program.Buffer,
+            render_source: sphrender.xyuvt_program.RenderSource,
             fs_source: [:0]const u8,
 
             fn save(self: Item) Save {
@@ -90,13 +90,17 @@ pub fn ShaderStorage(comptime IdType: type) type {
 
             const scratch_uniforms = try program.unknownUniforms(scratch);
             const unknown_uniforms = try scratch_uniforms.clone(shader_alloc.heap.arena());
-            const buffer = try program.makeFullScreenPlane(self.alloc.gl);
+
+            // FIXME: Buffer can be shared, unsure about the render_source
+            const buffer = try sphrender.xyuvt_program.makeFullScreenPlane(shader_alloc.gl);
+            var render_source = try sphrender.xyuvt_program.RenderSource.init(shader_alloc.gl);
+            render_source.bindData(program.handle(), buffer);
 
             try self.storage.append(.{
                 .name = name_duped,
                 .program = program,
-                .buffer = buffer,
                 .uniforms = unknown_uniforms,
+                .render_source = render_source,
                 .fs_source = try arena.dupeZ(u8, fs_source),
             });
             return id;

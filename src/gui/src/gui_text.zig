@@ -21,7 +21,9 @@ pub const SharedState = struct {
 };
 
 pub fn guiText(alloc: gui.GuiAlloc, shared: *const SharedState, text_retriever_const: anytype) !GuiText(@TypeOf(text_retriever_const)) {
-    const text_buffer = try shared.text_renderer.program.makeFullScreenPlane(alloc.gl);
+    const text_buffer = try sphrender.xyuvt_program.makeFullScreenPlane(alloc.gl);
+    var text_render_source = try sphrender.xyuvt_program.RenderSource.init(alloc.gl);
+    text_render_source.bindData(shared.text_renderer.program.handle(), text_buffer);
 
     const typical_max_glyphs = 128;
     const max_glyph_capacity = 1 << 20;
@@ -45,6 +47,7 @@ pub fn guiText(alloc: gui.GuiAlloc, shared: *const SharedState, text_retriever_c
         .glyph_locations = glyph_locations,
         .text = text,
         .buffer = text_buffer,
+        .render_source = text_render_source,
         .shared = shared,
         .text_retriever = text_retriever_const,
     };
@@ -71,6 +74,7 @@ pub fn GuiText(comptime TextRetriever: type) type {
         glyph_locations: RuntimeSegmentedList(TextRenderer.TextLayout.GlyphLoc),
         layout_bounds: LayoutBounds = .{},
         buffer: TextRenderer.Buffer,
+        render_source: TextRenderer.RenderSource,
         text: RuntimeSegmentedList(u8),
         wrap_width: u31 = 0,
         shared: *const SharedState,
@@ -105,7 +109,7 @@ pub fn GuiText(comptime TextRetriever: type) type {
             // consistent layout, then find the baseline relative to that area
             //
             // Baseline location can use the max ascent/descent metrics
-            self.shared.text_renderer.render(self.buffer, transform);
+            self.shared.text_renderer.render(self.render_source, transform);
         }
 
         pub fn getNextText(self: *Self) []const u8 {
@@ -129,6 +133,8 @@ pub fn GuiText(comptime TextRetriever: type) type {
                 self.shared.distance_field_generator.*,
                 &self.buffer,
             );
+
+            self.render_source.setLen(self.buffer.len);
 
             self.layout_bounds = .{
                 .min_x = text_layout.min_x,

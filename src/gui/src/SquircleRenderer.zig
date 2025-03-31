@@ -8,11 +8,11 @@ const Color = gui.Color;
 const PixelBBox = gui.PixelBBox;
 
 const Program = sphrender.xyuvt_program.Program(SquircleUniform);
-const Buffer = sphrender.xyuvt_program.Buffer;
+const RenderSource = sphrender.xyuvt_program.RenderSource;
 const GlAlloc = sphrender.GlAlloc;
 
 program: Program,
-buffer: Buffer,
+render_source: RenderSource,
 
 const SquircleRenderer = @This();
 
@@ -22,16 +22,16 @@ pub fn init(gl_alloc: *GlAlloc) !SquircleRenderer {
         fragment_shader,
     );
 
-    const buffer = try program.makeFullScreenPlane(gl_alloc);
-
+    var render_source = try RenderSource.init(gl_alloc);
+    render_source.bindData(program.handle(), try sphrender.xyuvt_program.makeFullScreenPlane(gl_alloc));
     return .{
         .program = program,
-        .buffer = buffer,
+        .render_source = render_source,
     };
 }
 
 pub fn render(self: SquircleRenderer, color: Color, corner_radius_px: f32, widget_bounds: PixelBBox, transform: sphmath.Transform) void {
-    self.program.render(self.buffer, .{
+    self.program.render(self.render_source, .{
         .color = .{ color.r, color.g, color.b },
         .total_size = .{
             @floatFromInt(widget_bounds.calcWidth()),

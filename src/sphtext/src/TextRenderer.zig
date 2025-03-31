@@ -10,6 +10,7 @@ const GlAlloc = sphrender.GlAlloc;
 
 const ShaderProgram = sphrender.xyuvt_program.Program(TextUniforms);
 pub const Buffer = sphrender.xyuvt_program.Buffer;
+pub const RenderSource = sphrender.xyuvt_program.RenderSource;
 
 program: ShaderProgram,
 glyph_atlas: GlyphAtlas,
@@ -356,8 +357,8 @@ pub fn updateTextBuffer(self: *TextRenderer, scratch_alloc: *ScratchAlloc, scrat
     buffer.updateBuffer(new_buffer_data);
 }
 
-pub fn render(self: TextRenderer, buf: Buffer, transform: sphmath.Transform) void {
-    self.program.render(buf, .{
+pub fn render(self: TextRenderer, render_source: RenderSource, transform: sphmath.Transform) void {
+    self.program.render(render_source, .{
         .input_df = self.glyph_atlas.texture,
         .multiplier = self.point_size * self.multiplier,
         .transform = transform.inner,
