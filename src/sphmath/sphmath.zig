@@ -189,7 +189,7 @@ pub const Mat4x4 = struct {
             .data = .{
                 self.data[0], self.data[1], self.data[2],
                 self.data[4], self.data[5], self.data[6],
-                self.data[7], self.data[8], self.data[9],
+                self.data[8], self.data[9], self.data[10],
             },
         };
     }
