@@ -425,17 +425,17 @@ pub const Transform3D = struct {
         } } };
     }
 
-    pub fn perspective(fov: f32, near: f32, far: f32) Transform3D {
+    pub fn perspective(fov: f32, near: f32, far: f32, aspect: f32) Transform3D {
         const z1 = far / (near - far);
         const z2 = (near * far) / (near - far);
 
         const cot = 1 / @tan(fov / 2.0);
 
         return .{ .inner = .{ .data = .{
-            cot, 0.0, 0.0, 0.0,
-            0.0, cot, 0.0, 0.0,
-            0.0, 0.0, z1,  -z2,
-            0.0, 0.0, 1.0, 0.0,
+            cot, 0.0,          0.0, 0.0,
+            0.0, cot * aspect, 0.0, 0.0,
+            0.0, 0.0,          z1,  -z2,
+            0.0, 0.0,          1.0, 0.0,
         } } };
     }
 
