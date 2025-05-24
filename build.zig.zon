@@ -1,5 +1,5 @@
 .{
-    .name = .sphimp,
+    .name = .sphtud,
     .version = "0.0.1",
     .minimum_zig_version = "0.13.0",
     .dependencies = .{
@@ -26,11 +26,9 @@
         },
     },
     .paths = .{
-        "res",
         "src",
-        "ttf",
         "build.zig",
         "build.zig.zon",
     },
-    .fingerprint = 0xfc647596d0e60f80,
+    .fingerprint = 0x705b099196c93755,
 }

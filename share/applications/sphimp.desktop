@@ -1,9 +1,0 @@
-[Desktop Entry]
-Version=0.0.0
-Type=Application
-Name=sphimp
-Exec=sphimp --images %U
-TryExec=sphimp
-Icon=sphimp
-Terminal=false
-StartupWMClass=sphimp
