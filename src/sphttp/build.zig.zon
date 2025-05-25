@@ -1,0 +1,17 @@
+.{
+    .name = .sphttp,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.14.0",
+    .dependencies = .{
+        .sphalloc = .{
+            .path = "../sphalloc",
+        },
+        .sphutil = .{
+            .path = "../sphutil",
+        },
+    },
+    .paths = .{
+        "src",
+    },
+    .fingerprint = 0x739aecadcb6aa2f9,
+}
