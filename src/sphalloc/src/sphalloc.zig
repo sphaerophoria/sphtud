@@ -774,6 +774,22 @@ const test_helpers = struct {
     }
 };
 
+fn failingAlloc(_: *anyopaque, _: usize, _: Alignment, _: usize) ?[*]u8 {
+    return null;
+}
+
+const failing_vtable = std.mem.Allocator.VTable{
+    .alloc = failingAlloc,
+    .free = nullFree,
+    .remap = nullRemap,
+    .resize = nullResize,
+};
+
+pub const failing_allocator = std.mem.Allocator{
+    .ptr = undefined,
+    .vtable = &failing_vtable,
+};
+
 test {
     std.testing.refAllDeclsRecursive(@This());
 }

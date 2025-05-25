@@ -154,6 +154,28 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             return ret.items;
         }
 
+        pub fn asContiguousSlice(self: *const Self, alloc: Allocator, start: usize, end: usize) ![]T {
+            const first_expansion_size = firstExpansionSize(self.initial_block_len);
+            const start_block = idxToBlockId(self.initial_block_len, start, first_expansion_size);
+            const end_block = idxToBlockId(self.initial_block_len, @max(end - 1, start), first_expansion_size);
+
+            if (start_block == end_block) {
+                const block_start = blockStart(self.initial_block_len, start_block, first_expansion_size);
+                return self.blocks[start_block].?[start - block_start .. end - block_start];
+            }
+
+            var ret = try RuntimeBoundedArray(T).init(alloc, end - start);
+            var slice_iter = self.sliceIter();
+            var passed_elems: usize = 0;
+            while (slice_iter.next()) |s| {
+                const s_start = start -| passed_elems;
+                const s_end = @min(end -| passed_elems, s.len);
+                try ret.appendSlice(s[s_start..s_end]);
+                passed_elems += s.len;
+            }
+            return ret.items;
+        }
+
         // Get the next contiguous block of memory for writing
         pub fn getWritableArea(self: *Self) ![]T {
             if (self.len >= self.capacity) {
@@ -784,5 +806,32 @@ test "RuntimeSegmentedList getWritableArea" {
     {
         const writable = try list.getWritableArea();
         try std.testing.expectEqual(0, writable.len);
+    }
+}
+
+test "RuntimeSegmentedList asContiguousSlice" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 20, 2000);
+    try list.setContents("The quick brown fox jumped over the lazy dog");
+
+    // Already contiguous
+    {
+        const s = try list.asContiguousSlice(arena.allocator(), 5, 10);
+        try std.testing.expectEqualStrings("uick ", s);
+        try std.testing.expectEqual(list.blocks[0].? + 5, s.ptr);
+    }
+
+    // Full block already contiguous
+    {
+        const s = try list.asContiguousSlice(arena.allocator(), 0, 20);
+        try std.testing.expectEqualStrings("The quick brown fox ", s);
+    }
+
+    // Make new contiguous
+    {
+        const s = try list.asContiguousSlice(arena.allocator(), 0, list.len);
+        try std.testing.expectEqualStrings("The quick brown fox jumped over the lazy dog", s);
     }
 }
