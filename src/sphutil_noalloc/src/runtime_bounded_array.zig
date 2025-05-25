@@ -60,6 +60,14 @@ pub fn RuntimeBoundedArray(comptime T: type) type {
         pub fn pop(self: *Self) void {
             self.items = self.items.ptr[0 .. self.items.len - 1];
         }
+
+        pub fn popOrNull(self: *Self) ?T {
+            if (self.items.len == 0) return null;
+
+            const elem = self.items[self.items.len - 1];
+            self.pop();
+            return elem;
+        }
     };
 }
 
