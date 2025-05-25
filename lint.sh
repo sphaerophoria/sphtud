@@ -28,4 +28,12 @@ pushd src/sphalloc/
 zig build test
 popd
 
+pushd src/sphttp/
+zig build test
+popd
+
+pushd src/sphevent/
+zig build test
+popd
+
 zig build

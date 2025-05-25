@@ -24,6 +24,12 @@
         .sphutil = .{
             .path = "src/sphutil",
         },
+        .sphevent = .{
+            .path = "src/sphevent",
+        },
+        .sphttp = .{
+            .path = "src/sphttp",
+        },
     },
     .paths = .{
         "src",
