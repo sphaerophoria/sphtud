@@ -22,6 +22,28 @@ pub fn init(alloc: Allocator, now: std.time.Instant, sample_period_ms: u32, root
     };
 }
 
+pub fn snapshot(leaky: Allocator, root: *Sphalloc, max_elems: usize) ![]Sample {
+    var it = SphallocDfs.init(root);
+
+    var name_indexes = std.StringHashMap(usize).init(leaky);
+    var ret = try sphutil.RuntimeBoundedArray(Sample).init(leaky, max_elems);
+
+    while (try it.next()) |elem| {
+        const gop = try name_indexes.getOrPut(elem.name);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = ret.items.len;
+            try ret.append(.{
+                .name = elem.name,
+                .memory_used = 0,
+            });
+        }
+
+        ret.items[gop.value_ptr.*].memory_used += elem.totalMemoryAllocated();
+    }
+
+    return ret.items;
+}
+
 pub fn step(self: *MemoryTracker, now: std.time.Instant) !void {
     if (now.since(self.last_sample) / std.time.ns_per_ms < self.sample_period_ms) {
         return;
