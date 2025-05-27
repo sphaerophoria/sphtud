@@ -7,7 +7,7 @@ const sphalloc = @import("sphalloc");
 /// notable differences
 /// * Initial block size does not need to be a power of 2
 /// * Initial block is runtime allocated
-/// * Dynamic segments are allocated up front (maybe they shouldn't be...)
+/// * Dynamic segment list is allocated up front (maybe it shouldn't be...)
 /// * Dynamic segments are created with a tiny page allocator
 pub fn RuntimeSegmentedList(comptime T: type) type {
     return struct {
@@ -22,8 +22,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         //
         // Number of expansions is fixed on initialization, we do not attempt
         // to resize
-        expansions: [][*]T,
-        expansion_allocated: std.DynamicBitSetUnmanaged,
+        expansions: []?[*]T,
         capacity: usize,
         len: usize = 0,
 
@@ -37,14 +36,14 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
 
             const max_idx = max_size - 1;
             const num_expansions = idxToExpansionSlot(small_size, max_idx, firstExpansionSize(small_size)) + 1;
-            const expansions = try arena.alloc([*]T, num_expansions);
-            const expansion_allocated = try std.DynamicBitSetUnmanaged.initEmpty(arena, num_expansions);
+            const expansions = try arena.alloc(?[*]T, num_expansions);
+            comptime std.debug.assert(@sizeOf(?[*]T) == @sizeOf(*T));
+            @memset(expansions, null);
 
             return .{
                 .alloc = tiny_page_alloc,
                 .initial_block = initial_block,
                 .expansions = expansions,
-                .expansion_allocated = expansion_allocated,
                 .capacity = max_size,
             };
         }
@@ -101,7 +100,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
 
             const block = idxToExpansionSlot(self.initial_block.len, idx, firstExpansionSize(self.initial_block.len));
             const block_start = expansionSlotStart(self.initial_block.len, block, firstExpansionSize(self.initial_block.len));
-            return &self.expansions[block][idx - block_start];
+            return &self.expansions[block].?[idx - block_start];
         }
 
         pub fn setContents(self: *Self, content: []const T) !void {
@@ -139,7 +138,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
                 }
 
                 try self.ensureBlockAllocated(block_id);
-                @memcpy(self.expansions[block_id][0..expansion_copy_len], content[block_start..content_end]);
+                @memcpy(self.expansions[block_id].?[0..expansion_copy_len], content[block_start..content_end]);
                 block_id += 1;
             }
 
@@ -205,16 +204,13 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             };
 
             fn next(self: *UnusedBlocksIt) ?Output {
-                if (!self.parent.expansion_allocated.isSet(self.expansion_idx)) {
-                    return null;
-                }
-
+                const expansion = self.parent.expansions[self.expansion_idx] orelse return null;
                 defer self.expansion_idx += 1;
                 const block_size = expansionBlockSize(self.expansion_idx, firstExpansionSize(self.parent.initial_block.len));
 
                 return .{
                     .idx = self.expansion_idx,
-                    .block = self.parent.expansions[self.expansion_idx][0..block_size],
+                    .block = expansion[0..block_size],
                 };
             }
         };
@@ -224,7 +220,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
 
             while (unused_block_it.next()) |block| {
                 self.alloc.free(block.block);
-                self.expansion_allocated.unset(block.idx);
+                self.expansions[block.idx] = null;
             }
         }
 
@@ -243,14 +239,13 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             const block_start = expansionSlotStart(self.initial_block.len, block, firstExpansionSize(self.initial_block.len));
             const expansion_offs = self.len - block_start;
             std.debug.assert(expansion_offs < expansionBlockSize(block, firstExpansionSize(self.initial_block.len)));
-            self.expansions[block][expansion_offs] = elem;
+            self.expansions[block].?[expansion_offs] = elem;
             self.len += 1;
         }
 
         fn ensureBlockAllocated(self: *Self, block: usize) !void {
-            if (!self.expansion_allocated.isSet(block)) {
+            if (self.expansions[block] == null) {
                 self.expansions[block] = (try self.alloc.alloc(T, expansionBlockSize(block, firstExpansionSize(self.initial_block.len)))).ptr;
-                self.expansion_allocated.set(block);
             }
         }
 
@@ -279,8 +274,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
 
                 defer self.block_id += 1;
 
-                const expansion = self.parent.expansions[self.block_id];
-                std.debug.assert(self.parent.expansion_allocated.isSet(self.block_id));
+                const expansion = self.parent.expansions[self.block_id] orelse unreachable;
 
                 const block_size = expansionBlockSize(self.block_id, firstExpansionSize(self.parent.initial_block.len));
                 const len = @min(
@@ -325,7 +319,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
 
                 return .{
                     .inner = inner,
-                    .current_slice = parent.expansions[block][0..block_len],
+                    .current_slice = parent.expansions[block].?[0..block_len],
                     .slice_idx = block_offs,
                 };
             }
@@ -524,19 +518,19 @@ test "RuntimeSegmentedList setContents" {
     const content2 = "The quick brown fox jumped over the lazy dog";
     try list.setContents(content2);
 
-    try std.testing.expectEqual(false, list.expansion_allocated.isSet(2));
-    try std.testing.expectEqual(false, list.expansion_allocated.isSet(3));
-    try std.testing.expectEqual(false, list.expansion_allocated.isSet(4));
-    try std.testing.expectEqual(false, list.expansion_allocated.isSet(5));
+    try std.testing.expectEqual(null, list.expansions[2]);
+    try std.testing.expectEqual(null, list.expansions[3]);
+    try std.testing.expectEqual(null, list.expansions[4]);
+    try std.testing.expectEqual(null, list.expansions[5]);
 
     const content3 = "The";
     try list.setContents(content3);
-    try std.testing.expectEqual(false, list.expansion_allocated.isSet(0));
-    try std.testing.expectEqual(false, list.expansion_allocated.isSet(1));
-    try std.testing.expectEqual(false, list.expansion_allocated.isSet(2));
-    try std.testing.expectEqual(false, list.expansion_allocated.isSet(3));
-    try std.testing.expectEqual(false, list.expansion_allocated.isSet(4));
-    try std.testing.expectEqual(false, list.expansion_allocated.isSet(5));
+    try std.testing.expectEqual(null, list.expansions[0]);
+    try std.testing.expectEqual(null, list.expansions[1]);
+    try std.testing.expectEqual(null, list.expansions[2]);
+    try std.testing.expectEqual(null, list.expansions[3]);
+    try std.testing.expectEqual(null, list.expansions[4]);
+    try std.testing.expectEqual(null, list.expansions[5]);
 }
 
 test "RuntimeSegmentedList UnusedBlockIter" {
