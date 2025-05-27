@@ -192,6 +192,23 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             }
         };
 
+        pub fn jsonStringify(self: Self, jw: anytype) !void {
+            // NOTE string lists are not serialized as strings. The standard
+            // library does this with some members that are not easy for us to
+            // yoink out (jw.valueStart() and jw.valueEnd() +
+            // encodeJsonStringChars would be nice)
+
+            var it = self.sliceIter();
+
+            try jw.beginArray();
+            while (it.next()) |s| {
+                for (s) |v| {
+                    try jw.write(v);
+                }
+            }
+            try jw.endArray();
+        }
+
         fn freeUnusedBlocks(self: *Self) void {
             var unused_block_it = UnusedBlocksIt.init(self);
 
@@ -622,5 +639,18 @@ test "RuntimeSegmentedList iter offset" {
     {
         var it = list.iterFrom(579);
         try std.testing.expectEqual(579, it.next().?.*);
+    }
+}
+
+test "RuntimeSegmentedList jsonStringify" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    {
+        var list = try RuntimeSegmentedList(u16).init(arena.allocator(), std.heap.page_allocator, 20, 500);
+        const data = &[_]u16{ 16, 32, 123, 542, 99 };
+        try list.setContents(data);
+        const s = try std.json.stringifyAlloc(arena.allocator(), list, .{});
+        try std.testing.expectEqualStrings("[16,32,123,542,99]", s);
     }
 }
