@@ -88,8 +88,9 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         fn getImpl(self: Self, idx: usize) *T {
             if (idx >= self.len) unreachable;
 
-            const block = idxToBlockId(self.initial_block_len, idx, firstExpansionSize(self.initial_block_len));
-            const block_start = blockStart(self.initial_block_len, block, firstExpansionSize(self.initial_block_len));
+            const first_expansion_size = firstExpansionSize(self.initial_block_len);
+            const block = idxToBlockId(self.initial_block_len, idx, first_expansion_size);
+            const block_start = blockStart(self.initial_block_len, block, first_expansion_size);
             return &self.blocks[block].?[idx - block_start];
         }
 
@@ -104,9 +105,10 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
 
             var block_id: usize = 0;
 
+            const first_expansion_size = firstExpansionSize(self.initial_block_len);
             while (true) {
-                const block_start = blockStart(self.initial_block_len, block_id, firstExpansionSize(self.initial_block_len));
-                const block_size = blockSize(block_id, self.initial_block_len, firstExpansionSize(self.initial_block_len));
+                const block_start = blockStart(self.initial_block_len, block_id, first_expansion_size);
+                const block_size = blockSize(block_id, self.initial_block_len, first_expansion_size);
                 const block_end = block_start + block_size;
 
                 if (content.len <= block_start) break;
@@ -200,9 +202,10 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         }
 
         fn appendToBlock(self: *Self, block: usize, elem: T) void {
-            const block_start = blockStart(self.initial_block_len, block, firstExpansionSize(self.initial_block_len));
+            const first_expansion_size = firstExpansionSize(self.initial_block_len);
+            const block_start = blockStart(self.initial_block_len, block, first_expansion_size);
             const block_offs = self.len - block_start;
-            std.debug.assert(block_offs < blockSize(block, self.initial_block_len, firstExpansionSize(self.initial_block_len)));
+            std.debug.assert(block_offs < blockSize(block, self.initial_block_len, first_expansion_size));
             self.blocks[block].?[block_offs] = elem;
             self.len += 1;
         }
@@ -253,9 +256,10 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             slice_idx: usize = 0,
 
             fn init(parent: *const Self, idx: usize) Iter {
-                const block = idxToBlockId(parent.initial_block_len, idx, firstExpansionSize(parent.initial_block_len));
-                const block_start = blockStart(parent.initial_block_len, block, firstExpansionSize(parent.initial_block_len));
-                const block_len = blockSize(block, parent.initial_block_len, firstExpansionSize(parent.initial_block_len));
+                const first_expansion_size = firstExpansionSize(parent.initial_block_len);
+                const block = idxToBlockId(parent.initial_block_len, idx, first_expansion_size);
+                const block_start = blockStart(parent.initial_block_len, block, first_expansion_size);
+                const block_len = blockSize(block, parent.initial_block_len, first_expansion_size);
                 const block_offs = idx - block_start;
 
                 const inner = SliceIter{
