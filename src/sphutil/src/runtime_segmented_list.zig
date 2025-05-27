@@ -56,6 +56,21 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             self.appendToBlock(block, elem);
         }
 
+        pub fn appendSlice(self: *Self, slice: []const T) !void {
+            if (self.len + slice.len > self.capacity) {
+                return error.OutOfMemory;
+            }
+
+            var remaining_slice = slice;
+            while (remaining_slice.len > 0) {
+                const writeable_area = try self.getWritableArea();
+                const copy_len = @min(writeable_area.len, remaining_slice.len);
+                @memcpy(writeable_area[0..copy_len], remaining_slice[0..copy_len]);
+                remaining_slice = if (copy_len == slice.len) &.{} else remaining_slice[copy_len..];
+                self.len += copy_len;
+            }
+        }
+
         pub fn get(self: Self, idx: usize) T {
             return getImpl(self, idx).*;
         }
@@ -103,30 +118,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
 
             defer self.freeUnusedBlocks();
 
-            var block_id: usize = 0;
-
-            const first_expansion_size = firstExpansionSize(self.initial_block_len);
-            while (true) {
-                const block_start = blockStart(self.initial_block_len, block_id, first_expansion_size);
-                const block_size = blockSize(block_id, self.initial_block_len, first_expansion_size);
-                const block_end = block_start + block_size;
-
-                if (content.len <= block_start) break;
-
-                const content_end = @min(content.len, block_end);
-                const block_copy_len = content_end - block_start;
-
-                if (block_copy_len == 0) {
-                    self.len = content.len;
-                    break;
-                }
-
-                try self.ensureBlockAllocated(block_id);
-                @memcpy(self.blocks[block_id].?[0..block_copy_len], content[block_start..content_end]);
-                block_id += 1;
-            }
-
-            self.len = content.len;
+            try self.appendSlice(content);
         }
 
         pub fn contentMatches(self: Self, content: []const T) bool {
@@ -162,6 +154,28 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             return ret.items;
         }
 
+        // Get the next contiguous block of memory for writing
+        pub fn getWritableArea(self: *Self) ![]T {
+            if (self.len >= self.capacity) {
+                return &.{};
+            }
+
+            const first_expansion_size = firstExpansionSize(self.initial_block_len);
+            const block = idxToBlockId(self.initial_block_len, self.len, first_expansion_size);
+            const block_start = blockStart(self.initial_block_len, block, first_expansion_size);
+            const block_size = blockSize(block, self.initial_block_len, first_expansion_size);
+
+            try self.ensureBlockAllocated(block);
+            return self.blocks[block].?[self.len - block_start .. block_size];
+        }
+
+        // Paired with getWritableArea can be used to flag how much of the
+        // writeable area we populated
+        pub fn grow(self: *Self, amount: usize) void {
+            std.debug.assert(amount <= (self.getWritableArea() catch unreachable).len);
+            self.len += amount;
+        }
+
         const UnusedBlocksIt = struct {
             parent: *Self,
             block_idx: usize,
@@ -181,7 +195,12 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             };
 
             fn next(self: *UnusedBlocksIt) ?Output {
+                if (self.block_idx >= self.parent.blocks.len) {
+                    return null;
+                }
+
                 const block = self.parent.blocks[self.block_idx] orelse return null;
+
                 defer self.block_idx += 1;
                 const block_size = blockSize(self.block_idx, self.parent.initial_block_len, firstExpansionSize(self.parent.initial_block_len));
 
@@ -652,5 +671,118 @@ test "RuntimeSegmentedList jsonStringify" {
         try list.setContents(data);
         const s = try std.json.stringifyAlloc(arena.allocator(), list, .{});
         try std.testing.expectEqualStrings("[16,32,123,542,99]", s);
+    }
+}
+
+test "RuntimeSegmentedList append slice" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 20, 3000);
+
+    // Copying into empty list
+    try list.appendSlice("asdf");
+    {
+        const final = try list.makeContiguous(arena.allocator());
+        try std.testing.expectEqualSlices(u8, "asdf", final);
+    }
+
+    // Copying into partially populated initial block
+    try list.appendSlice("1234");
+    {
+        const final = try list.makeContiguous(arena.allocator());
+        try std.testing.expectEqualSlices(u8, "asdf1234", final);
+    }
+
+    // Copying into over initial block -> first expansion boundary
+    // 8 bytes so far, 20 bytes in first block, need at least 12 more
+    try list.appendSlice("abcdefghijklmnop");
+    {
+        const final = try list.makeContiguous(arena.allocator());
+        try std.testing.expectEqualSlices(u8, "asdf1234abcdefghijklmnop", final);
+        try std.testing.expect(list.len > list.initial_block_len);
+    }
+
+    // Copy over many expansion boundaries
+    // (tiny) page size is 256 bytes
+    // First block should be 256, next 512, next 1024
+    {
+        const big_block = try arena.allocator().alloc(u8, 2048);
+        for (0..big_block.len) |i| {
+            big_block[i] = @truncate(i);
+        }
+        const old_len = list.len;
+        try list.appendSlice(big_block);
+        const final = try list.makeContiguous(arena.allocator());
+        try std.testing.expectEqualSlices(u8, "asdf1234abcdefghijklmnop", final[0..old_len]);
+        try std.testing.expectEqualSlices(u8, big_block, final[old_len..]);
+        try std.testing.expect(list.blocks[0] != null);
+        try std.testing.expect(list.blocks[1] != null);
+        try std.testing.expect(list.blocks[2] != null);
+        try std.testing.expect(list.blocks[3] != null);
+    }
+
+    // Perfect boundary
+    {
+        const remaining_len = list.capacity - list.len;
+        const remaining = try arena.allocator().alloc(u8, remaining_len);
+        @memset(remaining, 0);
+        try list.appendSlice(remaining);
+        try std.testing.expectEqual(list.len, list.capacity);
+    }
+
+    // Too big
+    {
+        list.shrink(2500);
+
+        const remaining_len = list.capacity - list.len + 1;
+        const remaining = try arena.allocator().alloc(u8, remaining_len);
+        @memset(remaining, 0);
+        try std.testing.expectError(error.OutOfMemory, list.appendSlice(remaining));
+        try std.testing.expectEqual(list.len, 2500);
+    }
+}
+
+test "RuntimeSegmentedList getWritableArea" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 40, 2000);
+
+    // Initial block
+    {
+        const writable = try list.getWritableArea();
+        try std.testing.expectEqual(writable.ptr, list.blocks[0].?);
+        try std.testing.expectEqual(writable.len, list.initial_block_len);
+        @memset(writable, 0);
+        list.grow(20);
+    }
+
+    // After growth should still be initial block, but less of it
+    {
+        const writable = try list.getWritableArea();
+        try std.testing.expectEqual(writable.ptr, list.blocks[0].? + 20);
+        try std.testing.expectEqual(writable.len, list.initial_block_len - 20);
+        @memset(writable, 0);
+        list.grow(writable.len);
+    }
+
+    // expansion block
+    {
+        const writable = try list.getWritableArea();
+        try std.testing.expectEqual(writable.ptr, list.blocks[1]);
+        try std.testing.expectEqual(writable.len, 256);
+        @memset(writable, 0);
+        list.grow(writable.len);
+    }
+
+    while (list.len < list.capacity) {
+        try list.append(0);
+    }
+
+    // full
+    {
+        const writable = try list.getWritableArea();
+        try std.testing.expectEqual(0, writable.len);
     }
 }
