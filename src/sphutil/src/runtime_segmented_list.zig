@@ -411,7 +411,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
 
             fn init(parent: *const Self, idx: usize, end: usize) Iter {
                 var inner = BlockIter.init(parent, idx, end);
-                const current_slice = inner.next().?;
+                const current_slice: []T = inner.next() orelse &.{};
 
                 return .{
                     .inner = inner,
@@ -443,7 +443,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         }
 
         pub fn iterFrom(self: *const Self, idx: usize) Iter {
-            return Iter.init(self, idx, self.len);
+            return Iter.init(self, @min(idx, self.len), self.len);
         }
 
         fn firstExpansionSize(initial_len: usize) usize {
@@ -741,6 +741,12 @@ test "RuntimeSegmentedList iter offset" {
 
     var list = try RuntimeSegmentedList(usize).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
 
+    // Empty list
+    {
+        var it = list.iterFrom(0);
+        try std.testing.expectEqual(null, it.next());
+    }
+
     for (0..20000) |i| {
         try list.append(i);
     }
@@ -768,6 +774,12 @@ test "RuntimeSegmentedList iter offset" {
     {
         var it = list.iterFrom(579);
         try std.testing.expectEqual(579, it.next().?.*);
+    }
+
+    // Out of range request
+    {
+        var it = list.iterFrom(list.len + 100);
+        try std.testing.expectEqual(null, it.next());
     }
 }
 
