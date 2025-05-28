@@ -25,7 +25,6 @@ pub const HttpHeader = struct {
         return 0;
     }
 
-
     pub fn fieldIter(self: HttpHeader, content: []const u8) FieldIter {
         return .{
             .line_it = std.mem.splitSequence(u8, content[self.fields.start..self.fields.end], "\r\n"),
@@ -50,14 +49,13 @@ pub const HttpHeader = struct {
                 if (key_end + 1 > line.len)
                     ""
                 else
-                    std.mem.trim(u8, line[key_end + 1..], &std.ascii.whitespace);
+                    std.mem.trim(u8, line[key_end + 1 ..], &std.ascii.whitespace);
 
             return .{
                 .key = key,
                 .value = value,
             };
         }
-
     };
 };
 
@@ -122,7 +120,6 @@ pub const HttpReader = struct {
                 if (std.mem.indexOf(u8, &overlap_buf, needle)) |p| {
                     // FIXME: ew
                     try self.finishHeader(scratch, old_len - needle.len + 1 + p);
-
                 } else {
                     // New data
                     const new_data = self.buf.asContiguousSlice(sphalloc.failing_allocator, old_len, self.buf.len) catch unreachable;
@@ -154,7 +151,7 @@ pub const HttpReader = struct {
         const version = it.next() orelse return error.NoVersion;
 
         const target_start = target.ptr - header.ptr;
-        self.header = HttpHeader {
+        self.header = HttpHeader{
             .method = @enumFromInt(std.http.Method.parse(method)),
             .target = .{
                 .start = target_start,
@@ -167,7 +164,6 @@ pub const HttpReader = struct {
             },
         };
 
-
         self.body_start = header_end + 4;
         self.body_len = try self.header.?.findContentLength(header);
         self.state = .header_complete;
@@ -178,20 +174,18 @@ pub const HttpReader = struct {
 };
 
 pub fn HttpWriter(comptime Writer: type) type {
-    return  struct {
+    return struct {
         writer: Writer,
 
         const Self = @This();
 
         pub fn start(self: *Self, status: std.http.Status, content_len: usize) !void {
-            try self.writer.print(
-                "HTTP/1.1 {d} {s}\r\n" ++
-                "Content-Length: {d}\r\n"
-                , .{@intFromEnum(status), status.phrase() orelse "", content_len});
+            try self.writer.print("HTTP/1.1 {d} {s}\r\n" ++
+                "Content-Length: {d}\r\n", .{ @intFromEnum(status), status.phrase() orelse "", content_len });
         }
 
         pub fn appendHeader(self: *Self, key: []const u8, val: []const u8) !void {
-            try self.writer.print("{s}: {s}\r\n", .{key, val});
+            try self.writer.print("{s}: {s}\r\n", .{ key, val });
         }
 
         pub fn writeBody(self: *Self, content: []const u8) !void {
@@ -206,4 +200,3 @@ pub fn httpWriter(writer: anytype) HttpWriter(@TypeOf(writer)) {
         .writer = writer,
     };
 }
-

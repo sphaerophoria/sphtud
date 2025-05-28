@@ -1,4 +1,3 @@
-
 const std = @import("std");
 const sphutil = @import("sphutil");
 const sphalloc = @import("sphalloc");
@@ -16,8 +15,8 @@ pub const Handler = struct {
     fd: OsHandle,
 
     pub const VTable = struct {
-        poll: *const fn(ctx: ?*anyopaque, loop: *Loop) PollResult,
-        close: *const fn(ctx: ?*anyopaque) void,
+        poll: *const fn (ctx: ?*anyopaque, loop: *Loop) PollResult,
+        close: *const fn (ctx: ?*anyopaque) void,
     };
 
     pub fn poll(self: Handler, loop: *Loop) PollResult {
@@ -38,7 +37,12 @@ pub const Loop = struct {
         return .{
             .fd = fd,
             // 1000 connections is a ton, 1 million is insane
-            .handler_pool = try .init(alloc.arena(), alloc.block_alloc.allocator(), 1024, 1 * 1024 * 1024,),
+            .handler_pool = try .init(
+                alloc.arena(),
+                alloc.block_alloc.allocator(),
+                1024,
+                1 * 1024 * 1024,
+            ),
         };
     }
 
@@ -67,7 +71,7 @@ pub const Loop = struct {
                 .in_progress => {},
                 .complete => {
                     try to_remove.append(event.data.ptr);
-                }
+                },
             }
         }
 
@@ -104,7 +108,6 @@ pub const Loop = struct {
             .events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.OUT | std.os.linux.EPOLL.ET | std.os.linux.EPOLL.HUP,
             .data = .{ .ptr = handler_idx },
         };
-
     }
 };
 
@@ -115,7 +118,7 @@ pub const net = struct {
 
         pub const ConnectionGenerator = struct {
             ptr: ?*anyopaque,
-            generate_fn: *const fn(ctx: ?*anyopaque, connection: std.net.Server.Connection) anyerror!Handler,
+            generate_fn: *const fn (ctx: ?*anyopaque, connection: std.net.Server.Connection) anyerror!Handler,
 
             fn generate(self: ConnectionGenerator, connection: std.net.Server.Connection) !Handler {
                 return try self.generate_fn(self.ptr, connection);
@@ -130,7 +133,7 @@ pub const net = struct {
             };
         }
 
-        const handler_vtable = Handler.VTable {
+        const handler_vtable = Handler.VTable{
             .poll = poll,
             .close = close,
         };
