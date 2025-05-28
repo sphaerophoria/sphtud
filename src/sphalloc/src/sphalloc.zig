@@ -309,7 +309,7 @@ pub fn TinyPageAllocator(comptime max_free_elems: comptime_int) type {
         const page_size_log2 = std.math.log2(std.heap.pageSize());
         const num_lists = page_size_log2 - tiny_page_log2;
 
-        page_allocator: Allocator,
+        page_allocator: Allocator = std.heap.page_allocator,
         free_lists: [num_lists][max_free_elems][*]u8 = undefined,
         list_lens: [num_lists]usize = [1]usize{0} ** num_lists,
 
