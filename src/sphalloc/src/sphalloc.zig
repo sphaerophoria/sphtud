@@ -190,6 +190,7 @@ pub const ScratchAlloc = struct {
     }
 
     pub fn reset(self: *ScratchAlloc) void {
+        @memset(self.backing.buffer, undefined);
         self.backing.reset();
     }
 
@@ -219,11 +220,15 @@ pub const ScratchAlloc = struct {
     }
 
     pub fn restore(self: *ScratchAlloc, restore_point: Checkpoint) void {
+        @memset(self.backing.buffer[restore_point..self.backing.end_index], undefined);
         self.backing.end_index = restore_point;
     }
 
     pub fn restoreCheckpointAndPreserve(self: *ScratchAlloc, comptime T: type, alloc: Allocator, content: []const T, restore_point_base: Checkpoint) ![]T {
         var restore_point = restore_point_base;
+        // NOTE: restore_point is VARIABLE. The initial value is as far back as
+        // we want to go, but if we have content to restore, it will likely be
+        // further down
         defer self.restore(restore_point);
 
         const my_alloc = self.backing.allocator();
@@ -235,7 +240,7 @@ pub const ScratchAlloc = struct {
         std.debug.assert(self.isPartOfUs(@ptrCast(content)));
 
         const base_ptr: usize = @intFromPtr(self.backing.buffer.ptr);
-        const unaligned_alloc_start: usize = base_ptr + self.backing.end_index;
+        const unaligned_alloc_start: usize = base_ptr + restore_point_base;
         const aligned_alloc_start = std.mem.alignForward(usize, unaligned_alloc_start, @alignOf(T));
         const alloc_end = aligned_alloc_start + @sizeOf(T) * content.len;
 
@@ -277,7 +282,13 @@ pub const ScratchAlloc = struct {
         @memset(new_content, 0xff);
 
         try std.testing.expectEqualSlices(i32, &.{ 0, 1, 2, 3 }, content);
-        try std.testing.expect(@as(usize, @intFromPtr(new_content.ptr)) >= @as(usize, @intFromPtr(content.ptr + content.len)));
+        const new_content_ptr: usize = @intFromPtr(new_content.ptr);
+        try std.testing.expect(new_content_ptr >= @as(usize, @intFromPtr(content.ptr + content.len)));
+
+        const allocator_base_address: usize = @intFromPtr(&buf);
+        const original_content_ptr: usize = @intFromPtr(content.ptr);
+        const expected_new_content_addr = allocator_base_address + std.mem.alignForward(usize, 1009, @alignOf(i32));
+        try std.testing.expectEqual(expected_new_content_addr, original_content_ptr);
     }
 };
 
