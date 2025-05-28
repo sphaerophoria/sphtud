@@ -56,17 +56,17 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             self.appendToBlock(block, elem);
         }
 
-        pub fn appendSlice(self: *Self, slice: []const T) !void {
-            if (self.len + slice.len > self.capacity) {
+        pub fn appendSlice(self: *Self, data: []const T) !void {
+            if (self.len + data.len > self.capacity) {
                 return error.OutOfMemory;
             }
 
-            var remaining_slice = slice;
-            while (remaining_slice.len > 0) {
+            var remaining = data;
+            while (remaining.len > 0) {
                 const writeable_area = try self.getWritableArea();
-                const copy_len = @min(writeable_area.len, remaining_slice.len);
-                @memcpy(writeable_area[0..copy_len], remaining_slice[0..copy_len]);
-                remaining_slice = if (copy_len == slice.len) &.{} else remaining_slice[copy_len..];
+                const copy_len = @min(writeable_area.len, remaining.len);
+                @memcpy(writeable_area[0..copy_len], remaining[0..copy_len]);
+                remaining = if (copy_len == data.len) &.{} else remaining[copy_len..];
                 self.len += copy_len;
             }
         }
@@ -122,7 +122,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         }
 
         pub fn contentMatches(self: Self, content: []const T) bool {
-            var it = self.sliceIter();
+            var it = self.blockIter();
             var content_idx: usize = 0;
             while (true) {
                 const part = it.next() orelse &.{};
@@ -147,8 +147,8 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
 
         pub fn makeContiguous(self: *const Self, alloc: Allocator) ![]T {
             var ret = try RuntimeBoundedArray(T).init(alloc, self.len);
-            var slice_iter = self.sliceIter();
-            while (slice_iter.next()) |s| {
+            var block_iter = self.blockIter();
+            while (block_iter.next()) |s| {
                 try ret.appendSlice(s);
             }
             return ret.items;
@@ -165,9 +165,9 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             }
 
             var ret = try RuntimeBoundedArray(T).init(alloc, end - start);
-            var slice_iter = self.sliceIter();
+            var block_iter = self.blockIter();
             var passed_elems: usize = 0;
-            while (slice_iter.next()) |s| {
+            while (block_iter.next()) |s| {
                 const s_start = start -| passed_elems;
                 const s_end = @min(end -| passed_elems, s.len);
                 try ret.appendSlice(s[s_start..s_end]);
@@ -239,7 +239,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             // yoink out (jw.valueStart() and jw.valueEnd() +
             // encodeJsonStringChars would be nice)
 
-            var it = self.sliceIter();
+            var it = self.blockIter();
 
             try jw.beginArray();
             while (it.next()) |s| {
@@ -248,6 +248,95 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
                 }
             }
             try jw.endArray();
+        }
+
+        pub const Slice = struct {
+            parent: *Self,
+            start: usize,
+            len: usize,
+
+            pub fn get(self: Slice, idx: usize) T {
+                return self.parent.get(self.parentIdx(idx));
+            }
+
+            pub fn getPtr(self: Slice, idx: usize) *T {
+                return self.parent.getPtr(self.parentIdx(idx));
+            }
+
+            pub fn iter(self: Slice) Iter {
+                return Iter.init(self.parent, self.start, self.start + self.len);
+            }
+
+            pub fn blockIter(self: Slice) BlockIter {
+                return BlockIter.init(self.parent, self.start, self.start + self.len);
+            }
+
+            pub fn reader(self: Slice) Reader {
+                var it = BlockIter.init(self.parent, self.start, self.start + self.len);
+                const current_slice = it.next() orelse &.{};
+                return .{
+                    .it = it,
+                    .current_slice = current_slice,
+                };
+            }
+
+            fn parentIdx(self: Slice, idx: usize) usize {
+                std.debug.assert(idx < self.len);
+                return idx + self.start;
+            }
+        };
+
+        pub fn slice(self: *Self, start: usize, end: usize) Slice {
+            return .{
+                .parent = self,
+                .start = start,
+                .len = end - start,
+            };
+        }
+
+        const Reader = struct {
+            it: BlockIter,
+            current_slice: []const u8,
+
+            fn read(self: *Reader, buffer: []u8) anyerror!usize {
+                var out = buffer;
+
+                while (true) {
+                    const copy_len = @min(out.len, self.current_slice.len);
+                    if (copy_len == 0) break;
+
+                    @memcpy(out[0..copy_len], self.current_slice[0..copy_len]);
+
+                    if (copy_len < self.current_slice.len) {
+                        self.current_slice = self.current_slice[copy_len..];
+                    } else {
+                        self.current_slice = self.it.next() orelse &.{};
+                    }
+
+                    if (copy_len < out.len) {
+                        out = out[copy_len..];
+                    } else {
+                        out = &.{};
+                    }
+                }
+
+                return buffer.len - out.len;
+            }
+
+            pub fn generic(self: *Reader) std.io.GenericReader(*Reader, anyerror, read) {
+                return .{
+                    .context = self,
+                };
+            }
+        };
+
+        pub fn reader(self: *Self) Reader {
+            var it = BlockIter.init(self, 0, self.len);
+            const current_slice = it.next() orelse &.{};
+            return .{
+                .it = it,
+                .current_slice = current_slice,
+            };
         }
 
         fn freeUnusedBlocks(self: *Self) void {
@@ -274,19 +363,24 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             }
         }
 
-        pub const SliceIter = struct {
+        pub const BlockIter = struct {
             parent: *const Self,
-            block_id: usize = 0,
+            block_id: usize,
+            start: usize,
+            end: usize,
 
-            fn init(parent: *const Self) SliceIter {
+            fn init(parent: *const Self, start: usize, end: usize) BlockIter {
                 return .{
                     .parent = parent,
+                    .block_id = idxToBlockId(parent.initial_block_len, start, firstExpansionSize(parent.initial_block_len)),
+                    .start = start,
+                    .end = end,
                 };
             }
 
-            pub fn next(self: *SliceIter) ?[]T {
+            pub fn next(self: *BlockIter) ?[]T {
                 const block_start = blockStart(self.parent.initial_block_len, self.block_id, firstExpansionSize(self.parent.initial_block_len));
-                if (block_start >= self.parent.len) {
+                if (block_start >= self.end) {
                     return null;
                 }
 
@@ -295,40 +389,34 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
                 const block = self.parent.blocks[self.block_id] orelse unreachable;
 
                 const block_size = blockSize(self.block_id, self.parent.initial_block_len, firstExpansionSize(self.parent.initial_block_len));
-                const len = @min(
-                    self.parent.len - block_start,
+                const start = self.start -| block_start;
+                const end = @min(
+                    self.end - block_start,
                     block_size,
                 );
 
-                return block[0..len];
+                return block[start..end];
             }
         };
 
-        pub fn sliceIter(self: *const Self) SliceIter {
-            return SliceIter.init(self);
+        pub fn blockIter(self: *const Self) BlockIter {
+            return BlockIter.init(self, 0, self.len);
         }
 
         pub const Iter = struct {
-            inner: SliceIter,
+            inner: BlockIter,
             current_slice: []T,
             slice_idx: usize = 0,
+            end: usize = 0,
 
-            fn init(parent: *const Self, idx: usize) Iter {
-                const first_expansion_size = firstExpansionSize(parent.initial_block_len);
-                const block = idxToBlockId(parent.initial_block_len, idx, first_expansion_size);
-                const block_start = blockStart(parent.initial_block_len, block, first_expansion_size);
-                const block_len = blockSize(block, parent.initial_block_len, first_expansion_size);
-                const block_offs = idx - block_start;
-
-                const inner = SliceIter{
-                    .parent = parent,
-                    .block_id = block + 1,
-                };
+            fn init(parent: *const Self, idx: usize, end: usize) Iter {
+                var inner = BlockIter.init(parent, idx, end);
+                const current_slice = inner.next().?;
 
                 return .{
                     .inner = inner,
-                    .current_slice = parent.blocks[block].?[0..block_len],
-                    .slice_idx = block_offs,
+                    .current_slice = current_slice,
+                    .slice_idx = 0,
                 };
             }
 
@@ -351,11 +439,11 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         };
 
         pub fn iter(self: *const Self) Iter {
-            return Iter.init(self, 0);
+            return Iter.init(self, 0, self.len);
         }
 
         pub fn iterFrom(self: *const Self, idx: usize) Iter {
-            return Iter.init(self, idx);
+            return Iter.init(self, idx, self.len);
         }
 
         fn firstExpansionSize(initial_len: usize) usize {
@@ -472,7 +560,7 @@ test "RuntimeSegmentedList append" {
     try list.append(4);
     try list.append(5);
 
-    var it = list.sliceIter();
+    var it = list.blockIter();
     try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4, 5 }, it.next().?);
     try std.testing.expectEqual(null, it.next());
 
@@ -481,7 +569,7 @@ test "RuntimeSegmentedList append" {
     try list.append(8);
     try list.append(9);
 
-    it = list.sliceIter();
+    it = list.blockIter();
     try std.testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4, 5 }, it.next().?);
     try std.testing.expectEqualSlices(i32, &.{ 6, 7, 8, 9 }, it.next().?);
 }
@@ -518,8 +606,8 @@ test "RuntimeSegmentedList setContents" {
     const content = "The quick brown fox jumped over the lazy dog " ** 50;
     try list.setContents(content);
 
-    var it = list.sliceIter();
-    it = list.sliceIter();
+    var it = list.blockIter();
+    it = list.blockIter();
     try std.testing.expectEqualStrings("The quick brown fox ", it.next().?);
 
     var start: usize = 20;
@@ -834,4 +922,60 @@ test "RuntimeSegmentedList asContiguousSlice" {
         const s = try list.asContiguousSlice(arena.allocator(), 0, list.len);
         try std.testing.expectEqualStrings("The quick brown fox jumped over the lazy dog", s);
     }
+}
+
+test "RuntimeSegmentedList slicing" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 20, 2000);
+    try list.setContents("The quick brown fox jumped over the lazy dog");
+
+    var slice = list.slice(5, 35);
+    try std.testing.expectEqual('u', slice.get(0));
+    try std.testing.expectEqual('i', slice.get(1));
+    try std.testing.expectEqual('e', slice.get(29));
+
+    try std.testing.expectEqual('u', slice.getPtr(0).*);
+    try std.testing.expectEqual('i', slice.getPtr(1).*);
+    try std.testing.expectEqual('e', slice.getPtr(29).*);
+
+    {
+        var it = slice.iter();
+        for ("uick brown fox jumped over the") |c| {
+            try std.testing.expectEqual(c, it.next().?.*);
+        }
+        try std.testing.expectEqual(null, it.next());
+    }
+
+    {
+        var it = slice.blockIter();
+        try std.testing.expectEqualStrings("uick brown fox ", it.next().?);
+        try std.testing.expectEqualStrings("jumped over the", it.next().?);
+        try std.testing.expectEqual(null, it.next());
+    }
+
+    {
+        var reader = slice.reader();
+        const gr = reader.generic();
+
+        var buf: [1024]u8 = undefined;
+        const read_len = try gr.readAll(&buf);
+        try std.testing.expectEqualStrings("uick brown fox jumped over the", buf[0..read_len]);
+    }
+}
+
+test "RuntimeSegmentedList reader" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 20, 2000);
+    try list.setContents("The quick brown fox jumped over the lazy dog");
+
+    var reader = list.reader();
+    const gr = reader.generic();
+
+    var buf: [1024]u8 = undefined;
+    const read_len = try gr.readAll(&buf);
+    try std.testing.expectEqualStrings("The quick brown fox jumped over the lazy dog", buf[0..read_len]);
 }
