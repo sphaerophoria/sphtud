@@ -55,6 +55,13 @@ pub const Loop = struct {
         try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_ADD, handler.fd, &event);
     }
 
+    pub fn shutdown(self: *Loop) void {
+        var it = self.handler_pool.iter();
+        while (it.next()) |handler| {
+            handler.close();
+        }
+    }
+
     pub fn wait(self: *Loop, scratch: *sphalloc.ScratchAlloc) !void {
         const num_events = 100;
         var events: [num_events]std.os.linux.epoll_event = undefined;
@@ -111,74 +118,132 @@ pub const Loop = struct {
     }
 };
 
-pub const net = struct {
-    pub const Server = struct {
-        server: std.net.Server,
-        connection_generator: ConnectionGenerator,
+pub fn SignalHandler(comptime Ctx: type) type {
+    return struct {
+        fd: OsHandle,
+        ctx: Ctx,
 
-        pub const ConnectionGenerator = struct {
-            ptr: ?*anyopaque,
-            generate_fn: *const fn (ctx: ?*anyopaque, connection: std.net.Server.Connection) anyerror!Handler,
-
-            fn generate(self: ConnectionGenerator, connection: std.net.Server.Connection) !Handler {
-                return try self.generate_fn(self.ptr, connection);
-            }
-        };
-
-        pub fn init(server: std.net.Server, connection_generator: ConnectionGenerator) !Server {
-            try setNonblock(server.stream);
-            return .{
-                .server = server,
-                .connection_generator = connection_generator,
-            };
-        }
+        const Self = @This();
 
         const handler_vtable = Handler.VTable{
             .poll = poll,
             .close = close,
         };
 
-        pub fn handler(self: *Server) Handler {
+        pub fn handler(self: *Self) Handler {
             return .{
                 .ptr = self,
                 .vtable = &handler_vtable,
-                .fd = self.server.stream.handle,
+                .fd = self.fd,
             };
         }
 
-        fn poll(ctx: ?*anyopaque, loop: *Loop) PollResult {
-            const self: *Server = @ptrCast(@alignCast(ctx));
-            return self.pollError(loop) catch |e| {
-                std.log.debug("Failed to accept connection: {s}", .{@errorName(e)});
-                return .complete;
-            };
-        }
-
-        fn pollError(self: *Server, loop: *Loop) !PollResult {
+        fn poll(ctx: ?*anyopaque, _: *Loop) PollResult {
+            const self: *Self = @ptrCast(@alignCast(ctx));
             while (true) {
-                const connection = self.server.accept() catch |e| {
+                var info: std.os.linux.signalfd_siginfo = undefined;
+                const read_bytes = std.posix.read(self.fd, std.mem.asBytes(&info)) catch |e| {
                     if (e == error.WouldBlock) return .in_progress;
-                    return e;
+                    std.log.err("Failed to read signalfd: {s}", .{@errorName(e)});
+                    return .complete;
                 };
 
-                const conn_handler = self.connection_generator.generate(connection) catch |e| {
-                    connection.stream.close();
-                    return e;
-                };
-                errdefer conn_handler.close();
+                if (read_bytes == 0) return .complete;
 
-                // Intentionally a little late so errdefers all work themselves out :)
-                try setNonblock(connection.stream);
-
-                try loop.register(conn_handler);
+                self.ctx.poll(info);
             }
         }
 
         fn close(ctx: ?*anyopaque) void {
-            const self: *Server = @ptrCast(@alignCast(ctx));
-            self.server.stream.close();
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            self.ctx.close();
         }
     };
+}
+
+pub fn signalHandler(comptime signals: []const comptime_int, ctx: anytype) !SignalHandler(@TypeOf(ctx)) {
+    var set: std.os.linux.sigset_t = @splat(0);
+    inline for (signals) |signal| {
+        std.os.linux.sigaddset(&set, signal);
+    }
+
+    const ret: isize = @bitCast(std.os.linux.sigprocmask(std.os.linux.SIG.BLOCK, &set, null));
+    if (ret != 0) {
+        return error.BlockSignals;
+    }
+
+    const fd = try std.posix.signalfd(-1, &set, std.os.linux.SFD.NONBLOCK);
+
+    return .{
+        .fd = fd,
+        .ctx = ctx,
+    };
+}
+
+pub const net = struct {
+    pub fn Server(comptime Ctx: type) type {
+        return struct {
+            inner: std.net.Server,
+            ctx: Ctx,
+
+            const Self = @This();
+
+            const handler_vtable = Handler.VTable{
+                .poll = poll,
+                .close = close,
+            };
+
+            pub fn handler(self: *Self) Handler {
+                return .{
+                    .ptr = self,
+                    .vtable = &handler_vtable,
+                    .fd = self.inner.stream.handle,
+                };
+            }
+
+            fn poll(ctx: ?*anyopaque, loop: *Loop) PollResult {
+                const self: *Self = @ptrCast(@alignCast(ctx));
+                return self.pollError(loop) catch |e| {
+                    std.log.debug("Failed to accept connection: {s}", .{@errorName(e)});
+                    return .complete;
+                };
+            }
+
+            fn pollError(self: *Self, loop: *Loop) !PollResult {
+                while (true) {
+                    const connection = self.inner.accept() catch |e| {
+                        if (e == error.WouldBlock) return .in_progress;
+                        return e;
+                    };
+
+                    const conn_handler = self.ctx.generate(connection) catch |e| {
+                        connection.stream.close();
+                        return e;
+                    };
+                    errdefer conn_handler.close();
+
+                    // Intentionally a little late so errdefers all work themselves out :)
+                    try setNonblock(connection.stream);
+
+                    try loop.register(conn_handler);
+                }
+            }
+
+            fn close(ctx: ?*anyopaque) void {
+                const self: *Self = @ptrCast(@alignCast(ctx));
+                self.ctx.close();
+                self.inner.stream.close();
+            }
+        };
+    }
+
+    pub fn server(s: std.net.Server, ctx: anytype) !Server(@TypeOf(ctx)) {
+        try setNonblock(s.stream);
+        return .{
+            .inner = s,
+            .ctx = ctx,
+        };
+    }
 };
 
 fn setNonblock(conn: std.net.Stream) !void {
@@ -226,15 +291,23 @@ const TestConnection = struct {
         self.inner.stream.close();
         self.state.alloc.destroy(self);
     }
+};
 
-    fn generate(ctx: ?*anyopaque, conn: std.net.Server.Connection) !Handler {
-        const state: *State = @ptrCast(@alignCast(ctx));
-        const ret = try state.alloc.create(TestConnection);
+const TestConnectionGenerator = struct {
+    state: *TestConnection.State,
+    is_closed: bool = false,
+
+    pub fn generate(self: *TestConnectionGenerator, conn: std.net.Server.Connection) !Handler {
+        const ret = try self.state.alloc.create(TestConnection);
         ret.* = .{
-            .state = state,
+            .state = self.state,
             .inner = conn,
         };
         return ret.handler();
+    }
+
+    pub fn close(self: *TestConnectionGenerator) void {
+        self.is_closed = true;
     }
 };
 
@@ -256,7 +329,8 @@ test "TCP loopback" {
         .received_data = undefined,
     };
 
-    var async_server = try net.Server.init(std_server, .{ .ptr = &state, .generate_fn = TestConnection.generate });
+    var connection_gen = TestConnectionGenerator{ .state = &state };
+    var async_server = try net.server(std_server, &connection_gen);
 
     const thread_handle = try std.Thread.spawn(.{}, struct {
         fn f(conn_addy: std.net.Address) !void {
@@ -274,6 +348,9 @@ test "TCP loopback" {
         try loop.wait(&scratch);
     }
 
+    loop.shutdown();
+
     try std.testing.expectEqual(11, state.received_len);
     try std.testing.expectEqualStrings("Hello world", state.received_data[0..11]);
+    try std.testing.expectEqual(true, connection_gen.is_closed);
 }
