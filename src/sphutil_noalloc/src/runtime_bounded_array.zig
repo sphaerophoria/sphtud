@@ -68,6 +68,19 @@ pub fn RuntimeBoundedArray(comptime T: type) type {
             self.pop();
             return elem;
         }
+
+        const Writer = std.io.Writer(*Self, anyerror, appendWrite);
+
+        pub fn writer(self: *Self) Writer {
+            return .{
+                .context = self,
+            };
+        }
+
+        fn appendWrite(self: *Self, m: []const u8) Allocator.Error!usize {
+            try self.appendSlice(m);
+            return m.len;
+        }
     };
 }
 
