@@ -1,6 +1,7 @@
 const std = @import("std");
 const sphutil = @import("sphutil");
 const sphalloc = @import("sphalloc");
+const sphttp = @import("sphttp");
 
 pub const OsHandle = std.posix.fd_t;
 
@@ -243,6 +244,101 @@ pub const net = struct {
             .inner = s,
             .ctx = ctx,
         };
+    }
+
+    pub fn HttpConnection(comptime Ctx: type) type {
+        return struct {
+            alloc: *sphalloc.Sphalloc, // owned
+            scratch: *sphalloc.ScratchAlloc,
+            inner: std.net.Stream,
+            http_reader: sphttp.HttpReader,
+            ctx: Ctx,
+
+            const Self = @This();
+
+            pub fn handler(self: *Self) Handler {
+                return .{
+                    .ptr = self,
+                    .vtable = &handler_vtable,
+                    .fd = self.inner.handle,
+                };
+            }
+
+            const handler_vtable = Handler.VTable{
+                .poll = poll,
+                .close = close,
+            };
+
+            fn poll(ctx: ?*anyopaque, _: *Loop) PollResult {
+                const self: *Self = @ptrCast(@alignCast(ctx));
+                return self.pollError() catch |e| {
+                    std.log.debug("Connection failure: {s} {}", .{ @errorName(e), @errorReturnTrace().? });
+                    return .complete;
+                };
+            }
+
+            fn pollError(self: *Self) !PollResult {
+                while (true) {
+                    const write_buf = try self.http_reader.getWritableArea();
+                    const bytes_read = self.inner.read(write_buf) catch |e| {
+                        if (e == error.WouldBlock) return .in_progress;
+                        return e;
+                    };
+
+                    // State of HTTP parser will not change if there is no data, so no
+                    // need to do one final run of anything below
+                    if (bytes_read == 0) {
+                        return .complete;
+                    }
+
+                    try self.http_reader.grow(self.scratch, bytes_read);
+
+                    if (self.http_reader.state == .body_complete) {
+                        self.ctx.serve(&self.http_reader, self.inner) catch |e| {
+                            const error_code =
+                                if (e == error.FileNotFound)
+                                    std.http.Status.not_found
+                                else
+                                    std.http.Status.internal_server_error;
+
+                            var writer = sphttp.httpWriter(self.inner.writer());
+                            try writer.start(.{ .status = error_code, .content_length = 0 });
+                            try writer.writeBody("");
+
+                            return e;
+                        };
+                        return .complete;
+                    }
+                }
+            }
+
+            fn close(ctx: ?*anyopaque) void {
+                const self: *Self = @ptrCast(@alignCast(ctx));
+                self.inner.close();
+                self.alloc.deinit();
+            }
+        };
+    }
+
+    pub fn httpConnection(
+        parent_alloc: *sphalloc.Sphalloc,
+        scratch: *sphalloc.ScratchAlloc,
+        inner: std.net.Stream,
+        ctx: anytype,
+    ) !*HttpConnection(@TypeOf(ctx)) {
+        const alloc = try parent_alloc.makeSubAlloc("http_connection");
+        errdefer alloc.deinit();
+
+        const ret = try alloc.arena().create(HttpConnection(@TypeOf(ctx)));
+        ret.* = .{
+            .alloc = alloc,
+            .scratch = scratch,
+            .inner = inner,
+            .http_reader = try .init(alloc),
+            .ctx = ctx,
+        };
+
+        return ret;
     }
 };
 

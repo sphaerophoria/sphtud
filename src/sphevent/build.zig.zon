@@ -9,6 +9,9 @@
         .sphutil = .{
             .path = "../sphutil",
         },
+        .sphttp = .{
+            .path = "../sphttp",
+        },
     },
     .paths = .{
         "src",
