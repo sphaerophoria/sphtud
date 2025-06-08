@@ -30,6 +30,14 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         const Self = @This();
         const grow_factor = 2;
 
+        pub const empty = Self{
+            .alloc = undefined,
+            .blocks = &.{},
+            .initial_block_len = 0,
+            .capacity = 0,
+            .len = 0,
+        };
+
         pub fn init(arena: Allocator, tiny_page_alloc: Allocator, small_size: usize, max_size: usize) !Self {
             const max_idx = max_size - 1;
             const num_blocks = idxToBlockId(small_size, max_idx, firstExpansionSize(small_size)) + 1;
@@ -447,6 +455,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         }
 
         fn firstExpansionSize(initial_len: usize) usize {
+            if (initial_len == 0) return 0;
             const initial_len_log2: usize = std.math.log2_int_ceil(usize, @sizeOf(T) * initial_len);
             const min_page_size_log2: usize = @max(initial_len_log2, sphalloc.tiny_page_log2);
 
@@ -493,7 +502,7 @@ fn idxToBlockId(initial_size: usize, idx: usize, first_expansion_size: usize) us
     // log2((pos - initial_slot) / first_expansion_size + 1) + 1 = block_id
     //
     // Then we just have to handle the block_id == 0 case
-    if (idx < initial_size) return 0;
+    if (idx < initial_size or initial_size == 0) return 0;
     const log2_arg = (idx -| initial_size) / first_expansion_size + 1;
     return std.math.log2(log2_arg) + 1;
 }
@@ -990,4 +999,21 @@ test "RuntimeSegmentedList reader" {
     var buf: [1024]u8 = undefined;
     const read_len = try gr.readAll(&buf);
     try std.testing.expectEqualStrings("The quick brown fox jumped over the lazy dog", buf[0..read_len]);
+}
+
+test "RuntimeSegmentedList empty" {
+    var empty: RuntimeSegmentedList(u8) = .empty;
+
+    {
+        var it = empty.iter();
+        try std.testing.expectEqual(null, it.next());
+    }
+
+    {
+        var it = empty.blockIter();
+        try std.testing.expectEqual(null, it.next());
+    }
+
+    try std.testing.expectEqual(0, empty.len);
+    try std.testing.expectError(error.OutOfMemory, empty.append(0));
 }
