@@ -176,22 +176,96 @@ const BlockAllocator = struct {
     }
 };
 
-pub const ScratchAlloc = struct {
-    backing: std.heap.FixedBufferAllocator,
+pub const LinearAllocator = struct {
+    ctx: ?*anyopaque,
+    vtable: *const VTable,
 
-    pub fn init(buf: []u8) ScratchAlloc {
+    const VTable = struct {
+        checkpoint: *const fn (ctx: ?*anyopaque) usize,
+        restore: *const fn (ctx: ?*anyopaque, restore_point: usize) void,
+        allocator: *const fn (ctx: ?*anyopaque) std.mem.Allocator,
+    };
+
+    pub fn checkpoint(self: LinearAllocator) usize {
+        return self.vtable.checkpoint(self.ctx);
+    }
+
+    pub fn restore(self: LinearAllocator, restore_point: usize) void {
+        return self.vtable.restore(self.ctx, restore_point);
+    }
+
+    pub fn allocator(self: LinearAllocator) std.mem.Allocator {
+        return self.vtable.allocator(self.ctx);
+    }
+};
+
+pub const BufAllocator = struct {
+    buf: []u8,
+    front_idx: usize,
+    back_idx: usize,
+
+    pub fn init(buf: []u8) BufAllocator {
         return .{
-            .backing = std.heap.FixedBufferAllocator.init(buf),
+            .buf = buf,
+            .front_idx = 0,
+            .back_idx = buf.len,
         };
     }
 
-    pub fn allocator(self: *ScratchAlloc) Allocator {
-        return self.backing.allocator();
+    pub fn allocator(self: *BufAllocator) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &front_vtable,
+        };
     }
 
-    pub fn reset(self: *ScratchAlloc) void {
-        @memset(self.backing.buffer, undefined);
-        self.backing.reset();
+    pub fn linear(self: *BufAllocator) LinearAllocator {
+        return .{
+            .ctx = self,
+            .vtable = &front_linear_vtable,
+        };
+    }
+
+    pub fn backAllocator(self: *BufAllocator) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &back_vtable,
+        };
+    }
+
+    pub fn backLinear(self: *BufAllocator) LinearAllocator {
+        return .{
+            .ctx = self,
+            .vtable = &back_linear_vtable,
+        };
+    }
+
+    pub fn reset(self: *BufAllocator) void {
+        @memset(self.buf[0..self.front_idx], undefined);
+
+        if (self.back_idx < self.buf.len) {
+            @memset(self.buf[self.back_idx..], undefined);
+        }
+
+        self.front_idx = 0;
+        self.back_idx = self.buf.len;
+    }
+
+    pub const Checkpoint = struct {
+        front_idx: usize,
+        back_idx: usize,
+    };
+
+    pub fn checkpoint(self: *BufAllocator) Checkpoint {
+        return .{
+            .front_idx = self.front_idx,
+            .back_idx = self.back_idx,
+        };
+    }
+
+    pub fn restore(self: *BufAllocator, restore_point: Checkpoint) void {
+        self.frontRestore(restore_point.front_idx);
+        self.backRestore(restore_point.back_idx);
     }
 
     pub fn allocMax(self: *ScratchAlloc, comptime T: type) []T {
@@ -199,98 +273,234 @@ pub const ScratchAlloc = struct {
     }
 
     pub fn allocGreedy(self: *ScratchAlloc, comptime T: type, max: usize) []T {
-        const start_addr: usize = @intFromPtr(self.backing.buffer.ptr);
-        const current_head = start_addr + self.backing.end_index;
+        const start_addr: usize = @intFromPtr(self.buf.ptr);
+        const current_head = start_addr + self.front_idx;
         const alloc_start = std.mem.alignForward(usize, current_head, @alignOf(T));
-        const capacity = (self.backing.buffer.len -| (alloc_start - start_addr)) / @sizeOf(T);
+        const capacity = (self.back_idx -| (alloc_start - start_addr)) / @sizeOf(T);
         const size = @min(capacity, max);
-        return self.backing.allocator().alloc(T, size) catch unreachable;
+        return self.allocator().alloc(T, size) catch unreachable;
     }
 
-    pub fn shrinkTo(self: *ScratchAlloc, ptr: ?*anyopaque) void {
-        const base: usize = @intFromPtr(self.backing.buffer.ptr);
+    pub fn shrinkFrontTo(self: *ScratchAlloc, ptr: ?*anyopaque) void {
+        const base: usize = @intFromPtr(self.buf.ptr);
         const ptr_u: usize = @intFromPtr(ptr);
-        self.backing.end_index = ptr_u - base;
+        self.frontRestore(ptr_u - base);
     }
 
-    pub const Checkpoint = usize;
+    const front_vtable = std.mem.Allocator.VTable{
+        .alloc = allocLeft,
+        .resize = nullResize,
+        .remap = nullRemap,
+        .free = nullFree,
+    };
 
-    pub fn checkpoint(self: *ScratchAlloc) Checkpoint {
-        return self.backing.end_index;
+    const back_vtable = std.mem.Allocator.VTable{
+        .alloc = allocRight,
+        .resize = nullResize,
+        .remap = nullRemap,
+        .free = nullFree,
+    };
+
+    const front_linear_vtable = LinearAllocator.VTable{
+        .checkpoint = frontCheckpoint,
+        .restore = frontRestoreCtx,
+        .allocator = frontAllocatorCtx,
+    };
+
+    fn frontAllocatorCtx(ctx: ?*anyopaque) std.mem.Allocator {
+        const self: *BufAllocator = @ptrCast(@alignCast(ctx));
+        return self.allocator();
     }
 
-    pub fn restore(self: *ScratchAlloc, restore_point: Checkpoint) void {
-        @memset(self.backing.buffer[restore_point..self.backing.end_index], undefined);
-        self.backing.end_index = restore_point;
+    fn frontCheckpoint(ctx: ?*anyopaque) usize {
+        const self: *BufAllocator = @ptrCast(@alignCast(ctx));
+        return self.front_idx;
     }
 
-    pub fn restoreCheckpointAndPreserve(self: *ScratchAlloc, comptime T: type, alloc: Allocator, content: []const T, restore_point_base: Checkpoint) ![]T {
-        var restore_point = restore_point_base;
-        // NOTE: restore_point is VARIABLE. The initial value is as far back as
-        // we want to go, but if we have content to restore, it will likely be
-        // further down
-        defer self.restore(restore_point);
+    fn frontRestoreCtx(ctx: ?*anyopaque, front_idx: usize) void {
+        const self: *BufAllocator = @ptrCast(@alignCast(ctx));
+        self.frontRestore(front_idx);
+    }
 
-        const my_alloc = self.backing.allocator();
-        const is_same = my_alloc.vtable == alloc.vtable and my_alloc.ptr == alloc.ptr;
-        if (!is_same) {
-            return try alloc.dupe(T, content);
+    fn frontRestore(self: *BufAllocator, front_idx: usize) void {
+        @memset(self.buf[front_idx..self.front_idx], undefined);
+        self.front_idx = front_idx;
+    }
+
+    const back_linear_vtable = LinearAllocator.VTable{
+        .checkpoint = backCheckpoint,
+        .restore = backRestoreCtx,
+        .allocator = backAllocatorCtx,
+    };
+
+    fn backAllocatorCtx(ctx: ?*anyopaque) std.mem.Allocator {
+        const self: *BufAllocator = @ptrCast(@alignCast(ctx));
+        return self.backAllocator();
+    }
+
+    fn backCheckpoint(ctx: ?*anyopaque) usize {
+        const self: *BufAllocator = @ptrCast(@alignCast(ctx));
+        return self.back_idx;
+    }
+
+    fn backRestoreCtx(ctx: ?*anyopaque, back_idx: usize) void {
+        const self: *BufAllocator = @ptrCast(@alignCast(ctx));
+        self.backRestore(back_idx);
+    }
+
+    fn backRestore(self: *BufAllocator, back_idx: usize) void {
+        if (self.back_idx < self.buf.len) {
+            @memset(self.buf[self.back_idx..back_idx], undefined);
+        }
+        self.back_idx = back_idx;
+    }
+
+    fn allocLeft(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
+        const self: *BufAllocator = @ptrCast(@alignCast(ctx));
+        const buf_ptr: usize = @intFromPtr(self.buf.ptr);
+        const buf_end = buf_ptr + self.back_idx;
+        const lower_bound: usize = buf_ptr + self.front_idx;
+
+        const ret_addr = alignment.forward(lower_bound);
+        const ret_end = ret_addr + len;
+
+        if (ret_end > buf_end) {
+            return null;
         }
 
-        std.debug.assert(self.isPartOfUs(@ptrCast(content)));
-
-        const base_ptr: usize = @intFromPtr(self.backing.buffer.ptr);
-        const unaligned_alloc_start: usize = base_ptr + restore_point_base;
-        const aligned_alloc_start = std.mem.alignForward(usize, unaligned_alloc_start, @alignOf(T));
-        const alloc_end = aligned_alloc_start + @sizeOf(T) * content.len;
-
-        restore_point = alloc_end - base_ptr;
-
-        const out_buf: [*]T = @ptrFromInt(aligned_alloc_start);
-        const ret = out_buf[0..content.len];
-
-        std.mem.copyForwards(T, ret, content);
-        return ret;
+        self.front_idx = ret_end - buf_ptr;
+        return @ptrFromInt(ret_addr);
     }
 
-    fn isPartOfUs(self: *ScratchAlloc, content: [*]const u8) bool {
-        const buf_start_usize: usize = @intFromPtr(self.backing.buffer.ptr);
-        const content_usize: usize = @intFromPtr(content);
-        return content_usize >= buf_start_usize and content_usize < buf_start_usize + self.backing.buffer.len;
-    }
+    fn allocRight(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
+        const self: *BufAllocator = @ptrCast(@alignCast(ctx));
+        const buf_ptr: usize = @intFromPtr(self.buf.ptr);
 
-    test "restoreCheckpointAndPreserve same allocator" {
-        var buf: [4096]u8 = undefined;
-        var scratch = ScratchAlloc.init(&buf);
+        const upper_bound: usize = buf_ptr + self.back_idx - len;
 
-        // Initial state, intentionally unaligned
-        _ = try scratch.allocator().alloc(u8, 1009);
+        const ret_addr = alignment.backward(upper_bound);
 
-        const content = blk: {
-            const restore_point = scratch.checkpoint();
-            // Pretend we did some work
-            _ = try scratch.allocator().alloc(i32, 10);
-            _ = try scratch.allocator().alloc(u8, 5);
-            const to_keep = try scratch.allocator().alloc(i32, 4);
-            for (0..4) |i| {
-                to_keep[i] = @intCast(i);
-            }
-            break :blk try scratch.restoreCheckpointAndPreserve(i32, scratch.allocator(), to_keep, restore_point);
-        };
+        if (ret_addr < buf_ptr + self.front_idx) {
+            return null;
+        }
 
-        const new_content = try scratch.allocator().alloc(u8, 10);
-        @memset(new_content, 0xff);
-
-        try std.testing.expectEqualSlices(i32, &.{ 0, 1, 2, 3 }, content);
-        const new_content_ptr: usize = @intFromPtr(new_content.ptr);
-        try std.testing.expect(new_content_ptr >= @as(usize, @intFromPtr(content.ptr + content.len)));
-
-        const allocator_base_address: usize = @intFromPtr(&buf);
-        const original_content_ptr: usize = @intFromPtr(content.ptr);
-        const expected_new_content_addr = allocator_base_address + std.mem.alignForward(usize, 1009, @alignOf(i32));
-        try std.testing.expectEqual(expected_new_content_addr, original_content_ptr);
+        self.back_idx = ret_addr - buf_ptr;
+        return @ptrFromInt(ret_addr);
     }
 };
+
+pub const ScratchAlloc = BufAllocator;
+
+fn slicePtrBaseUsize(s: anytype) usize {
+    return @intFromPtr(s.ptr);
+}
+
+test "BufAllocator left allocations" {
+    var buf: [100]u8 align(4) = undefined;
+    const buf_start: usize = @intFromPtr(&buf);
+    var buf_alloc = BufAllocator.init(&buf);
+
+    const alloc = buf_alloc.allocator();
+    try std.testing.expectError(error.OutOfMemory, alloc.alloc(u8, 101));
+    try std.testing.expectEqual(buf_start, slicePtrBaseUsize(try alloc.alloc(u8, 100)));
+
+    buf_alloc.reset();
+
+    try std.testing.expectEqual(buf_start, slicePtrBaseUsize(try alloc.alloc(i32, 4)));
+    try std.testing.expectEqual(buf_start + 16, slicePtrBaseUsize(try alloc.alloc(i32, 4)));
+}
+
+test "BufAllocator right allocations" {
+    var buf: [100]u8 align(4) = undefined;
+    const buf_start: usize = @intFromPtr(&buf);
+    var buf_alloc = BufAllocator.init(&buf);
+
+    const alloc = buf_alloc.backAllocator();
+    try std.testing.expectError(error.OutOfMemory, alloc.alloc(u8, 101));
+    try std.testing.expectEqual(buf_start, slicePtrBaseUsize(try alloc.alloc(u8, 100)));
+
+    buf_alloc.reset();
+
+    try std.testing.expectEqual(buf_start + 99, slicePtrBaseUsize(try alloc.alloc(u8, 1)));
+    try std.testing.expectEqual(buf_start + 92, slicePtrBaseUsize(try alloc.alloc(i32, 1)));
+}
+
+test "BufAllocator allocator collision" {
+    var buf: [100]u8 align(4) = undefined;
+    const buf_start: usize = @intFromPtr(&buf);
+    var buf_alloc = BufAllocator.init(&buf);
+
+    const right_alloc = buf_alloc.backAllocator();
+    const left_alloc = buf_alloc.allocator();
+
+    // right_idx should be at 75, left at 25
+    _ = try right_alloc.alloc(u8, 25);
+    _ = try left_alloc.alloc(u8, 25);
+
+    const checkpoint = buf_alloc.checkpoint();
+
+    try std.testing.expectEqual(buf_start + 25, slicePtrBaseUsize(try right_alloc.alloc(u8, 50)));
+    buf_alloc.restore(checkpoint);
+
+    try std.testing.expectError(error.OutOfMemory, right_alloc.alloc(u8, 51));
+    buf_alloc.restore(checkpoint);
+
+    try std.testing.expectEqual(buf_start + 25, slicePtrBaseUsize(try left_alloc.alloc(u8, 50)));
+    buf_alloc.restore(checkpoint);
+
+    try std.testing.expectError(error.OutOfMemory, left_alloc.alloc(u8, 51));
+}
+
+test "BufAllocator large read" {
+    var buf: [100]u8 align(4) = undefined;
+    const buf_start: usize = @intFromPtr(&buf);
+    var buf_alloc = BufAllocator.init(&buf);
+
+    const right_alloc = buf_alloc.backAllocator();
+    const left_alloc = buf_alloc.allocator();
+
+    // right_idx should be at 75, left at 25
+    _ = try right_alloc.alloc(u8, 25);
+    _ = try left_alloc.alloc(u8, 25);
+
+    const max_alloc = buf_alloc.allocMax(u8);
+    try std.testing.expectEqual(50, max_alloc.len);
+    try std.testing.expectEqual(buf_start + 25, slicePtrBaseUsize(max_alloc));
+    try std.testing.expectError(error.OutOfMemory, left_alloc.alloc(u8, 1));
+
+    buf_alloc.shrinkFrontTo(max_alloc.ptr + 25);
+    try std.testing.expectError(error.OutOfMemory, left_alloc.alloc(u8, 26));
+    // This should succeed
+    _ = try left_alloc.alloc(u8, 25);
+}
+
+test "BufAllocator allocator collision linear allocators" {
+    var buf: [100]u8 align(4) = undefined;
+    const buf_start: usize = @intFromPtr(&buf);
+    var buf_alloc = BufAllocator.init(&buf);
+
+    const right_alloc = buf_alloc.backLinear();
+    const left_alloc = buf_alloc.linear();
+
+    // right_idx should be at 75, left at 25
+    _ = try right_alloc.allocator().alloc(u8, 25);
+    _ = try left_alloc.allocator().alloc(u8, 25);
+
+    const right_checkpoint = right_alloc.checkpoint();
+    const left_checkpoint = left_alloc.checkpoint();
+
+    try std.testing.expectEqual(buf_start + 25, slicePtrBaseUsize(try right_alloc.allocator().alloc(u8, 50)));
+    right_alloc.restore(right_checkpoint);
+
+    try std.testing.expectError(error.OutOfMemory, right_alloc.allocator().alloc(u8, 51));
+    right_alloc.restore(right_checkpoint);
+
+    try std.testing.expectEqual(buf_start + 25, slicePtrBaseUsize(try left_alloc.allocator().alloc(u8, 50)));
+    left_alloc.restore(left_checkpoint);
+
+    try std.testing.expectError(error.OutOfMemory, left_alloc.allocator().alloc(u8, 51));
+    left_alloc.restore(left_checkpoint);
+}
 
 pub const tiny_page_log2 = 8;
 pub const tiny_page_size = 1 << tiny_page_log2;

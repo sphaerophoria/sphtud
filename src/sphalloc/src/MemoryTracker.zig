@@ -93,17 +93,17 @@ pub const AllocSamples = struct {
     }
 };
 
-pub fn collect(self: MemoryTracker, scratch_alloc: *sphalloc.ScratchAlloc) ![]AllocSamples {
-    const alloc = scratch_alloc.allocator();
+pub fn collect(self: MemoryTracker, ret_alloc: std.mem.Allocator, scratch: sphalloc.LinearAllocator) ![]AllocSamples {
+    const scratch_alloc = scratch.allocator();
 
     // Surely we don't have more than 50 allocators
     // There's probably a better estimate from sample_storage len +
     // num_samples, but whatever
-    var ret_buckets = try sphutil.RuntimeBoundedArray(AllocSamples).init(alloc, 50);
-    var ret_samples = try sphutil.RuntimeBoundedArray(usize).init(alloc, self.sample_storage.items.len);
+    var ret_buckets = try sphutil.RuntimeBoundedArray(AllocSamples).init(ret_alloc, 50);
+    var ret_samples = try sphutil.RuntimeBoundedArray(usize).init(ret_alloc, self.sample_storage.items.len);
 
-    const checkpoint = scratch_alloc.checkpoint();
-    defer scratch_alloc.restore(checkpoint);
+    const checkpoint = scratch.checkpoint();
+    defer scratch.restore(checkpoint);
 
     var storage_it = self.sample_storage.iter();
     while (storage_it.next()) |sample| {
@@ -116,7 +116,7 @@ pub fn collect(self: MemoryTracker, scratch_alloc: *sphalloc.ScratchAlloc) ![]Al
         samples: std.ArrayListUnmanaged(usize) = .{},
         max: usize = 0,
     };
-    var sample_map = std.StringHashMap(AllocSamplesBuilder).init(scratch_alloc.allocator());
+    var sample_map = std.StringHashMap(AllocSamplesBuilder).init(scratch_alloc);
     var sample_idx: usize = 0;
     while (storage_it.next()) |sample| {
         if (sample.name.len == 0) {
@@ -132,9 +132,9 @@ pub fn collect(self: MemoryTracker, scratch_alloc: *sphalloc.ScratchAlloc) ![]Al
         // addition, or late addition)
         const old_len = gop.value_ptr.samples.items.len;
         if (sample_idx >= old_len) {
-            try gop.value_ptr.samples.resize(alloc, sample_idx);
+            try gop.value_ptr.samples.resize(ret_alloc, sample_idx);
             @memset(gop.value_ptr.samples.items[old_len..], 0);
-            try gop.value_ptr.samples.append(alloc, sample.memory_used);
+            try gop.value_ptr.samples.append(ret_alloc, sample.memory_used);
         } else {
             gop.value_ptr.samples.items[sample_idx] += sample.memory_used;
         }
