@@ -22,13 +22,13 @@ pub fn build(b: *std.Build) !void {
     sphtud.addImport("sphalloc", sphalloc);
     sphtud.addImport("sphutil", sphutil);
     sphtud.addImport("sphmath", sphmath);
-    sphtud.addImport("sphtext", sphtext);
     sphtud.addImport("sphevent", sphevent);
     sphtud.addImport("sphttp", sphttp);
     sphtud.addOptions("config", options);
 
     options.addOption(bool, "export_sphrender", with_gl);
     if (with_gl) {
+        sphtud.addImport("sphtext", sphtext);
         sphtud.addImport("sphrender", sphrender);
         sphtud.addImport("sphui", sphui);
     }
