@@ -48,7 +48,7 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
 
     ret.squircle_renderer = try gui.SquircleRenderer.init(gui_alloc.gl);
 
-    ret.image_renderer = try sphrender.xyuvt_program.ImageRenderer.init(gui_alloc.gl);
+    ret.image_renderer = try sphrender.xyuvt_program.ImageRenderer.init(gui_alloc.gl, .rgba);
 
     ret.guitext_state = gui.gui_text.SharedState{
         .scratch_alloc = scratch_alloc,

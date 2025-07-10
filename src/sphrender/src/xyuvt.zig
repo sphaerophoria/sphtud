@@ -12,7 +12,7 @@ pub const ImageSamplerUniforms = struct {
     transform: sphmath.Mat3x3 = sphmath.Transform.identity.inner,
 };
 
-pub const image_sampler_frag =
+pub const image_sampler_frag_rgba =
     \\#version 330
     \\in vec2 uv;
     \\out vec4 fragment;
@@ -20,6 +20,18 @@ pub const image_sampler_frag =
     \\void main()
     \\{
     \\    fragment = texture(input_image, vec2(uv.x, uv.y));
+    \\}
+;
+
+pub const image_sampler_frag_greyscale =
+    \\#version 330
+    \\in vec2 uv;
+    \\out vec4 fragment;
+    \\uniform sampler2D input_image;
+    \\void main()
+    \\{
+    \\    float color = texture(input_image, vec2(uv.x, uv.y)).r;
+    \\    fragment = vec4(color, color, color, 1.0);
     \\}
 ;
 
@@ -73,7 +85,17 @@ pub const ImageRenderer = struct {
     prog: Program(ImageSamplerUniforms),
     render_source: RenderSource,
 
-    pub fn init(alloc: *GlAlloc) !ImageRenderer {
+    const ColorSpace = enum {
+        greyscale,
+        rgba,
+    };
+
+    pub fn init(alloc: *GlAlloc, color_space: ColorSpace) !ImageRenderer {
+        const image_sampler_frag = switch (color_space) {
+            .greyscale => image_sampler_frag_greyscale,
+            .rgba => image_sampler_frag_rgba,
+        };
+
         const prog = try Program(ImageSamplerUniforms).init(alloc, image_sampler_frag);
         var render_source = try RenderSource.init(alloc);
         render_source.bindData(prog.handle(), try makeFullScreenPlane(alloc));

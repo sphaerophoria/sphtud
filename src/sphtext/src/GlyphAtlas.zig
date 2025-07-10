@@ -59,7 +59,7 @@ pub const PixelBBox = struct {
 };
 
 pub fn init(gpa: Allocator, gl_alloc: *GlAlloc) !GlyphAtlas {
-    const program = try PlaneRenderProgram.init(gl_alloc, sphrender.xyuvt_program.image_sampler_frag);
+    const program = try PlaneRenderProgram.init(gl_alloc, sphrender.xyuvt_program.image_sampler_frag_rgba);
 
     var c_max_texture_size: c_int = 0;
     gl.glGetIntegerv(gl.GL_MAX_TEXTURE_SIZE, &c_max_texture_size);
