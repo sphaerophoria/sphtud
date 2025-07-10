@@ -211,11 +211,15 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
             block_idx: usize,
 
             fn init(parent: *Self) UnusedBlocksIt {
-                const block_idx = idxToBlockId(parent.initial_block_len, parent.len - 1, firstExpansionSize(parent.initial_block_len));
+                const last_used_block = idxToBlockId(
+                    parent.initial_block_len,
+                    parent.len -| 1,
+                    firstExpansionSize(parent.initial_block_len),
+                );
 
                 return .{
                     .parent = parent,
-                    .block_idx = block_idx + 1,
+                    .block_idx = last_used_block + 1,
                 };
             }
 
@@ -1016,4 +1020,16 @@ test "RuntimeSegmentedList empty" {
 
     try std.testing.expectEqual(0, empty.len);
     try std.testing.expectError(error.OutOfMemory, empty.append(0));
+}
+
+test "RuntimeSegmentedList shrinkEmptyList" {
+    var initial_gpa = std.heap.DebugAllocator(.{ .safety = false }).init;
+    defer _ = initial_gpa.deinit();
+
+    var expansion_gpa = std.heap.DebugAllocator(.{ .safety = false }).init;
+    defer _ = expansion_gpa.deinit();
+
+    var list = try RuntimeSegmentedList(u8).init(initial_gpa.allocator(), expansion_gpa.allocator(), 5, 1000);
+
+    list.shrink(0);
 }
