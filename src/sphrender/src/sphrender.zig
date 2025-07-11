@@ -697,3 +697,36 @@ pub const RenderAlloc = struct {
         };
     }
 };
+
+pub fn AppAllocators(comptime max_free_tiny_pages: usize) type {
+    return struct {
+        tpa: sphalloc.TinyPageAllocator(max_free_tiny_pages),
+
+        root: sphalloc.Sphalloc,
+        root_gl: GlAlloc,
+
+        root_render: RenderAlloc,
+
+        scratch: sphalloc.ScratchAlloc,
+        scratch_gl: GlAlloc,
+
+        const Self = @This();
+
+        pub fn initPinned(self: *Self, scratch_size: usize) !void {
+            self.tpa = .{};
+            try self.root.initPinned(self.tpa.allocator(), "root");
+            self.scratch = sphalloc.ScratchAlloc.init(try self.root.arena().alloc(u8, scratch_size));
+            self.root_gl = try GlAlloc.init(&self.root);
+            self.scratch_gl = try GlAlloc.init(try self.root.makeSubAlloc("scratch_gl"));
+            self.root_render = RenderAlloc{
+                .gl = &self.root_gl,
+                .heap = &self.root,
+            };
+        }
+
+        pub fn resetScratch(self: *Self) void {
+            self.scratch.reset();
+            self.scratch_gl.reset();
+        }
+    };
+}

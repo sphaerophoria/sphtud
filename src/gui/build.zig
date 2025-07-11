@@ -6,6 +6,7 @@ const Dependencies = struct {
     sphrender: *std.Build.Module,
     sphalloc: *std.Build.Module,
     sphutil: *std.Build.Module,
+    sphwindow_events: *std.Build.Module,
 
     fn init(b: *std.Build) Dependencies {
         const sphmath = b.dependency("sphmath", .{});
@@ -13,6 +14,7 @@ const Dependencies = struct {
         const sphtext = b.dependency("sphtext", .{});
         const sphalloc = b.dependency("sphalloc", .{});
         const sphutil = b.dependency("sphutil", .{});
+        const sphwindow_events = b.dependency("sphwindow_events", .{});
 
         return .{
             .sphmath = sphmath.module("sphmath"),
@@ -20,6 +22,7 @@ const Dependencies = struct {
             .sphrender = sphrender.module("sphrender"),
             .sphalloc = sphalloc.module("sphalloc"),
             .sphutil = sphutil.module("sphutil"),
+            .sphwindow_events = sphwindow_events.module("sphwindow_events"),
         };
     }
 
@@ -29,6 +32,7 @@ const Dependencies = struct {
         mod.addImport("sphtext", self.sphtext);
         mod.addImport("sphalloc", self.sphalloc);
         mod.addImport("sphutil", self.sphutil);
+        mod.addImport("sphwindow_events", self.sphwindow_events);
     }
 };
 
@@ -36,11 +40,23 @@ pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "");
 
     const deps = Dependencies.init(b);
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
 
     const sphui = b.addModule("sphui", .{
         .root_source_file = b.path("src/gui.zig"),
     });
     deps.add(sphui);
+
+    const demo = b.addExecutable(.{
+        .name = "demo",
+        .root_source_file = b.path("src/demo.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    deps.add(demo.root_module);
+    demo.root_module.addImport("sphwindow", b.dependency("sphwindow", .{}).module("sphwindow"));
+    b.installArtifact(demo);
 
     const gui_uts = b.addTest(.{
         .name = "gui_test",

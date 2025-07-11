@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const sphmath = @import("sphmath");
 const sphrender = @import("sphrender");
 const sphutil = @import("sphutil");
+const sphwindow_events = @import("sphwindow_events");
 
 pub const label = @import("label.zig");
 pub const drag_float = @import("drag_float.zig");
@@ -37,41 +38,10 @@ test {
     std.testing.refAllDeclsRecursive(@This());
 }
 
-pub const Key = union(enum) {
-    ascii: u8,
-    left_arrow,
-    right_arrow,
-    backspace,
-    delete,
-    escape,
-
-    pub fn eql(self: Key, other: Key) bool {
-        return std.meta.eql(self, other);
-    }
-
-    fn toLower(self: Key) Key {
-        return switch (self) {
-            .ascii => |v| .{ .ascii = std.ascii.toLower(v) },
-            inline else => |_, t| t,
-        };
-    }
-};
-pub const KeyEvent = struct { key: Key, ctrl: bool };
-
-pub const WindowAction = union(enum) {
-    key_down: KeyEvent,
-    key_up: Key,
-    mouse_move: MousePos,
-    mouse_down,
-    mouse_up,
-    middle_down,
-    middle_up,
-    right_down,
-    right_up,
-    scroll: f32,
-};
-
-pub const MousePos = struct { x: f32, y: f32 };
+pub const Key = sphwindow_events.Key;
+pub const KeyEvent = sphwindow_events.KeyEvent;
+pub const WindowAction = sphwindow_events.WindowAction;
+pub const MousePos = sphwindow_events.MousePos;
 
 pub const KeyTracker = struct {
     const max_pressed_keys = 16;

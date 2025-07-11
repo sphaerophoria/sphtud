@@ -2,13 +2,13 @@ const std = @import("std");
 const glfwb = @cImport({
     @cInclude("GLFW/glfw3.h");
 });
-const gui = @import("sphui");
+const sphwindow_events = @import("sphwindow_events");
 
 pub const Window = struct {
     window: *glfwb.GLFWwindow = undefined,
     queue: Fifo = undefined,
 
-    const Fifo = std.fifo.LinearFifo(gui.WindowAction, .{ .Static = 1024 });
+    const Fifo = std.fifo.LinearFifo(sphwindow_events.WindowAction, .{ .Static = 1024 });
 
     pub fn initPinned(self: *Window, name: [:0]const u8, window_width: comptime_int, window_height: comptime_int) !void {
         _ = glfwb.glfwSetErrorCallback(errorCallbackGlfw);
@@ -88,7 +88,7 @@ fn errorCallbackGlfw(_: c_int, description: [*c]const u8) callconv(.C) void {
 fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action: c_int, modifiers: c_int) callconv(.C) void {
     const window: *Window = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(glfw_window)));
 
-    const key_char: gui.Key = switch (key) {
+    const key_char: sphwindow_events.Key = switch (key) {
         glfwb.GLFW_KEY_A...glfwb.GLFW_KEY_Z => blk: {
             const base_char: u8 = if (modifiers & glfwb.GLFW_MOD_SHIFT != 0) 'A' else 'a';
             break :blk .{ .ascii = @intCast(key - glfwb.GLFW_KEY_A + base_char) };
@@ -137,7 +137,7 @@ fn cursorPositionCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, xpos: f64, ypos: 
 fn mouseButtonCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, button: c_int, action: c_int, _: c_int) callconv(.C) void {
     const window: *Window = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(glfw_window)));
     const is_down = action == glfwb.GLFW_PRESS;
-    var write_obj: ?gui.WindowAction = null;
+    var write_obj: ?sphwindow_events.WindowAction = null;
 
     if (button == glfwb.GLFW_MOUSE_BUTTON_LEFT and is_down) {
         write_obj = .mouse_down;

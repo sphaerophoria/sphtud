@@ -18,6 +18,12 @@
         .sphutil = .{
             .path = "../sphutil",
         },
+        .sphwindow_events = .{
+            .path = "../sphwindow_events",
+        },
+        .sphwindow = .{
+            .path = "../sphwindow",
+        },
     },
     .paths = .{
         "src",

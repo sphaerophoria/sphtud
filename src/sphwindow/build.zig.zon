@@ -3,8 +3,8 @@
     .version = "0.0.1",
     .minimum_zig_version = "0.13.0",
     .dependencies = .{
-        .sphui = .{
-            .path = "../gui",
+        .sphwindow_events = .{
+            .path = "../sphwindow_events",
         },
     },
     .paths = .{

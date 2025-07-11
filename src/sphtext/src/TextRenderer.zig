@@ -6,6 +6,7 @@ const ttf_mod = @import("ttf.zig");
 const sphalloc = @import("sphalloc");
 const ScratchAlloc = sphalloc.ScratchAlloc;
 const sphrender = @import("sphrender");
+const gl = sphrender.gl;
 const GlAlloc = sphrender.GlAlloc;
 
 const ShaderProgram = sphrender.xyuvt_program.Program(TextUniforms);
@@ -52,6 +53,10 @@ pub const TextLayout = struct {
 };
 
 pub fn init(gpa: Allocator, gl_alloc: *GlAlloc, point_size: f32) !TextRenderer {
+    if (gl.glIsEnabled(gl.GL_BLEND) != gl.GL_TRUE) {
+        std.log.warn("Text rendering requires alpha blending, please enable GL_BLEND and set an appropriate blending function", .{});
+    }
+
     const program = try ShaderProgram.init(gl_alloc, text_fragment_shader);
     const glyph_atlas = try GlyphAtlas.init(gpa, gl_alloc);
 
