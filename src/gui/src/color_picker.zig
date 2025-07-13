@@ -35,7 +35,7 @@ pub const SharedColorPickerState = struct {
     hexagon_render_source: sphrender.xyuvt_program.RenderSource,
     lightness_renderer: LightnessProgram,
     lightness_render_source: sphrender.xyuvt_program.RenderSource,
-    drag_shared: *const gui.drag_float.Shared,
+    drag_shared: *const gui.drag.Shared,
     guitext_state: *const gui.gui_text.SharedState,
     squircle_renderer: *const SquircleRenderer,
     frame: *const gui.frame.Shared,
@@ -43,7 +43,7 @@ pub const SharedColorPickerState = struct {
     pub fn init(
         gl_alloc: *GlAlloc,
         style: ColorStyle,
-        drag_shared: *const gui.drag_float.Shared,
+        drag_shared: *const gui.drag.Shared,
         guitext_state: *const gui.gui_text.SharedState,
         squircle_renderer: *const SquircleRenderer,
         frame_shared: *const gui.frame.Shared,
@@ -308,7 +308,7 @@ fn WidgetGenerator(comptime Action: type, comptime ColorRetriever: type, comptim
                 }
             };
 
-            return gui.drag_float.dragFloat(
+            return gui.drag.dragFloat(
                 Action,
                 self.alloc,
                 Retriever{ .color_retriever = self.retriever },

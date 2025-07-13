@@ -25,15 +25,15 @@ pub const Style = struct {
     corner_radius: f32,
 };
 
-pub fn dragFloat(comptime Action: type, alloc: gui.GuiAlloc, val_retriever: anytype, on_drag: anytype, drag_speed: f32, shared: *const Shared) !Widget(Action) {
-    const T = DragFloat(Action, @TypeOf(val_retriever), @TypeOf(on_drag));
+pub fn drag(comptime Action: type, comptime Elem: type, alloc: gui.GuiAlloc, val_retriever: anytype, on_drag: anytype, drag_multiplier: Elem, drag_divisor: Elem, shared: *const Shared) !Widget(Action) {
+    const T = Drag(Action, @TypeOf(val_retriever), @TypeOf(on_drag), Elem);
 
     const ctx = try alloc.heap.arena().create(T);
 
     const gui_text = try gui.gui_text.guiText(
         alloc,
         shared.guitext_state,
-        LabelAdaptor(@TypeOf(val_retriever)){ .val_retriever = val_retriever },
+        LabelAdaptor(@TypeOf(val_retriever), Elem){ .val_retriever = val_retriever },
     );
 
     ctx.* = .{
@@ -41,7 +41,8 @@ pub fn dragFloat(comptime Action: type, alloc: gui.GuiAlloc, val_retriever: anyt
         .gui_text = gui_text,
         .on_drag = on_drag,
         .shared = shared,
-        .drag_speed = drag_speed,
+        .drag_speed_mul = drag_multiplier,
+        .drag_speed_divider = drag_divisor,
     };
 
     return .{
@@ -51,17 +52,18 @@ pub fn dragFloat(comptime Action: type, alloc: gui.GuiAlloc, val_retriever: anyt
     };
 }
 
-pub fn DragFloat(comptime Action: type, comptime ValRetriever: type, comptime ActionGenerator: type) type {
+pub fn Drag(comptime Action: type, comptime ValRetriever: type, comptime ActionGenerator: type, comptime T: type) type {
     return struct {
         val_retriever: ValRetriever,
-        gui_text: gui.gui_text.GuiText(LabelAdaptor(ValRetriever)),
-        drag_speed: f32,
+        gui_text: gui.gui_text.GuiText(LabelAdaptor(ValRetriever, T)),
+        drag_speed_mul: T,
+        drag_speed_divider: T,
         on_drag: ActionGenerator,
         shared: *const Shared,
         state: union(enum) {
             default,
             hovered,
-            dragging: f32,
+            dragging: T,
         } = .default,
 
         const Self = @This();
@@ -112,13 +114,21 @@ pub fn DragFloat(comptime Action: type, comptime ValRetriever: type, comptime Ac
 
             if (input_bounds.containsOptMousePos(input_state.mouse_down_location)) {
                 if (self.state != .dragging) {
-                    self.state = .{ .dragging = getVal(&self.val_retriever) };
+                    self.state = .{ .dragging = getVal(T, &self.val_retriever) };
                 }
 
-                const offs = input_state.mouse_pos.x - input_state.mouse_down_location.?.x;
+                const offs_f = input_state.mouse_pos.x - input_state.mouse_down_location.?.x;
+
+                const offs = offsetFor(T, offs_f);
 
                 const start_val = self.state.dragging;
-                ret = generateAction(Action, &self.on_drag, start_val + offs * self.drag_speed);
+
+                const new_val = clampNegativeIfUnsigned(
+                    T,
+                    start_val + divForT(T, offs * self.drag_speed_mul, self.drag_speed_divider),
+                );
+
+                ret = generateAction(Action, T, &self.on_drag, new_val);
             } else if (input_bounds.containsMousePos(input_state.mouse_pos)) {
                 self.state = .hovered;
             } else {
@@ -133,19 +143,63 @@ pub fn DragFloat(comptime Action: type, comptime ValRetriever: type, comptime Ac
     };
 }
 
-pub fn LabelAdaptor(comptime Retriever: type) type {
+fn divForT(comptime T: type, num: OffsetType(T), denom: OffsetType(T)) OffsetType(T) {
+    switch (@typeInfo(T)) {
+        .int => return @divTrunc(num, denom),
+        else => return num / denom,
+    }
+}
+
+fn clampNegativeIfUnsigned(comptime T: type, val: anytype) T {
+    switch (@typeInfo(T)) {
+        .int => |ii| {
+            if (ii.signedness == .unsigned) {
+                return @as(T, @intCast(@max(0, val)));
+            }
+        },
+        else => {},
+    }
+    return val;
+}
+
+fn OffsetType(comptime T: type) type {
+    switch (@typeInfo(T)) {
+        .int => |ii| {
+            if (ii.signedness == .unsigned) {
+                return @Type(.{
+                    .int = .{
+                        .signedness = .signed,
+                        .bits = ii.bits + 1,
+                    },
+                });
+            } else {
+                return T;
+            }
+        },
+        else => return T,
+    }
+}
+
+fn offsetFor(comptime T: type, val: f32) OffsetType(T) {
+    return switch (@typeInfo(T)) {
+        .float => val,
+        .int => @as(OffsetType(T), @intFromFloat(val)),
+        else => @compileError("Only know how to handle ints and floats"),
+    };
+}
+pub fn LabelAdaptor(comptime Retriever: type, comptime T: type) type {
     return struct {
         val_retriever: Retriever,
         buf: [10]u8 = undefined,
 
         pub fn getText(self: *@This()) []const u8 {
-            const text = std.fmt.bufPrint(&self.buf, "{d:.03}", .{getVal(&self.val_retriever)}) catch return "";
+            const text = std.fmt.bufPrint(&self.buf, "{d:.03}", .{getVal(T, &self.val_retriever)}) catch return "";
             return text;
         }
     };
 }
 
-fn generateAction(comptime Action: type, action_generator: anytype, val: f32) Action {
+fn generateAction(comptime Action: type, comptime ElemT: type, action_generator: anytype, val: ElemT) Action {
     const Ptr = @TypeOf(action_generator);
     const T = @typeInfo(Ptr).pointer.child;
 
@@ -167,7 +221,7 @@ fn generateAction(comptime Action: type, action_generator: anytype, val: f32) Ac
     }
 }
 
-fn getVal(val_retreiver: anytype) f32 {
+fn getVal(comptime ElemT: type, val_retreiver: anytype) ElemT {
     const Ptr = @TypeOf(val_retreiver);
     const T = @typeInfo(Ptr).pointer.child;
 
@@ -178,17 +232,16 @@ fn getVal(val_retreiver: anytype) f32 {
             }
         },
         .pointer => |p| {
-            if (p.child == f32) {
+            if (p.child == ElemT) {
                 return val_retreiver.*.*;
             }
         },
-        .float => |f| {
-            if (f.bits == 32) {
+        else => {
+            if (T == ElemT) {
                 return val_retreiver.*;
             }
         },
-        else => {},
     }
 
-    @compileError("val_retreiver must be a f32 or a struct with a getVal() method that returns an f32. Instead it is " ++ @typeName(T));
+    @compileError("val_retreiver must be a " ++ @typeName(ElemT) ++ " or a struct with a getVal() method that returns an " ++ @typeName(ElemT) ++ ". Instead it is " ++ @typeName(T));
 }

@@ -31,7 +31,7 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
     const corner_radius: f32 = unit / 5;
     ret.corner_radius = corner_radius;
 
-    ret.drag_shared = gui.drag_float.Shared{
+    ret.drag_shared = gui.drag.Shared{
         .style = .{
             .size = .{
                 .width = widget_width,
@@ -237,7 +237,7 @@ pub fn WidgetState(comptime Action: type) type {
         distance_field_renderer: sphrender.DistanceFieldGenerator,
         ttf: sphtext.ttf.Ttf,
         guitext_state: gui.gui_text.SharedState,
-        drag_shared: gui.drag_float.Shared,
+        drag_shared: gui.drag.Shared,
         shared_button_state: gui.button.SharedButtonState,
         squircle_renderer: gui.SquircleRenderer,
         image_renderer: sphrender.xyuvt_program.ImageRenderer,
@@ -333,12 +333,27 @@ pub fn WidgetFactory(comptime Action: type) type {
         }
 
         pub fn makeDragFloat(self: *const Self, retriever: anytype, action_gen: anytype, drag_speed: f32) !gui.Widget(Action) {
-            return gui.drag_float.dragFloat(
+            return gui.drag.drag(
                 Action,
+                f32,
                 self.alloc,
                 retriever,
                 action_gen,
                 drag_speed,
+                1.0,
+                &self.state.drag_shared,
+            );
+        }
+
+        pub fn makeDrag(self: *const Self, comptime T: type, retriever: anytype, action_gen: anytype, drag_mul: T, drag_div: T) !gui.Widget(Action) {
+            return gui.drag.drag(
+                Action,
+                T,
+                self.alloc,
+                retriever,
+                action_gen,
+                drag_mul,
+                drag_div,
                 &self.state.drag_shared,
             );
         }

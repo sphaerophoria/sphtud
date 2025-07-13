@@ -6,7 +6,7 @@ const sphutil = @import("sphutil");
 const sphwindow_events = @import("sphwindow_events");
 
 pub const label = @import("label.zig");
-pub const drag_float = @import("drag_float.zig");
+pub const drag = @import("drag.zig");
 pub const button = @import("button.zig");
 pub const layout = @import("layout.zig");
 pub const scrollbar = @import("scrollbar.zig");
