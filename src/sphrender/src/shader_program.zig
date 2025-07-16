@@ -148,7 +148,14 @@ fn toGlType(comptime T: type) gl.GLenum {
         },
         .int => |ii| {
             switch (ii.signedness) {
-                .signed => @compileError("Unimplemented signed gl type"),
+                .signed => {
+                    switch (ii.bits) {
+                        8 => return gl.GL_BYTE,
+                        16 => return gl.GL_SHORT,
+                        32 => return gl.GL_INT,
+                        else => @compileError("Unhandled gl uint bits"),
+                    }
+                },
                 .unsigned => {
                     switch (ii.bits) {
                         8 => return gl.GL_UNSIGNED_BYTE,
@@ -175,7 +182,7 @@ fn applyAttribFormat(vao: gl.GLuint, loc: gl.GLint, comptime Field: type, offs: 
         gl.GL_FLOAT => {
             gl.glVertexArrayAttribFormat(vao, @intCast(loc), num_elems, gl_type, gl.GL_FALSE, @intCast(offs));
         },
-        gl.GL_UNSIGNED_BYTE, gl.GL_UNSIGNED_SHORT, gl.GL_UNSIGNED_INT => {
+        gl.GL_BYTE, gl.GL_SHORT, gl.GL_INT, gl.GL_UNSIGNED_BYTE, gl.GL_UNSIGNED_SHORT, gl.GL_UNSIGNED_INT => {
             gl.glVertexArrayAttribIFormat(vao, @intCast(loc), num_elems, gl_type, @intCast(offs));
         },
         else => @compileError("Unknown type"),
@@ -271,6 +278,10 @@ pub fn Program(comptime KnownUniforms: type) type {
             return self.renderInner(array, options, UnknownUniforms.empty, &.{}, gl.GL_LINES);
         }
 
+        pub fn renderLineLoop(self: Self, array: RenderSource, options: KnownUniforms) void {
+            return self.renderInner(array, options, UnknownUniforms.empty, &.{}, gl.GL_LINE_LOOP);
+        }
+
         pub fn renderWithExtra(self: Self, array: RenderSource, options: KnownUniforms, defs: UnknownUniforms, values: []const ResolvedUniformValue) void {
             self.renderInner(array, options, defs, values, gl.GL_TRIANGLES);
         }
@@ -311,6 +322,7 @@ fn resolvedUniformType(comptime T: type, val: anytype) sphrender.ResolvedUniform
         },
         else => blk: {
             const uniform_type = switch (T) {
+                sphmath.Vec4 => .float4,
                 sphmath.Vec3 => .float3,
                 sphmath.Vec2 => .float2,
                 f32 => .float,
@@ -318,6 +330,7 @@ fn resolvedUniformType(comptime T: type, val: anytype) sphrender.ResolvedUniform
                 sphmath.Mat4x4 => .mat4x4,
                 sphrender.Texture => .image,
                 u32 => .uint,
+                i32, c_int => .int,
                 else => break :blk,
             };
             return @unionInit(ResolvedUniformValue, @tagName(uniform_type), val.*);

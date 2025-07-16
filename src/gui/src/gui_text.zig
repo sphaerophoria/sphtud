@@ -59,11 +59,11 @@ pub const LayoutBounds = struct {
     max_x: i32 = 0,
     max_y: i32 = 0,
 
-    fn width(self: LayoutBounds) u31 {
+    pub fn width(self: LayoutBounds) u31 {
         return @intCast(self.max_x - self.min_x);
     }
 
-    fn height(self: LayoutBounds) u31 {
+    pub fn height(self: LayoutBounds) u31 {
         return @intCast(self.max_y - self.min_y);
     }
 };
@@ -170,7 +170,7 @@ fn getText(text_retriever: anytype) []const u8 {
                 return text_retriever.*;
             }
 
-            if (child_info == .pointer and child_info.pointer.child == u8 and child_info.Pointer.size == .Slice) {
+            if (child_info == .pointer and child_info.pointer.child == u8 and child_info.pointer.size == .slice) {
                 return text_retriever.*.*;
             }
         },
