@@ -197,6 +197,14 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
         .alloc = try gui_alloc.makeSubAlloc("overlay"),
     };
 
+    ret.histogram_shared = try gui.histogram.Shared.init(
+        gui_alloc.gl,
+        &ret.guitext_state,
+        scratch_alloc,
+        StyleColors.default_color,
+        StyleColors.hover_color,
+    );
+
     return ret;
 }
 
@@ -253,6 +261,7 @@ pub fn WidgetState(comptime Action: type) type {
         drag_layer: gui.drag_layer.DragLayer(Action),
         interactable_shared: gui.interactable.Shared(Action),
         overlay: gui.popup_layer.PopupLayer(Action),
+        histogram_shared: gui.histogram.Shared,
 
         const Self = @This();
 
@@ -478,6 +487,15 @@ pub fn WidgetFactory(comptime Action: type) type {
                 click_action,
                 drag_action,
                 &self.state.interactable_shared,
+            );
+        }
+
+        pub fn makeHistogram(self: *const Self, retriever: anytype) !gui.Widget(Action) {
+            return gui.histogram.histogram(
+                Action,
+                self.alloc,
+                retriever,
+                &self.state.histogram_shared,
             );
         }
     };

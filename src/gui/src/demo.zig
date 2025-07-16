@@ -1,3 +1,4 @@
+const std = @import("std");
 const sphalloc = @import("sphalloc");
 const sphrender = @import("sphrender");
 const gl = sphrender.gl;
@@ -8,6 +9,46 @@ const GuiAction = union(enum) {};
 
 const AtlasRetriever = struct {
     gui_state: *gui.widget_factory.WidgetState(GuiAction),
+};
+
+fn standardNormalVal(z: f32) f32 {
+    return std.math.pow(f32, std.math.e, -z * z / 2) / std.math.sqrt(2 * std.math.pi);
+}
+
+fn generateStandardDist(out: []f32) void {
+    var center: f32 = @floatFromInt(out.len);
+    center /= 2;
+
+    // We want a bell curve with ~ 3 standard deviations filling output buffer
+    // Thus standard deviation should be 1/6th of output len
+
+    var stddev: f32 = @floatFromInt(out.len);
+    stddev /= 6;
+
+    for (out, 0..) |*val, i| {
+        const i_f: f32 = @floatFromInt(i);
+        val.* = standardNormalVal((i_f - center) / stddev) / stddev;
+    }
+}
+
+const HistogramRetriever = struct {
+    buf: []const f32,
+
+    pub fn generation(_: HistogramRetriever) u64 {
+        return 0;
+    }
+
+    pub fn numBuckets(self: HistogramRetriever) usize {
+        return self.buf.len;
+    }
+
+    pub fn getXLabel(_: HistogramRetriever, alloc: std.mem.Allocator, idx: usize) ![]const u8 {
+        return try std.fmt.allocPrint(alloc, "{d}", .{idx});
+    }
+
+    pub fn getY(self: HistogramRetriever, idx: usize) f32 {
+        return self.buf[idx];
+    }
 };
 
 pub fn main() !void {
@@ -30,9 +71,22 @@ pub fn main() !void {
         &allocators.scratch_gl,
     );
 
+    var std_dist: [25]f32 = undefined;
+    generateStandardDist(&std_dist);
+    const histogram_retriever = HistogramRetriever{
+        .buf = &std_dist,
+    };
+
     const widget_factory = gui_state.factory(gui_alloc);
-    const label = try widget_factory.makeLabel("Hello world");
-    var runner = try widget_factory.makeRunner(label);
+    const layout = try widget_factory.makeLayout();
+    try layout.pushWidget(try widget_factory.makeLabel("Hello world"));
+
+    try layout.pushWidget(try widget_factory.makeBox(
+        try widget_factory.makeHistogram(histogram_retriever),
+        .{ .width = 300, .height = 200 },
+        .fill_none,
+    ));
+    var runner = try widget_factory.makeRunner(layout.asWidget());
 
     while (!window.closed()) {
         allocators.resetScratch();

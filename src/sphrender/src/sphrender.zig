@@ -18,6 +18,7 @@ pub const UniformType = enum {
     float,
     float2,
     float3,
+    float4,
     int,
     uint,
     mat3x3,
@@ -40,6 +41,7 @@ pub const UniformType = enum {
             gl.GL_FLOAT => return .float,
             gl.GL_FLOAT_VEC2 => return .float2,
             gl.GL_FLOAT_VEC3 => return .float3,
+            gl.GL_FLOAT_VEC4 => return .float4,
             gl.GL_INT => return .int,
             gl.GL_UNSIGNED_INT => return .uint,
             gl.GL_FLOAT_MAT3_ARB => return .mat3x3,
@@ -57,6 +59,7 @@ pub const UniformDefault = union(UniformType) {
     float: f32,
     float2: [2]f32,
     float3: [3]f32,
+    float4: [4]f32,
     int: i32,
     uint: u32,
     mat3x3: sphmath.Mat3x3,
@@ -69,6 +72,7 @@ pub const ResolvedUniformValue = union(UniformType) {
     float: f32,
     float2: [2]f32,
     float3: [3]f32,
+    float4: [4]f32,
     int: i32,
     uint: u32,
     mat3x3: sphmath.Mat3x3,
@@ -214,6 +218,11 @@ pub const ProgramUniformIt = struct {
                     gl.glGetUniformfv(self.program, loc, &default);
                     break :blk .{ .float3 = default };
                 },
+                .float4 => blk: {
+                    var default: [4]f32 = .{ 0.0, 0.0, 0.0, 0.0 };
+                    gl.glGetUniformfv(self.program, loc, &default);
+                    break :blk .{ .float4 = default };
+                },
                 .int => blk: {
                     var default: gl.GLint = 0;
                     gl.glGetUniformiv(self.program, loc, &default);
@@ -351,6 +360,9 @@ pub fn applyUniformAtLocation(loc: gl.GLint, expected_type: UniformType, val: Re
         },
         .float3 => |f| {
             gl.glUniform3f(loc, f[0], f[1], f[2]);
+        },
+        .float4 => |f| {
+            gl.glUniform4f(loc, f[0], f[1], f[2], f[3]);
         },
         .int => |v| {
             gl.glUniform1i(loc, v);
