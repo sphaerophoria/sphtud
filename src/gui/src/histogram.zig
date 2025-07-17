@@ -39,7 +39,6 @@ pub fn histogram(comptime Action: type, alloc: sphrender.RenderAlloc, retriever:
 
     const ctx = try alloc.heap.arena().create(T);
 
-    // FIXME: One program can be used for all widgets
     var render_source = try sphrender.shader_program.RenderSource.init(alloc.gl);
     const render_data = try sphrender.shader_program.Buffer(Vertex).init(alloc.gl, &.{});
 
@@ -69,51 +68,6 @@ pub fn histogram(comptime Action: type, alloc: sphrender.RenderAlloc, retriever:
     };
 }
 
-const Vertex = struct {
-    vPos: sphmath.Vec2,
-    vIdx: i32,
-};
-const Uniforms = struct {
-    default_color: sphmath.Vec4,
-    active_color: sphmath.Vec4,
-    transform: sphmath.Mat3x3,
-    hovered_idx: i32,
-};
-
-pub const vertex_shader =
-    \\#version 330
-    \\in vec2 vPos;
-    \\in int vIdx;
-    \\uniform mat3x3 transform = mat3x3(
-    \\    1.0, 0.0, 0.0,
-    \\    0.0, 1.0, 0.0,
-    \\    0.0, 0.0, 1.0
-    \\);
-    \\flat out int idx;
-    \\void main()
-    \\{
-    \\    vec3 transformed = transform * vec3(vPos, 1.0);
-    \\    gl_Position = vec4(transformed.x, transformed.y, 0.0, transformed.z);
-    \\    idx = vIdx;
-    \\}
-;
-
-const frag_shader =
-    \\#version 330
-    \\uniform vec4 default_color = vec4(1.0, 1.0, 1.0, 1.0);
-    \\uniform vec4 active_color = vec4(1.0, 1.0, 1.0, 1.0);
-    \\uniform int hovered_idx = -1;
-    \\flat in int idx;
-    \\out vec4 fragment;
-    \\void main() {
-    \\  if (idx == hovered_idx) {
-    \\     fragment = active_color;
-    \\  } else {
-    \\     fragment = default_color;
-    \\  }
-    \\}
-;
-
 pub fn Histogram(comptime Action: type, comptime Retriever: type) type {
     return struct {
         retriever: Retriever,
@@ -128,7 +82,7 @@ pub fn Histogram(comptime Action: type, comptime Retriever: type) type {
 
         // NOTE: Only used for the text backing GuiText, not GuiText itself
         axis_text_alloc: *sphalloc.Sphalloc,
-        axis_text_hover_idx: i32 = -1,
+        axis_text_idx: i32 = -1,
         x_axis_text: []const u8,
 
         x_axis_gui_text: gui.gui_text.GuiText(*[]const u8),
@@ -179,6 +133,7 @@ pub fn Histogram(comptime Action: type, comptime Retriever: type) type {
                 .left = histogram_bounds.left,
                 .right = histogram_bounds.right,
             };
+
             renderTextCentered(x_text_area, window_bounds, self.x_axis_gui_text);
         }
 
@@ -192,11 +147,11 @@ pub fn Histogram(comptime Action: type, comptime Retriever: type) type {
             self.size = available_size;
 
             const y_vals = self.retriever.yVals();
-            if (self.axis_text_hover_idx != self.hovered_idx) {
+            if (self.axis_text_idx != self.hovered_idx) {
                 try self.axis_text_alloc.reset();
 
                 self.x_axis_text = &.{};
-                self.axis_text_hover_idx = self.hovered_idx;
+                self.axis_text_idx = self.hovered_idx;
 
                 if (self.hovered_idx > 0 and self.hovered_idx < y_vals.len) {
                     self.x_axis_text = try std.fmt.allocPrint(
@@ -243,15 +198,64 @@ pub fn Histogram(comptime Action: type, comptime Retriever: type) type {
                 self.hovered_idx = -1;
                 return .{};
             }
+
             const histogram_bounds = histogramBounds(widget_bounds);
 
             const mouse_x: i32 = @intFromFloat(input_state.mouse_pos.x);
-            self.hovered_idx = @divTrunc((mouse_x - histogram_bounds.left) * self.num_buckets, histogram_bounds.calcWidth());
+            self.hovered_idx = @divTrunc(
+                (mouse_x - histogram_bounds.left) * self.num_buckets,
+                histogram_bounds.calcWidth(),
+            );
 
             return .{};
         }
     };
 }
+
+const Vertex = struct {
+    vPos: sphmath.Vec2,
+    vIdx: i32,
+};
+const Uniforms = struct {
+    default_color: sphmath.Vec4,
+    active_color: sphmath.Vec4,
+    transform: sphmath.Mat3x3,
+    hovered_idx: i32,
+};
+
+pub const vertex_shader =
+    \\#version 330
+    \\in vec2 vPos;
+    \\in int vIdx;
+    \\uniform mat3x3 transform = mat3x3(
+    \\    1.0, 0.0, 0.0,
+    \\    0.0, 1.0, 0.0,
+    \\    0.0, 0.0, 1.0
+    \\);
+    \\flat out int idx;
+    \\void main()
+    \\{
+    \\    vec3 transformed = transform * vec3(vPos, 1.0);
+    \\    gl_Position = vec4(transformed.x, transformed.y, 0.0, transformed.z);
+    \\    idx = vIdx;
+    \\}
+;
+
+const frag_shader =
+    \\#version 330
+    \\uniform vec4 default_color = vec4(1.0, 1.0, 1.0, 1.0);
+    \\uniform vec4 active_color = vec4(1.0, 1.0, 1.0, 1.0);
+    \\uniform int hovered_idx = -1;
+    \\flat in int idx;
+    \\out vec4 fragment;
+    \\void main() {
+    \\  if (idx == hovered_idx) {
+    \\     fragment = active_color;
+    \\  } else {
+    \\     fragment = default_color;
+    \\  }
+    \\}
+;
 
 fn histogramBounds(widget_bounds: PixelBBox) PixelBBox {
     const adjustment = @max(widget_bounds.calcWidth(), widget_bounds.calcHeight()) / 20;
@@ -279,15 +283,13 @@ fn renderTextCentered(area_bounds: PixelBBox, window_bounds: PixelBBox, text: gu
     text.render(text_transform);
 }
 
-// XY + Transform
 fn makeGlPoints(x_idx: usize, num_items: usize, y: f32) ![6]Vertex {
-    // w/ 2 bars, each bar takes 1.0 width in opengl space
     var bar_width: f32 = @floatFromInt(num_items);
     bar_width = 2.0 / bar_width;
 
     const x_idx_c: i32 = std.math.cast(i32, x_idx) orelse return error.TooManyBuckets;
 
-    // x_idx /  num_items is left edge
+    // x_idx / num_items is left edge
     var left: f32 = @floatFromInt(x_idx);
     left /= @floatFromInt(num_items);
     left = left * 2.0 - 1.0;

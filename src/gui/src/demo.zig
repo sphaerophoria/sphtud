@@ -63,7 +63,7 @@ pub fn main() !void {
         &allocators.scratch_gl,
     );
 
-    var std_dist: [100]f32 = undefined;
+    var std_dist: [25]f32 = undefined;
     generateStandardDist(&std_dist);
     var total: f32 = 0;
     for (&std_dist) |val| {
