@@ -278,6 +278,10 @@ pub fn Program(comptime KnownUniforms: type) type {
             return self.renderInner(array, options, UnknownUniforms.empty, &.{}, gl.GL_LINES);
         }
 
+        pub fn renderLineLoop(self: Self, array: RenderSource, options: KnownUniforms) void {
+            return self.renderInner(array, options, UnknownUniforms.empty, &.{}, gl.GL_LINE_LOOP);
+        }
+
         pub fn renderWithExtra(self: Self, array: RenderSource, options: KnownUniforms, defs: UnknownUniforms, values: []const ResolvedUniformValue) void {
             self.renderInner(array, options, defs, values, gl.GL_TRIANGLES);
         }
