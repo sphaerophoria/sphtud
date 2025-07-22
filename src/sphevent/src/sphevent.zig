@@ -1,12 +1,20 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const sphutil = @import("sphutil");
 const sphalloc = @import("sphalloc");
 const sphttp = @import("sphttp");
 
+const root = @import("root");
+pub const options: Options = if (@hasDecl(root, "sphevent_options")) root.sphevent_options else .{};
+pub const Options = struct {
+    tcp_send_buffer_size: ?c_int = if (builtin.is_test) 500 else null,
+};
+
 pub const OsHandle = std.posix.fd_t;
 
-pub const PollResult = enum {
+pub const PollResult = union(enum) {
     in_progress,
+    replace_handler: Handler,
     complete,
 };
 
@@ -29,20 +37,210 @@ pub const Handler = struct {
     }
 };
 
+pub fn ConnectionStateMachine(comptime CompletionCtx: type) type {
+    return struct {
+        handlers: []const Handler,
+        handler_idx: usize,
+        completion_ctx: CompletionCtx,
+
+        const vtable = Handler.VTable{
+            .poll = poll,
+            .close = close,
+        };
+
+        const Self = @This();
+
+        fn poll(ctx: ?*anyopaque, loop: *Loop) PollResult {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+
+            std.debug.assert(self.handler_idx < self.handlers.len);
+
+            switch (self.handlers[self.handler_idx].poll(loop)) {
+                .in_progress => return .in_progress,
+                .replace_handler => unreachable,
+                .complete => {
+                    self.handler_idx += 1;
+                    if (self.handler_idx >= self.handlers.len) {
+                        return .complete;
+                    }
+                    return .{
+                        .replace_handler = .{
+                            .ptr = self,
+                            .vtable = &vtable,
+                            .fd = self.handlers[self.handler_idx].fd,
+                        },
+                    };
+                },
+            }
+        }
+
+        fn close(ctx: ?*anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+
+            // This is called for every iteration, we only free at the end
+            if (self.handler_idx < self.handlers.len) return;
+
+            for (self.handlers) |handler| {
+                handler.close();
+            }
+            self.completion_ctx.notify();
+        }
+    };
+}
+
+pub fn connectionStateMachine(alloc: std.mem.Allocator, handlers: []const Handler, completion_ctx: anytype) !Handler {
+    const RetT = ConnectionStateMachine(@TypeOf(completion_ctx));
+    const ret = try alloc.create(RetT);
+    std.debug.assert(handlers.len > 0);
+    ret.* = .{
+        .handlers = try alloc.dupe(Handler, handlers),
+        .handler_idx = 0,
+        .completion_ctx = completion_ctx,
+    };
+
+    return .{
+        .ptr = ret,
+        .vtable = &RetT.vtable,
+        .fd = handlers[0].fd,
+    };
+}
+
+pub const SendFile = struct {
+    src: OsHandle,
+    dst: OsHandle,
+    offs: usize = 0,
+    len: usize,
+
+    const vtable = Handler.VTable{
+        .poll = poll,
+        .close = close,
+    };
+
+    pub fn init(alloc: std.mem.Allocator, src: OsHandle, dst: OsHandle, len: usize) !*SendFile {
+        switch (builtin.mode) {
+            .Debug, .ReleaseSafe => {
+                std.debug.assert(try getNonblock(src) == false);
+                std.debug.assert(try getNonblock(dst) == true);
+            },
+            else => {},
+        }
+
+        const ret = try alloc.create(SendFile);
+        ret.* = .{
+            .src = src,
+            .dst = dst,
+            .len = len,
+        };
+        return ret;
+    }
+
+    pub fn handler(self: *SendFile) Handler {
+        return .{
+            .ptr = self,
+            .vtable = &vtable,
+            .fd = self.dst,
+        };
+    }
+
+    fn poll(ctx: ?*anyopaque, _: *Loop) PollResult {
+        const self: *SendFile = @ptrCast(@alignCast(ctx));
+        while (true) {
+            self.offs += std.posix.sendfile(self.dst, self.src, self.offs, self.len, &.{}, &.{}, 0) catch |e| {
+                if (e == error.WouldBlock) return .in_progress;
+
+                std.log.err("Failed to send file: {s}", .{@errorName(e)});
+                return .complete;
+            };
+            if (self.offs >= self.len) return .complete;
+        }
+    }
+
+    fn close(_: ?*anyopaque) void {}
+};
+
+pub const FdRefBufsWriter = struct {
+    fd: OsHandle,
+    bufs: []const []const u8,
+    buf_idx: usize = 0,
+    char_idx: usize = 0,
+
+    const vtable = Handler.VTable{
+        .poll = poll,
+        .close = finish,
+    };
+
+    pub fn init(alloc: std.mem.Allocator, fd: OsHandle, bufs: []const []const u8) !FdRefBufsWriter {
+        return .{
+            .fd = fd,
+            .bufs = try alloc.dupe([]const u8, bufs),
+        };
+    }
+
+    pub fn handler(self: *FdRefBufsWriter) Handler {
+        return .{
+            .ptr = self,
+            .vtable = &vtable,
+            .fd = self.fd,
+        };
+    }
+
+    fn poll(ctx: ?*anyopaque, _: *Loop) PollResult {
+        const self: *FdRefBufsWriter = @ptrCast(@alignCast(ctx));
+
+        while (true) {
+            if (self.buf_idx >= self.bufs.len) return .complete;
+
+            if (self.char_idx >= self.bufs[self.buf_idx].len) {
+                self.buf_idx += 1;
+                self.char_idx = 0;
+                continue;
+            }
+
+            // pwritev would be better
+            const amount_written = std.posix.write(
+                self.fd,
+                self.bufs[self.buf_idx][self.char_idx..],
+            ) catch |e| {
+                if (e == error.WouldBlock) {
+                    return .in_progress;
+                }
+
+                std.log.err("Failed to write buffer: {s}", .{@errorName(e)});
+                return .complete;
+            };
+
+            self.char_idx += amount_written;
+        }
+    }
+
+    fn finish(_: ?*anyopaque) void {}
+};
+
 pub const Loop = struct {
     fd: i32,
+    force_poll: sphutil.RuntimeSegmentedList(usize),
     handler_pool: sphutil.RuntimeSegmentedList(Handler),
 
     pub fn init(alloc: *sphalloc.Sphalloc) !Loop {
         const fd = try std.posix.epoll_create1(0);
+
+        // 1000 connections is a ton, 1 million is insane
+        const typical_size = 1024;
+        const max_size = 1 * 1024 * 1024;
+
         return .{
             .fd = fd,
-            // 1000 connections is a ton, 1 million is insane
+            .force_poll = try .init(
+                alloc.arena(),
+                alloc.block_alloc.allocator(),
+                typical_size,
+                max_size,
+            ),
             .handler_pool = try .init(
                 alloc.arena(),
                 alloc.block_alloc.allocator(),
-                1024,
-                1 * 1024 * 1024,
+                typical_size,
+                max_size,
             ),
         };
     }
@@ -54,6 +252,8 @@ pub const Loop = struct {
 
         var event = makeEvent(handler_idx);
         try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_ADD, handler.fd, &event);
+
+        try self.force_poll.append(handler_idx);
     }
 
     pub fn shutdown(self: *Loop) void {
@@ -64,24 +264,29 @@ pub const Loop = struct {
     }
 
     pub fn wait(self: *Loop, scratch: *sphalloc.ScratchAlloc) !void {
-        const num_events = 100;
-        var events: [num_events]std.os.linux.epoll_event = undefined;
-        const num_fds = std.posix.epoll_wait(self.fd, &events, -1);
-
         const checkpoint = scratch.checkpoint();
         defer scratch.restore(checkpoint);
 
-        var to_remove = try sphutil.RuntimeBoundedArray(usize).init(scratch.allocator(), 100);
+        const num_events = 100;
+        const max_update_size = num_events + self.force_poll.len;
+
+        var to_remove = try sphutil.RuntimeBoundedArray(usize).init(scratch.allocator(), max_update_size);
+        var to_add = try sphutil.RuntimeBoundedArray(Handler).init(scratch.allocator(), max_update_size);
+
+        try self.pollForced(scratch, &to_remove, &to_add);
+
+        var events: [num_events]std.os.linux.epoll_event = undefined;
+
+        var num_fds: usize = 0;
+        if (to_remove.items.len == 0 and to_add.items.len == 0) {
+            num_fds = std.posix.epoll_wait(self.fd, &events, -1);
+        }
 
         for (events[0..num_fds]) |event| {
-            const handler = self.handler_pool.get(event.data.ptr);
-            switch (handler.poll(self)) {
-                .in_progress => {},
-                .complete => {
-                    try to_remove.append(event.data.ptr);
-                },
-            }
+            try self.pollHandler(event.data.ptr, &to_remove, &to_add, null);
         }
+
+        try self.pollForced(scratch, &to_remove, &to_add);
 
         // We need to remove in reverse order so that swapRemove is always
         // looking at the right guy
@@ -104,10 +309,56 @@ pub const Loop = struct {
 
             // After a swap remove the element that used to be on the end is pointing to the wrong handler
             if (handler_idx < self.handler_pool.len) {
+                std.debug.assert(self.force_poll.len == 0);
                 const swapped_handler = self.handler_pool.get(handler_idx);
                 var new_event = makeEvent(handler_idx);
                 try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_MOD, swapped_handler.fd, &new_event);
             }
+        }
+
+        for (to_add.items) |handler| {
+            try self.register(handler);
+        }
+    }
+
+    fn pollForced(self: *Loop, scratch: *sphalloc.BufAllocator, to_remove: *sphutil.RuntimeBoundedArray(usize), to_add: *sphutil.RuntimeBoundedArray(Handler)) !void {
+        while (self.force_poll.len > 0) {
+            const cp = scratch.checkpoint();
+            defer scratch.restore(cp);
+
+            var to_force = try sphutil.RuntimeBoundedArray(usize).init(scratch.allocator(), self.force_poll.len);
+
+            var it = self.force_poll.iter();
+            while (it.next()) |idx| {
+                try self.pollHandler(idx.*, to_remove, to_add, &to_force);
+            }
+            self.force_poll.clear();
+            try self.force_poll.appendSlice(to_force.items);
+        }
+    }
+
+    fn pollHandler(self: *Loop, idx: usize, to_remove: *sphutil.RuntimeBoundedArray(usize), to_add: *sphutil.RuntimeBoundedArray(Handler), to_force: ?*sphutil.RuntimeBoundedArray(usize)) !void {
+        const handler = self.handler_pool.getPtr(idx);
+        switch (handler.poll(self)) {
+            .in_progress => {},
+            .replace_handler => |new_handler| {
+                if (new_handler.fd != handler.fd) {
+                    // Will be polled on addition
+                    try to_add.append(new_handler);
+                    try to_remove.append(idx);
+                } else {
+                    handler.close();
+                    handler.* = new_handler;
+                    if (to_force) |tf| {
+                        try tf.append(idx);
+                    } else {
+                        try self.force_poll.append(idx);
+                    }
+                }
+            },
+            .complete => {
+                try to_remove.append(idx);
+            },
         }
     }
 
@@ -223,6 +474,18 @@ pub const net = struct {
                     };
                     errdefer conn_handler.close();
 
+                    if (options.tcp_send_buffer_size) |s| {
+                        var send_buf_size: c_int = s;
+                        try std.posix.setsockopt(
+                            connection.stream.handle,
+                            std.posix.SOL.SOCKET,
+                            std.posix.SO.SNDBUF,
+                            std.mem.asBytes(&send_buf_size),
+                        );
+
+                        std.log.debug("Set send buffer size to {d}\n", .{s});
+                    }
+
                     // Intentionally a little late so errdefers all work themselves out :)
                     try setNonblock(connection.stream);
 
@@ -253,6 +516,14 @@ pub const net = struct {
             inner: std.net.Stream,
             http_reader: sphttp.HttpReader,
             ctx: Ctx,
+            state: union(enum) {
+                read,
+                handed_off,
+                send_error: struct {
+                    buf: []const u8,
+                    offs: usize,
+                },
+            },
 
             const Self = @This();
 
@@ -278,6 +549,29 @@ pub const net = struct {
             }
 
             fn pollError(self: *Self) !PollResult {
+                switch (self.state) {
+                    .read => return try self.pollRead(),
+                    .handed_off => return .complete,
+                    .send_error => return try self.pollWriteError(),
+                }
+            }
+
+            fn pollWriteError(self: *Self) !PollResult {
+                const data = switch (self.state) {
+                    .send_error => |*data| data,
+                    else => unreachable,
+                };
+
+                while (data.offs < data.buf.len) {
+                    data.offs += self.inner.write(data.buf[data.offs..]) catch |e| {
+                        if (e == error.WouldBlock) return .in_progress;
+                        return e;
+                    };
+                }
+                return .complete;
+            }
+
+            fn pollRead(self: *Self) !PollResult {
                 while (true) {
                     const write_buf = try self.http_reader.getWritableArea();
                     const bytes_read = self.inner.read(write_buf) catch |e| {
@@ -294,27 +588,42 @@ pub const net = struct {
                     try self.http_reader.grow(self.scratch, bytes_read);
 
                     if (self.http_reader.state == .body_complete) {
-                        self.ctx.serve(&self.http_reader, self.inner) catch |e| {
-                            const error_code =
-                                if (e == error.FileNotFound)
-                                    std.http.Status.not_found
-                                else
-                                    std.http.Status.internal_server_error;
+                        const ret = self.ctx.serve(&self.http_reader, self.inner) catch |e| {
+                            const not_found = sphttp.makeHttpHeaderComptime(.{
+                                .status = .not_found,
+                                .content_length = 0,
+                            });
 
-                            var writer = sphttp.httpWriter(self.inner.writer());
-                            try writer.start(.{ .status = error_code, .content_length = 0 });
-                            try writer.writeBody("");
+                            const internal_error = sphttp.makeHttpHeaderComptime(.{
+                                .status = .internal_server_error,
+                                .content_length = 0,
+                            });
 
-                            return e;
+                            const response_buf =
+                                if (e == error.FileNotFound) not_found else internal_error;
+
+                            self.state = .{
+                                .send_error = .{
+                                    .buf = response_buf,
+                                    .offs = 0,
+                                },
+                            };
+                            return self.pollWriteError();
                         };
-                        return .complete;
+                        std.debug.assert(ret == .replace_handler);
+                        self.state = .handed_off;
+                        return ret;
                     }
                 }
             }
 
             fn close(ctx: ?*anyopaque) void {
                 const self: *Self = @ptrCast(@alignCast(ctx));
-                self.inner.close();
+                switch (self.state) {
+                    .send_error => self.inner.close(),
+                    .read => self.inner.close(),
+                    .handed_off => {},
+                }
                 self.alloc.deinit();
             }
         };
@@ -335,12 +644,20 @@ pub const net = struct {
             .scratch = scratch,
             .inner = inner,
             .http_reader = try .init(alloc),
+            .state = .read,
             .ctx = ctx,
         };
 
         return ret;
     }
 };
+
+fn getNonblock(handle: OsHandle) !bool {
+    var flags = try std.posix.fcntl(handle, std.posix.F.GETFL, 0);
+    const flags_s: *std.posix.O = @ptrCast(&flags);
+
+    return flags_s.NONBLOCK;
+}
 
 fn setNonblock(conn: std.net.Stream) !void {
     var flags = try std.posix.fcntl(conn.handle, std.posix.F.GETFL, 0);

@@ -255,6 +255,55 @@ test "HttpReader sanity" {
     try std.testing.expectEqual(.GET, reader.header.?.method);
 }
 
+pub const HttpHeaderParams = struct {
+    status: std.http.Status,
+    content_length: usize,
+    content_type: ?[]const u8 = null,
+    headers: []const struct { key: []const u8, value: []const u8 } = &.{},
+};
+
+pub fn makeHttpHeader(alloc: std.mem.Allocator, params: HttpHeaderParams) ![]const u8 {
+    const ret_len = try httpHeaderLen(params);
+    const ret = try alloc.alloc(u8, ret_len);
+    var fbw = std.io.fixedBufferStream(ret);
+    try makeHttpHeaderWriter(params, fbw.writer());
+
+    return ret;
+}
+
+pub fn makeHttpHeaderComptime(comptime params: HttpHeaderParams) []const u8 {
+    return comptime blk: {
+        var buf: [try httpHeaderLen(params)]u8 = undefined;
+
+        var fbw = std.io.fixedBufferStream(&buf);
+        try makeHttpHeaderWriter(params, fbw.writer());
+        const final = buf;
+        break :blk &final;
+    };
+}
+
+pub fn httpHeaderLen(params: HttpHeaderParams) !usize {
+    var counting_writer = std.io.countingWriter(std.io.null_writer);
+    try makeHttpHeaderWriter(params, counting_writer.writer());
+    return counting_writer.bytes_written;
+}
+
+pub fn makeHttpHeaderWriter(params: HttpHeaderParams, writer: anytype) !void {
+    var http_writer = httpWriter(writer);
+
+    try http_writer.start(.{
+        .status = params.status,
+        .content_length = params.content_length,
+        .content_type = params.content_type,
+    });
+
+    for (params.headers) |header| {
+        try http_writer.appendHeader(header.key, header.value);
+    }
+
+    try http_writer.startBody();
+}
+
 pub fn HttpWriter(comptime Writer: type) type {
     return struct {
         writer: Writer,
@@ -283,6 +332,10 @@ pub fn HttpWriter(comptime Writer: type) type {
         pub fn writeBody(self: *Self, content: []const u8) !void {
             try self.writer.writeAll("\r\n");
             try self.writer.writeAll(content);
+        }
+
+        pub fn startBody(self: *Self) !void {
+            try self.writer.writeAll("\r\n");
         }
     };
 }
