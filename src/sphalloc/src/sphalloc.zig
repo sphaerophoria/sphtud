@@ -256,7 +256,7 @@ pub const BufAllocator = struct {
         back_idx: usize,
     };
 
-    pub fn checkpoint(self: *BufAllocator) Checkpoint {
+    pub fn checkpoint(self: BufAllocator) Checkpoint {
         return .{
             .front_idx = self.front_idx,
             .back_idx = self.back_idx,
