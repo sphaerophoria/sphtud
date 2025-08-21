@@ -29,6 +29,10 @@ pub fn Program(comptime KnownUniforms: type) type {
             self.inner.render(buffer.inner, options);
         }
 
+        pub fn renderLines(self: Self, buffer: RenderSource, options: KnownUniforms) void {
+            self.inner.renderLines(buffer.inner, options);
+        }
+
         pub fn renderLineLoop(self: Self, array: RenderSource, options: KnownUniforms) void {
             return self.inner.renderLineLoop(array.inner, options);
         }
@@ -49,6 +53,27 @@ pub const Vertex = struct {
 
 pub const Buffer = shader_program.Buffer(Vertex);
 pub const RenderSource = shader_program.RenderSourceTyped(Vertex);
+
+pub const SolidColorUniforms = struct {
+    color: sphmath.Vec3,
+    transform: sphmath.Mat3x3,
+};
+
+pub const SolidColorProgram = Program(SolidColorUniforms);
+
+pub const solid_color_frag =
+    \\#version 330
+    \\out vec4 fragment;
+    \\uniform vec3 color;
+    \\void main()
+    \\{
+    \\    fragment = vec4(color, 1.0);
+    \\}
+;
+
+pub fn solidColorProgram(gl_alloc: *GlAlloc) !SolidColorProgram {
+    return SolidColorProgram.init(gl_alloc, solid_color_frag);
+}
 
 pub const vertex_shader =
     \\#version 330
