@@ -7,10 +7,6 @@ const gui = @import("gui.zig");
 
 const GuiAction = union(enum) {};
 
-const AtlasRetriever = struct {
-    gui_state: *gui.widget_factory.WidgetState(GuiAction),
-};
-
 fn standardNormalVal(z: f32) f32 {
     return std.math.pow(f32, std.math.e, -z * z / 2) / std.math.sqrt(2 * std.math.pi);
 }
