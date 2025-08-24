@@ -312,7 +312,7 @@ fn generateAction(comptime Action: type, action_generator: anytype, idx: usize) 
         },
         .pointer => |p| {
             switch (@typeInfo(p.child)) {
-                .Fn => {
+                .@"fn" => {
                     return action_generator.*(idx);
                 },
                 else => {},
