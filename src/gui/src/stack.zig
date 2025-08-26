@@ -104,6 +104,8 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
                 const item_bounds = itemBounds(stack_bounds, item.layout, item.widget.getSize());
                 const item_input_bounds = item_bounds.calcIntersection(input_bounds);
 
+                if (item.widget.vtable.setInputState == null) continue;
+
                 ret = item.widget.setInputState(item_bounds, item_input_bounds, input_state);
                 if (ret.wants_focus) {
                     self.focused_id = i;
