@@ -173,6 +173,10 @@ fn getText(text_retriever: anytype) []const u8 {
             if (child_info == .pointer and child_info.pointer.child == u8 and child_info.pointer.size == .slice) {
                 return text_retriever.*.*;
             }
+
+            if (child_info == .@"struct") {
+                return getText(text_retriever.*);
+            }
         },
         else => {},
     }
