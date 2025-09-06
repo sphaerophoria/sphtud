@@ -37,6 +37,10 @@ pub fn Program(comptime KnownUniforms: type) type {
             return self.inner.renderLineLoop(array.inner, options);
         }
 
+        pub fn renderLineStrip(self: Self, array: RenderSource, options: KnownUniforms) void {
+            return self.inner.renderLineStrip(array.inner, options);
+        }
+
         pub fn renderWithExtra(self: Self, buffer: Buffer, options: KnownUniforms, defs: shader_program.UnknownUniforms, values: []const sphrender.ResolvedUniformValue) void {
             self.inner.renderWithExtra(buffer, options, defs, values);
         }
