@@ -73,7 +73,7 @@ pub fn Frame(comptime Action: type) type {
             return self.inner.update(adjustSize(self.shared.border_size, available_size), delta_s);
         }
 
-        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
             return self.inner.setInputState(
                 adjustBounds(self.shared.border_size, widget_bounds),
@@ -235,7 +235,7 @@ pub fn ColorableFrame(comptime Action: type, comptime ColorRetriever: type) type
             return self.inner.update(adjustSize(self.shared.border_size, available_size), delta_s);
         }
 
-        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
             return self.inner.setInputState(
                 adjustBounds(self.shared.border_size, widget_bounds),

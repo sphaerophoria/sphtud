@@ -107,7 +107,7 @@ pub fn Layout(comptime Action: type) type {
             };
         }
 
-        fn setInputState(ctx: ?*anyopaque, bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) gui.InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) gui.InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
             var ret = gui.InputResponse(Action){
                 .wants_focus = false,

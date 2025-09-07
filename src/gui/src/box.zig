@@ -65,7 +65,7 @@ pub fn Box(comptime Action: type) type {
             return self.inner.update(self.size, delta_s);
         }
 
-        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
             return self.inner.setInputState(widget_bounds, input_bounds, input_state);
         }

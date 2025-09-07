@@ -101,7 +101,7 @@ pub fn ScrollView(comptime Action: type) type {
                 @as(f32, @floatFromInt(self.contentHeight()));
         }
 
-        fn setInputState(ctx: ?*anyopaque, bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) gui.InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) gui.InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             if (self.scrollbar_present) {

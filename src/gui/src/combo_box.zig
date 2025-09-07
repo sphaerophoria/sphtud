@@ -199,7 +199,7 @@ pub fn ComboBox(comptime Action: type, comptime OnClick: type) type {
             );
         }
 
-        fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             if (input_bounds.containsOptMousePos(input_state.mouse_down_location)) {

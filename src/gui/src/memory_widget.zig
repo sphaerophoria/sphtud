@@ -140,7 +140,7 @@ pub fn MemoryWidget(comptime Action: type) type {
             self.inner_widget.render(widget_bounds, window_bounds);
         }
 
-        fn setInputState(ctx: ?*anyopaque, widget_bounds: gui.PixelBBox, input_bounds: gui.PixelBBox, input_state: gui.InputState) gui.InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, widget_bounds: gui.PixelBBox, input_bounds: gui.PixelBBox, input_state: *gui.InputState) gui.InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
             return self.inner_widget.setInputState(widget_bounds, input_bounds, input_state);
         }

@@ -208,7 +208,7 @@ pub fn ColorPicker(comptime Action: type, comptime ColorRetriever: type, comptim
             );
         }
 
-        fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: InputState) gui.InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) gui.InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
             const ret = gui.InputResponse(Action){
                 .wants_focus = false,
@@ -415,7 +415,7 @@ fn ColorHexagon(comptime Action: type, comptime ColorRetriever: type, comptime C
             };
         }
 
-        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) gui.InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) gui.InputResponse(Action) {
             const self: *@This() = @ptrCast(@alignCast(ctx));
 
             const prev_color = getColor(&self.color_retriever);

@@ -257,7 +257,7 @@ pub fn Widget(comptime Action: type) type {
             render: *const fn (ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void,
             getSize: *const fn (ctx: ?*anyopaque) PixelSize,
             update: ?*const fn (ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) anyerror!void,
-            setInputState: ?*const fn (ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action),
+            setInputState: ?*const fn (ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action),
             setFocused: ?*const fn (ctx: ?*anyopaque, focused: bool) void,
             reset: ?*const fn (ctx: ?*anyopaque) void,
         };
@@ -282,7 +282,7 @@ pub fn Widget(comptime Action: type) type {
             self.vtable.render(self.ctx, widget_bounds, window_bounds);
         }
 
-        pub fn setInputState(self: Self, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
+        pub fn setInputState(self: Self, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
             if (self.vtable.setInputState) |setState| {
                 return setState(self.ctx, widget_bounds, input_bounds, input_state);
             }
