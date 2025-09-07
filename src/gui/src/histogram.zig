@@ -166,7 +166,7 @@ pub fn Histogram(comptime Action: type, comptime Retriever: type) type {
             self.render_source.len = points.items.len;
         }
 
-        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             if (!input_bounds.containsMousePos(input_state.mouse_pos)) {

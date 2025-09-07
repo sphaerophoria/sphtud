@@ -106,7 +106,7 @@ pub fn Checkbox(comptime Action: type, comptime Checked: type) type {
             };
         }
 
-        fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
             var ret = InputResponse(Action){};
             if (input_bounds.containsOptMousePos(input_state.mouse_down_location) and input_state.mouse_pressed) {

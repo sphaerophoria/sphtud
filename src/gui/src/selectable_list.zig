@@ -132,7 +132,7 @@ pub fn SelectableList(comptime Action: type, comptime Retriever: type, comptime 
             }
         }
 
-        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) gui.InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) gui.InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             const no_action = gui.InputResponse(Action){

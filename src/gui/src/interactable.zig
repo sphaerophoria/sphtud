@@ -66,7 +66,7 @@ pub fn Interactable(comptime Action: type) type {
             try self.inner.update(available_size, delta_s);
         }
 
-        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             if (!input_bounds.containsOptMousePos(input_state.mouse_down_location)) {

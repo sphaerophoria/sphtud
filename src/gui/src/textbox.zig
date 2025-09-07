@@ -208,7 +208,7 @@ fn Textbox(comptime Action: type, comptime TextRetriever: type, comptime TextAct
             self.cursor_pos_text_idx = self.gui_text.getNextText().len;
         }
 
-        fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: InputState) gui.InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) gui.InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
             var wants_focus = self.focused;
 

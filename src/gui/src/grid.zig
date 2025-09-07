@@ -153,7 +153,7 @@ pub fn Grid(comptime Action: type) type {
             }
         }
 
-        fn setInputState(ctx: ?*anyopaque, grid_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, grid_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             var ret = InputResponse(Action){

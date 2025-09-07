@@ -52,7 +52,7 @@ pub fn Runner(comptime Action: type) type {
                 .right = widget_size.width,
             };
 
-            const input_response = self.root.setInputState(widget_bounds, widget_bounds, self.input_state);
+            const input_response = self.root.setInputState(widget_bounds, widget_bounds, &self.input_state);
             self.root.setFocused(input_response.wants_focus);
             self.root.render(widget_bounds, window_bounds);
             return .{

@@ -93,7 +93,7 @@ pub fn OneOf(comptime Action: type, comptime Selected: type) type {
             }
         }
 
-        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
             return self.getSelected().setInputState(widget_bounds, input_bounds, input_state);
         }

@@ -34,7 +34,7 @@ pub const Scrollbar = struct {
     };
 
     // Returns desired scroll height as ratio of total scrollable area
-    pub fn handleInput(self: *Scrollbar, input_state: InputState, bounds: PixelBBox) ?f32 {
+    pub fn handleInput(self: *Scrollbar, input_state: *InputState, bounds: PixelBBox) ?f32 {
         self.updateDragState(input_state, bounds);
 
         switch (self.scroll_input_state) {
@@ -93,7 +93,7 @@ pub const Scrollbar = struct {
         };
     }
 
-    fn updateDragState(self: *Scrollbar, input_state: InputState, bounds: PixelBBox) void {
+    fn updateDragState(self: *Scrollbar, input_state: *InputState, bounds: PixelBBox) void {
         const already_dragging = self.scroll_input_state == .dragging and input_state.mouse_down_location != null;
 
         // If we are already dragging, moving into the drag state again would

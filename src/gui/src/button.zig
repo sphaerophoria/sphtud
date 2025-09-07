@@ -101,7 +101,7 @@ pub fn Button(comptime Action: type, comptime ActionGenerator: type) type {
             );
         }
 
-        fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: InputState) gui.InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) gui.InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             var ret: ?Action = null;

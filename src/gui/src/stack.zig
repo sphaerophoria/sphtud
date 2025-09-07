@@ -87,7 +87,7 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
             }
         }
 
-        fn setInputState(ctx: ?*anyopaque, stack_bounds: PixelBBox, input_bounds: PixelBBox, input_state: InputState) gui.InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, stack_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) gui.InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             var ret = gui.InputResponse(Action){

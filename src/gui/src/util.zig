@@ -45,7 +45,7 @@ pub fn centerBoxInBounds(box: PixelSize, bounds: PixelBBox) PixelBBox {
     return output;
 }
 
-pub fn itemConsumesInput(item_bounds: PixelBBox, input_state: InputState) bool {
+pub fn itemConsumesInput(item_bounds: PixelBBox, input_state: *InputState) bool {
     // Maybe widgets should say if they consume input...
     if (input_state.mouse_down_location) |loc| {
         return item_bounds.containsMousePos(loc);

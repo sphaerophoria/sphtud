@@ -107,7 +107,7 @@ pub fn Drag(comptime Action: type, comptime ValRetriever: type, comptime ActionG
             try self.gui_text.update(std.math.maxInt(u31));
         }
 
-        fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: InputState) gui.InputResponse(Action) {
+        fn setInputState(ctx: ?*anyopaque, _: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) gui.InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
             var ret: ?Action = null;
