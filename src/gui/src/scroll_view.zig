@@ -104,6 +104,13 @@ pub fn ScrollView(comptime Action: type) type {
         fn setInputState(ctx: ?*anyopaque, bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) gui.InputResponse(Action) {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
+            const widget_bounds = self.innerBounds(bounds);
+            const ret = self.inner.setInputState(
+                widget_bounds,
+                widget_bounds.calcIntersection(input_bounds),
+                input_state,
+            );
+
             if (self.scrollbar_present) {
                 const new_scroll_ratio = self.scrollbar.handleInput(
                     input_state,
@@ -117,17 +124,13 @@ pub fn ScrollView(comptime Action: type) type {
 
                 if (input_bounds.containsMousePos(input_state.mouse_pos)) {
                     self.scroll_offs -= @intFromFloat(input_state.frame_scroll * 15);
+                    input_state.consumeScroll();
                 }
 
                 self.clampScrollOffs();
             }
 
-            const widget_bounds = self.innerBounds(bounds);
-            return self.inner.setInputState(
-                widget_bounds,
-                widget_bounds.calcIntersection(input_bounds),
-                input_state,
-            );
+            return ret;
         }
 
         fn render(ctx: ?*anyopaque, bounds: PixelBBox, window_bounds: PixelBBox) void {
