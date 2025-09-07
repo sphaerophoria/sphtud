@@ -308,12 +308,14 @@ fn WidgetGenerator(comptime Action: type, comptime ColorRetriever: type, comptim
                 }
             };
 
-            return gui.drag.dragFloat(
+            return gui.drag.drag(
                 Action,
+                f32,
                 self.alloc,
                 Retriever{ .color_retriever = self.retriever },
                 Generator{ .color_retriever = self.retriever, .color_generator = self.generator },
                 0.01,
+                1,
                 self.shared.drag_shared,
             );
         }

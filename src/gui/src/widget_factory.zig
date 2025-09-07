@@ -341,6 +341,17 @@ pub fn WidgetFactory(comptime Action: type) type {
             );
         }
 
+        pub fn makeColorPickerWithShared(self: *const Self, shared: *gui.color_picker.SharedColorPickerState, retriever: anytype, action_gen: anytype) !gui.Widget(Action) {
+            return gui.color_picker.makeColorPicker(
+                Action,
+                self.alloc,
+                retriever,
+                action_gen,
+                shared,
+                &self.state.overlay,
+            );
+        }
+
         pub fn makeDragFloat(self: *const Self, retriever: anytype, action_gen: anytype, drag_speed: f32) !gui.Widget(Action) {
             return gui.drag.drag(
                 Action,
