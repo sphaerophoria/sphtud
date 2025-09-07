@@ -140,6 +140,10 @@ pub const InputState = struct {
         self.frame_scroll = 0;
     }
 
+    pub fn consumeScroll(self: *InputState) void {
+        self.frame_scroll = 0;
+    }
+
     pub fn pushInput(self: *InputState, action: WindowAction) !void {
         switch (action) {
             .mouse_move => |pos| {
