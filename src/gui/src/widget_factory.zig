@@ -205,6 +205,22 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
         StyleColors.hover_color,
     );
 
+    ret.solid_color_renderer = try sphrender.xyt_program.solidColorProgram(gui_alloc.gl);
+
+    ret.multi_line_graph_shared = try gui.multi_line_graph.Shared.init(
+        gui_alloc.gl,
+        scratch_alloc.linear(),
+        .{
+            .label_color_width = typical_widget_height,
+            .label_color_margin = layout_pad,
+            .hover_ratio_size = 0.03,
+        },
+        &ret.squircle_renderer,
+        corner_radius,
+        &ret.solid_color_renderer,
+        &ret.guitext_state,
+    );
+
     return ret;
 }
 
@@ -262,6 +278,8 @@ pub fn WidgetState(comptime Action: type) type {
         interactable_shared: gui.interactable.Shared(Action),
         overlay: gui.popup_layer.PopupLayer(Action),
         histogram_shared: gui.histogram.Shared,
+        solid_color_renderer: sphrender.xyt_program.SolidColorProgram,
+        multi_line_graph_shared: gui.multi_line_graph.Shared,
 
         const Self = @This();
 
@@ -507,6 +525,15 @@ pub fn WidgetFactory(comptime Action: type) type {
                 self.alloc,
                 retriever,
                 &self.state.histogram_shared,
+            );
+        }
+
+        pub fn makeMultiLineGraph(self: *const Self, retrievers: anytype) !gui.Widget(Action) {
+            return gui.multi_line_graph.multiLineGraph(
+                Action,
+                self.alloc,
+                &self.state.multi_line_graph_shared,
+                retrievers,
             );
         }
     };
