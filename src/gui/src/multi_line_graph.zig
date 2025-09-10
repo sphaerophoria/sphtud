@@ -154,22 +154,25 @@ pub fn MultiLineGraph(comptime Retriever: type, comptime Action: type) type {
             const graph_bounds = self.graphBoundsFromWidgetBounds(widget_bounds);
             const graph_to_clip = self.graphToClipTxfm(graph_bounds, window_bounds);
 
-            self.renderGraphs(graph_to_clip, graph_bounds, window_bounds);
-            self.renderHoverIndicators(graph_bounds, graph_to_clip);
+            {
+                var scissor = sphrender.TemporaryScissor.init();
+                defer scissor.reset();
+
+                scissor.set(
+                    graph_bounds.left,
+                    window_bounds.calcHeight() - graph_bounds.bottom,
+                    graph_bounds.calcWidth(),
+                    graph_bounds.calcHeight(),
+                );
+
+                self.renderGraphs(graph_to_clip);
+                self.renderHoverIndicators(graph_bounds, graph_to_clip);
+            }
+
             self.renderLabels(graph_bounds, widget_bounds, window_bounds);
         }
 
-        fn renderGraphs(self: *Self, graph_to_clip: sphmath.Transform, graph_bounds: gui.PixelBBox, window_bounds: gui.PixelBBox) void {
-            var scissor = sphrender.TemporaryScissor.init();
-            defer scissor.reset();
-
-            scissor.set(
-                graph_bounds.left,
-                window_bounds.calcHeight() - graph_bounds.bottom,
-                graph_bounds.calcWidth(),
-                graph_bounds.calcHeight(),
-            );
-
+        fn renderGraphs(self: *Self, graph_to_clip: sphmath.Transform) void {
             gl.glLineWidth(3.0);
 
             for (self.retrievers, self.graph_states) |r, gs| {
