@@ -274,6 +274,14 @@ pub fn Program(comptime KnownUniforms: type) type {
             return self.renderWithExtra(array, options, UnknownUniforms.empty, &.{});
         }
 
+        pub fn renderFan(self: Self, array: RenderSource, options: KnownUniforms) void {
+            return self.renderInner(array, options, UnknownUniforms.empty, &.{}, gl.GL_TRIANGLE_FAN);
+        }
+
+        pub fn renderPoints(self: Self, array: RenderSource, options: KnownUniforms) void {
+            return self.renderInner(array, options, UnknownUniforms.empty, &.{}, gl.GL_POINTS);
+        }
+
         pub fn renderLines(self: Self, array: RenderSource, options: KnownUniforms) void {
             return self.renderInner(array, options, UnknownUniforms.empty, &.{}, gl.GL_LINES);
         }

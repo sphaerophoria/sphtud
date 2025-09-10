@@ -29,6 +29,14 @@ pub fn Program(comptime KnownUniforms: type) type {
             self.inner.render(buffer.inner, options);
         }
 
+        pub fn renderFan(self: Self, array: RenderSource, options: KnownUniforms) void {
+            return self.inner.renderFan(array.inner, options);
+        }
+
+        pub fn renderPoints(self: Self, array: RenderSource, options: KnownUniforms) void {
+            return self.inner.renderPoints(array.inner, options);
+        }
+
         pub fn renderLines(self: Self, buffer: RenderSource, options: KnownUniforms) void {
             self.inner.renderLines(buffer.inner, options);
         }
