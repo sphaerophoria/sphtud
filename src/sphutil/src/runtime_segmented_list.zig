@@ -804,7 +804,7 @@ test "RuntimeSegmentedList jsonStringify" {
         var list = try RuntimeSegmentedList(u16).init(arena.allocator(), std.heap.page_allocator, 20, 500);
         const data = &[_]u16{ 16, 32, 123, 542, 99 };
         try list.setContents(data);
-        const s = try std.json.stringifyAlloc(arena.allocator(), list, .{});
+        const s = try std.json.Stringify.valueAlloc(arena.allocator(), list, .{});
         try std.testing.expectEqualStrings("[16,32,123,542,99]", s);
     }
 }

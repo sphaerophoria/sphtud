@@ -734,7 +734,7 @@ test "TCP loopback" {
 
     const addy = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 42069);
     const std_server = try addy.listen(.{
-        .reuse_port = true,
+        .reuse_address = true,
     });
 
     var state = TestConnection.State{

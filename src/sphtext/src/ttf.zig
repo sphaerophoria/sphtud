@@ -800,22 +800,23 @@ const RowCurvePoint = struct {
 };
 
 fn sortRemoveDuplicateCurvePoints(alloc: Allocator, points: *std.ArrayList(RowCurvePointInner)) !void {
-    var to_remove = std.ArrayList(usize).init(alloc);
-    defer to_remove.deinit();
+    var to_remove = std.ArrayList(usize){};
+    defer to_remove.deinit(alloc);
+
     for (0..points.items.len) |i| {
         const next_idx = (i + 1) % points.items.len;
         if (points.items[i].entering == points.items[next_idx].entering and points.items[i].contour_id == points.items[next_idx].contour_id) {
             if (points.items[i].entering) {
                 if (points.items[i].x_pos > points.items[next_idx].x_pos) {
-                    try to_remove.append(i);
+                    try to_remove.append(alloc, i);
                 } else {
-                    try to_remove.append(next_idx);
+                    try to_remove.append(alloc, next_idx);
                 }
             } else {
                 if (points.items[i].x_pos > points.items[next_idx].x_pos) {
-                    try to_remove.append(next_idx);
+                    try to_remove.append(alloc, next_idx);
                 } else {
-                    try to_remove.append(i);
+                    try to_remove.append(alloc, i);
                 }
             }
         }
@@ -838,8 +839,8 @@ fn sortRemoveDuplicateCurvePoints(alloc: Allocator, points: *std.ArrayList(RowCu
 }
 
 fn findRowCurvePoints(alloc: Allocator, curves: []const GlyphSegmentIter.Output, y: i64) ![]RowCurvePoint {
-    var ret = std.ArrayList(RowCurvePointInner).init(alloc);
-    defer ret.deinit();
+    var ret = std.ArrayList(RowCurvePointInner){};
+    defer ret.deinit(alloc);
 
     for (curves) |curve| {
         switch (curve) {
@@ -860,7 +861,7 @@ fn findRowCurvePoints(alloc: Allocator, curves: []const GlyphSegmentIter.Output,
                 const x_pos_i: i64 = @intFromFloat(@round(x));
                 const entering = l.a[1] < l.b[1];
 
-                try ret.append(.{ .entering = entering, .x_pos = x_pos_i, .contour_id = l.contour_id });
+                try ret.append(alloc, .{ .entering = entering, .x_pos = x_pos_i, .contour_id = l.contour_id });
             },
             .bezier => |b| {
                 const a_f: @Vector(2, f32) = @floatFromInt(b.a);
@@ -903,7 +904,7 @@ fn findRowCurvePoints(alloc: Allocator, curves: []const GlyphSegmentIter.Output,
 
                     const x_f = sampleQuadBezierCurve(a_f, b_f, c_f, t)[0];
                     const x_px: i64 = @intFromFloat(@round(x_f));
-                    try ret.append(.{
+                    try ret.append(alloc, .{
                         .entering = moving_up,
                         .x_pos = x_px,
                         .contour_id = b.contour_id,
@@ -1305,8 +1306,8 @@ const Canvas = struct {
 pub fn renderGlyphAt1PxPerFunit(alloc: Allocator, glyph: GlyphTable.SimpleGlyph) !struct { Canvas, BBox } {
     var iter = GlyphSegmentIter.init(glyph);
 
-    var curves = std.ArrayList(GlyphSegmentIter.Output).init(alloc);
-    defer curves.deinit();
+    var curves = std.ArrayList(GlyphSegmentIter.Output){};
+    defer curves.deinit(alloc);
 
     var total_bbox = BBox{
         .min_x = glyph.common.x_min,
@@ -1316,7 +1317,7 @@ pub fn renderGlyphAt1PxPerFunit(alloc: Allocator, glyph: GlyphTable.SimpleGlyph)
     };
 
     while (iter.next()) |item| {
-        try curves.append(item);
+        try curves.append(alloc, item);
     }
 
     var canvas = try Canvas.init(alloc, ((total_bbox.width() + 7) / 8) * 8, total_bbox.height());

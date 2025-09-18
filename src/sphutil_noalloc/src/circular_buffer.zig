@@ -19,6 +19,15 @@ pub fn CircularBuffer(comptime T: type) type {
             return ret;
         }
 
+        pub fn pushNoClobber(self: *Self, val: T) !void {
+            if (self.count() == self.items.len) {
+                return error.OutOfMemory;
+            }
+
+            self.items[self.head % self.items.len] = val;
+            self.head += 1;
+        }
+
         pub fn count(self: Self) usize {
             return self.head - self.tail;
         }
@@ -43,6 +52,11 @@ pub fn CircularBuffer(comptime T: type) type {
                 .buf = self,
                 .idx = self.tail,
             };
+        }
+
+        pub fn pop(self: *Self) ?T {
+            if (self.count() == 0) return null;
+            return self.incTail();
         }
 
         fn incTail(self: *Self) T {

@@ -10,7 +10,7 @@ const InputState = gui.InputState;
 pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
     return struct {
         alloc: Allocator,
-        items: std.BoundedArray(StackItem, max_elems) = .{},
+        items: std.ArrayList(StackItem) = .{},
         total_size: PixelSize = .{ .width = 0, .height = 0 },
         focused_id: ?usize = null,
 
@@ -32,14 +32,16 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
 
         pub fn init(alloc: Allocator) !*Self {
             const stack = try alloc.create(Self);
+            const items = try alloc.alloc(StackItem, max_elems);
             stack.* = .{
                 .alloc = alloc,
+                .items = .initBuffer(items),
             };
             return stack;
         }
 
         pub fn pushWidget(self: *Self, widget: Widget(Action), layout: Layout) !void {
-            try self.items.append(.{
+            try self.items.appendBounded(.{
                 .layout = layout,
                 .widget = widget,
             });
@@ -58,7 +60,7 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
 
         fn render(ctx: ?*anyopaque, stack_bounds: PixelBBox, window_bounds: PixelBBox) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
-            for (self.items.slice()) |item| {
+            for (self.items.items) |item| {
                 item.widget.render(itemBounds(stack_bounds, item.layout, item.widget.getSize()), window_bounds);
             }
         }
@@ -72,7 +74,7 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
             const self: *Self = @ptrCast(@alignCast(ctx));
             self.total_size = .{ .width = 0, .height = 0 };
 
-            for (self.items.slice()) |item| {
+            for (self.items.items) |item| {
                 if (item.layout.size_policy == .match_siblings) continue;
                 try item.widget.update(available_size, delta_s);
 
@@ -80,7 +82,7 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
                 self.total_size = newTotalSize(self.total_size, item.layout, item_size);
             }
 
-            for (self.items.slice()) |item| {
+            for (self.items.items) |item| {
                 if (item.layout.size_policy == .match_siblings) {
                     try item.widget.update(self.total_size, delta_s);
                 }
@@ -95,7 +97,7 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
                 .action = null,
             };
 
-            const items = self.items.slice();
+            const items = self.items.items;
             var i: usize = items.len;
             while (i > 0) {
                 i -= 1;
@@ -122,13 +124,13 @@ pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
         fn setFocused(ctx: ?*anyopaque, focused: bool) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             if (self.focused_id) |id| {
-                self.items.slice()[id].widget.setFocused(focused);
+                self.items.items[id].widget.setFocused(focused);
             }
         }
 
         fn reset(ctx: ?*anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
-            for (self.items.slice()) |item| {
+            for (self.items.items) |item| {
                 item.widget.reset();
             }
         }

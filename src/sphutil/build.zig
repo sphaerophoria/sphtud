@@ -12,7 +12,10 @@ pub fn build(b: *std.Build) void {
     mod.addImport("sphutil_noalloc", sphutil_noalloc_dep.module("sphutil_noalloc"));
 
     const tests = b.addTest(.{
-        .root_source_file = b.path("src/sphutil.zig"),
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/sphutil.zig"),
+            .target = b.graph.host,
+        }),
     });
     tests.root_module.addImport("sphalloc", sphalloc_dep.module("sphalloc"));
     tests.root_module.addImport("sphutil_noalloc", sphutil_noalloc_dep.module("sphutil_noalloc"));

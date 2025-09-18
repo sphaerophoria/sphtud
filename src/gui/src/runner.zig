@@ -13,9 +13,8 @@ pub fn Runner(comptime Action: type) type {
 
         const Self = @This();
 
-        pub fn init(gpa: Allocator, widget: gui.Widget(Action)) Self {
-            const input_state = gui.InputState.init(gpa);
-
+        pub fn init(gpa: Allocator, widget: gui.Widget(Action)) !Self {
+            const input_state = try gui.InputState.init(gpa);
             return .{
                 .root = widget,
                 .input_state = input_state,
@@ -32,7 +31,7 @@ pub fn Runner(comptime Action: type) type {
             try self.root.update(window_size, delta_s);
 
             self.input_state.startFrame();
-            while (input_queue.readItem()) |action| {
+            while (input_queue.pop()) |action| {
                 try self.input_state.pushInput(action);
             }
 

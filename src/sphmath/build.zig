@@ -9,7 +9,10 @@ pub fn build(b: *std.Build) !void {
 
     const uts = b.addTest(.{
         .name = "sphmath_test",
-        .root_source_file = b.path("sphmath.zig"),
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("sphmath.zig"),
+            .target = b.graph.host,
+        }),
     });
 
     const run_uts = b.addRunArtifact(uts);

@@ -28,7 +28,7 @@ pub const HttpHeader = struct {
 
         const target_start = target.ptr - content.ptr;
         return HttpHeader{
-            .method = @enumFromInt(std.http.Method.parse(method)),
+            .method = std.meta.stringToEnum(std.http.Method, method) orelse return error.InvalidHttpMethod,
             .target = .{
                 .start = target_start,
                 .end = target.len + target_start,
@@ -265,8 +265,8 @@ pub const HttpHeaderParams = struct {
 pub fn makeHttpHeader(alloc: std.mem.Allocator, params: HttpHeaderParams) ![]const u8 {
     const ret_len = try httpHeaderLen(params);
     const ret = try alloc.alloc(u8, ret_len);
-    var fbw = std.io.fixedBufferStream(ret);
-    try makeHttpHeaderWriter(params, fbw.writer());
+    var fixed = std.Io.Writer.fixed(ret);
+    try makeHttpHeaderWriter(params, &fixed);
 
     return ret;
 }
@@ -283,12 +283,13 @@ pub fn makeHttpHeaderComptime(comptime params: HttpHeaderParams) []const u8 {
 }
 
 pub fn httpHeaderLen(params: HttpHeaderParams) !usize {
-    var counting_writer = std.io.countingWriter(std.io.null_writer);
-    try makeHttpHeaderWriter(params, counting_writer.writer());
-    return counting_writer.bytes_written;
+    var discarding_buf: [4096]u8 = undefined;
+    var discarding = std.Io.Writer.Discarding.init(&discarding_buf);
+    try makeHttpHeaderWriter(params, &discarding.writer);
+    return discarding.count;
 }
 
-pub fn makeHttpHeaderWriter(params: HttpHeaderParams, writer: anytype) !void {
+pub fn makeHttpHeaderWriter(params: HttpHeaderParams, writer: *std.Io.Writer) !void {
     var http_writer = httpWriter(writer);
 
     try http_writer.start(.{
@@ -304,53 +305,51 @@ pub fn makeHttpHeaderWriter(params: HttpHeaderParams, writer: anytype) !void {
     try http_writer.startBody();
 }
 
-pub fn HttpWriter(comptime Writer: type) type {
-    return struct {
-        writer: Writer,
+pub const HttpWriter = struct {
+    writer: *std.Io.Writer,
 
-        const Self = @This();
+    const Self = @This();
 
-        pub const HttpWriterParams = struct {
-            status: std.http.Status,
-            content_length: usize,
-            content_type: ?[]const u8 = null,
-        };
-
-        pub fn start(self: *Self, params: HttpWriterParams) !void {
-            try self.writer.print("HTTP/1.1 {d} {s}\r\n" ++
-                "Content-Length: {d}\r\n" ++
-                "Connection: close\r\n", .{ @intFromEnum(params.status), params.status.phrase() orelse "", params.content_length });
-            if (params.content_type) |t| {
-                try self.appendHeader("Content-Type", t);
-            }
-        }
-
-        pub fn appendHeader(self: *Self, key: []const u8, val: []const u8) !void {
-            try self.writer.print("{s}: {s}\r\n", .{ key, val });
-        }
-
-        pub fn writeBody(self: *Self, content: []const u8) !void {
-            try self.writer.writeAll("\r\n");
-            try self.writer.writeAll(content);
-        }
-
-        pub fn startBody(self: *Self) !void {
-            try self.writer.writeAll("\r\n");
-        }
+    pub const HttpWriterParams = struct {
+        status: std.http.Status,
+        content_length: usize,
+        content_type: ?[]const u8 = null,
     };
-}
 
-pub fn httpWriter(writer: anytype) HttpWriter(@TypeOf(writer)) {
+    pub fn start(self: *Self, params: HttpWriterParams) !void {
+        try self.writer.print("HTTP/1.1 {d} {s}\r\n" ++
+            "Content-Length: {d}\r\n" ++
+            "Connection: close\r\n", .{ @intFromEnum(params.status), params.status.phrase() orelse "", params.content_length });
+        if (params.content_type) |t| {
+            try self.appendHeader("Content-Type", t);
+        }
+    }
+
+    pub fn appendHeader(self: *Self, key: []const u8, val: []const u8) !void {
+        try self.writer.print("{s}: {s}\r\n", .{ key, val });
+    }
+
+    pub fn writeBody(self: *Self, content: []const u8) !void {
+        try self.writer.writeAll("\r\n");
+        try self.writer.writeAll(content);
+    }
+
+    pub fn startBody(self: *Self) !void {
+        try self.writer.writeAll("\r\n");
+    }
+};
+
+pub fn httpWriter(writer: *std.Io.Writer) HttpWriter {
     return .{
         .writer = writer,
     };
 }
 
 test "HttpWriter sanity" {
-    var content = std.ArrayList(u8).init(std.testing.allocator);
-    defer content.deinit();
+    var allocating = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer allocating.deinit();
 
-    var writer = httpWriter(content.writer());
+    var writer = httpWriter(&allocating.writer);
 
     try writer.start(.{
         .status = .ok,
@@ -360,9 +359,9 @@ test "HttpWriter sanity" {
     // If this gets too much churn, we might want to do something more intelligent
     try std.testing.expectEqualStrings("HTTP/1.1 200 OK\r\n" ++
         "Content-Length: 0\r\n" ++
-        "Connection: close\r\n", content.items);
+        "Connection: close\r\n", allocating.written());
 
-    content.clearRetainingCapacity();
+    allocating.clearRetainingCapacity();
 
     try writer.start(.{
         .status = .internal_server_error,
@@ -379,7 +378,7 @@ test "HttpWriter sanity" {
         "Content-Type: text\r\n" ++
         "X-Custom-Header: custom\r\n" ++
         "\r\n" ++
-        "Hello world", content.items);
+        "Hello world", allocating.written());
 }
 
 test {

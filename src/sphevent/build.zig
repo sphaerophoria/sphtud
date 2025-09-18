@@ -14,7 +14,10 @@ pub fn build(b: *std.Build) !void {
     sphevent.addImport("sphttp", sphttp);
 
     const test_exe = b.addTest(.{
-        .root_source_file = b.path("src/sphevent.zig"),
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/sphevent.zig"),
+            .target = b.graph.host,
+        }),
     });
     test_exe.root_module.addImport("sphutil", sphutil);
     test_exe.root_module.addImport("sphalloc", sphalloc);

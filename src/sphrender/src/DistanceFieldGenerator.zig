@@ -273,29 +273,29 @@ const BufferLens = struct {
 };
 
 fn updateBuffers(self: DistanceFieldGenerator, alloc: Allocator, point_it: anytype, aspect_correction: sphmath.Vec2) !BufferLens {
-    var cone_offsets = std.ArrayList(sphmath.Vec2).init(alloc);
-    defer cone_offsets.deinit();
+    var cone_offsets = std.ArrayList(sphmath.Vec2){};
+    defer cone_offsets.deinit(alloc);
 
-    var tent_transforms = std.ArrayList(InstancedRenderBuffer.TentTransform).init(alloc);
-    defer tent_transforms.deinit();
+    var tent_transforms = std.ArrayList(InstancedRenderBuffer.TentTransform){};
+    defer tent_transforms.deinit(alloc);
 
     while (point_it.next()) |item| {
         const p = switch (item) {
             .new_line => |p| {
-                try cone_offsets.append(p / aspect_correction);
+                try cone_offsets.append(alloc, p / aspect_correction);
                 continue;
             },
             .line_point => |p| p / aspect_correction,
         };
         const last_point = cone_offsets.getLast();
-        try cone_offsets.append(p);
+        try cone_offsets.append(alloc, p);
 
         const line = p - last_point;
         const stretch = sphmath.length(line);
         const rotation = std.math.atan2(line[1], line[0]);
         const offs = (last_point + p) / sphmath.Vec2{ 2.0, 2.0 };
 
-        try tent_transforms.append(.{
+        try tent_transforms.append(alloc, .{
             .offset = offs,
             .stretch = stretch,
             .rotation = rotation,

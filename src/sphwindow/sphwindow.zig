@@ -2,13 +2,15 @@ const std = @import("std");
 const glfwb = @cImport({
     @cInclude("GLFW/glfw3.h");
 });
+const sphutil = @import("sphutil");
 const sphwindow_events = @import("sphwindow_events");
 
 pub const Window = struct {
     window: *glfwb.GLFWwindow = undefined,
+    queue_buf: [1024]sphwindow_events.WindowAction,
     queue: Fifo = undefined,
 
-    const Fifo = std.fifo.LinearFifo(sphwindow_events.WindowAction, .{ .Static = 1024 });
+    const Fifo = sphutil.CircularBuffer(sphwindow_events.WindowAction);
 
     pub fn initPinned(self: *Window, name: [:0]const u8, window_width: comptime_int, window_height: comptime_int) !void {
         _ = glfwb.glfwSetErrorCallback(errorCallbackGlfw);
@@ -42,8 +44,10 @@ pub const Window = struct {
 
         self.* = .{
             .window = window.?,
-            .queue = Fifo.init(),
+            .queue_buf = undefined,
+            .queue = undefined,
         };
+        self.queue = .{ .items = &self.queue_buf };
     }
 
     pub fn deinit(self: *Window) void {
@@ -81,11 +85,11 @@ fn logError(comptime msg: []const u8, e: anyerror, trace: ?*std.builtin.StackTra
     if (trace) |t| std.debug.dumpStackTrace(t.*);
 }
 
-fn errorCallbackGlfw(_: c_int, description: [*c]const u8) callconv(.C) void {
+fn errorCallbackGlfw(_: c_int, description: [*c]const u8) callconv(.c) void {
     std.log.err("Error: {s}\n", .{std.mem.span(description)});
 }
 
-fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action: c_int, modifiers: c_int) callconv(.C) void {
+fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action: c_int, modifiers: c_int) callconv(.c) void {
     const window: *Window = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(glfw_window)));
 
     const key_char: sphwindow_events.Key = switch (key) {
@@ -105,7 +109,7 @@ fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action
     };
 
     if (action == glfwb.GLFW_PRESS) {
-        window.queue.writeItem(.{
+        window.queue.pushNoClobber(.{
             .key_down = .{
                 .key = key_char,
                 .ctrl = (modifiers & glfwb.GLFW_MOD_CONTROL) != 0,
@@ -114,7 +118,7 @@ fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action
             logError("Failed to write key press", e, @errorReturnTrace());
         };
     } else if (action == glfwb.GLFW_RELEASE) {
-        window.queue.writeItem(.{
+        window.queue.pushNoClobber(.{
             .key_up = key_char,
         }) catch |e| {
             logError("Failed to write key release", e, @errorReturnTrace());
@@ -122,9 +126,9 @@ fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action
     }
 }
 
-fn cursorPositionCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, xpos: f64, ypos: f64) callconv(.C) void {
+fn cursorPositionCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, xpos: f64, ypos: f64) callconv(.c) void {
     const window: *Window = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(glfw_window)));
-    window.queue.writeItem(.{
+    window.queue.pushNoClobber(.{
         .mouse_move = .{
             .x = @floatCast(xpos),
             .y = @floatCast(ypos),
@@ -134,7 +138,7 @@ fn cursorPositionCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, xpos: f64, ypos: 
     };
 }
 
-fn mouseButtonCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, button: c_int, action: c_int, _: c_int) callconv(.C) void {
+fn mouseButtonCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, button: c_int, action: c_int, _: c_int) callconv(.c) void {
     const window: *Window = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(glfw_window)));
     const is_down = action == glfwb.GLFW_PRESS;
     var write_obj: ?sphwindow_events.WindowAction = null;
@@ -154,15 +158,15 @@ fn mouseButtonCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, button: c_int, actio
     }
 
     if (write_obj) |w| {
-        window.queue.writeItem(w) catch |e| {
+        window.queue.pushNoClobber(w) catch |e| {
             logError("Failed to write mouse press/release", e, @errorReturnTrace());
         };
     }
 }
 
-fn scrollCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, _: f64, y: f64) callconv(.C) void {
+fn scrollCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, _: f64, y: f64) callconv(.c) void {
     const window: *Window = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(glfw_window)));
-    window.queue.writeItem(.{
+    window.queue.pushNoClobber(.{
         .scroll = @floatCast(y),
     }) catch |e| {
         logError("Failed to write scroll", e, @errorReturnTrace());

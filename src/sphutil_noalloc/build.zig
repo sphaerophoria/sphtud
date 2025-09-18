@@ -8,7 +8,10 @@ pub fn build(b: *std.Build) void {
     });
 
     const tests = b.addTest(.{
-        .root_source_file = b.path("src/sphutil_noalloc.zig"),
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/sphutil_noalloc.zig"),
+            .target = b.graph.host,
+        }),
     });
 
     const run_test = b.addRunArtifact(tests);

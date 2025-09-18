@@ -102,6 +102,7 @@ const LayoutHelper = struct {
     ttf: *const ttf_mod.Ttf,
     wrap_width_px: u31,
     funit_converter: ttf_mod.FunitToPixelConverter,
+    glyphloc_alloc: std.mem.Allocator,
     glyphs: std.ArrayList(TextLayout.GlyphLoc),
 
     funit_cursor_x: i64 = 0,
@@ -134,7 +135,8 @@ const LayoutHelper = struct {
                 .min_y = min_y,
                 .max_y = max_y,
             },
-            .glyphs = std.ArrayList(TextLayout.GlyphLoc).init(alloc),
+            .glyphloc_alloc = alloc,
+            .glyphs = std.ArrayList(TextLayout.GlyphLoc){},
         };
     }
 
@@ -171,7 +173,7 @@ const LayoutHelper = struct {
 
         self.funit_cursor_x += metrics.advance_width;
 
-        try self.glyphs.append(.{
+        try self.glyphs.append(self.glyphloc_alloc, .{
             .char = c,
             .pixel_x1 = glyph_bounds.min_x,
             .pixel_x2 = glyph_bounds.max_x,
@@ -262,7 +264,7 @@ const LayoutHelper = struct {
 
     fn rollback(self: *LayoutHelper) void {
         self.text_idx = self.rollback_data.text_idx;
-        self.glyphs.resize(self.rollback_data.glyphs_len) catch unreachable;
+        self.glyphs.resize(self.glyphloc_alloc, self.rollback_data.glyphs_len) catch unreachable;
         self.bounds = self.rollback_data.bounds;
         self.funit_cursor_x = self.rollback_data.start_x;
     }
@@ -270,12 +272,12 @@ const LayoutHelper = struct {
 
 pub fn layoutText(self: *TextRenderer, alloc: Allocator, text: []const u8, ttf: ttf_mod.Ttf, wrap_width_px: u31) !TextLayout {
     var layout_helper = LayoutHelper.init(alloc, text, &ttf, wrap_width_px, self.point_size);
-    errdefer layout_helper.glyphs.deinit();
+    errdefer layout_helper.glyphs.deinit(alloc);
 
     while (try layout_helper.step()) {}
 
     return .{
-        .glyphs = try layout_helper.glyphs.toOwnedSlice(),
+        .glyphs = try layout_helper.glyphs.toOwnedSlice(alloc),
         .min_x = layout_helper.bounds.min_x,
         .max_x = layout_helper.bounds.max_x,
         .min_y = layout_helper.bounds.min_y,
@@ -296,7 +298,7 @@ test "layout text infinite loop" {
     const wrap_width_px = 284;
 
     var layout_helper = LayoutHelper.init(alloc, text, &ttf, wrap_width_px, point_size);
-    defer layout_helper.glyphs.deinit();
+    defer layout_helper.glyphs.deinit(alloc);
 
     const max_steps = 1000;
     var i: usize = 0;

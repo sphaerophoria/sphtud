@@ -492,7 +492,7 @@ pub fn WidgetFactory(comptime Action: type) type {
             try root_stack.pushWidget(self.state.overlay.asWidget(), .{});
             try root_stack.pushWidget(self.state.drag_layer.asWidget(), .{});
 
-            return gui.runner.Runner(Action).init(self.alloc.heap.general(), root_stack.asWidget());
+            return try gui.runner.Runner(Action).init(self.alloc.heap.general(), root_stack.asWidget());
         }
 
         pub fn makeMemoryWidget(self: *const Self, memory_tracker: *const sphalloc.MemoryTracker) !gui.Widget(Action) {

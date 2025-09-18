@@ -50,9 +50,11 @@ pub fn build(b: *std.Build) !void {
 
     const demo = b.addExecutable(.{
         .name = "demo",
-        .root_source_file = b.path("src/demo.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/demo.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     deps.add(demo.root_module);
     demo.root_module.addImport("sphwindow", b.dependency("sphwindow", .{}).module("sphwindow"));
@@ -60,7 +62,10 @@ pub fn build(b: *std.Build) !void {
 
     const gui_uts = b.addTest(.{
         .name = "gui_test",
-        .root_source_file = b.path("src/gui.zig"),
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/gui.zig"),
+            .target = b.graph.host,
+        }),
     });
     deps.add(gui_uts.root_module);
 

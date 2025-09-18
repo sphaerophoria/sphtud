@@ -726,19 +726,39 @@ test "TinyPageAlloc alloc sanity" {
     try std.testing.expectEqualSlices(usize, &.{ 0, 0, 0, 0 }, &page_alloc.list_lens);
 }
 
+pub const SphallocListNode = struct {
+    node: std.SinglyLinkedList.Node,
+    data: Sphalloc,
+};
+
+pub const SphallocChildIter = struct {
+    node: ?*std.SinglyLinkedList.Node,
+
+    pub fn next(self: *SphallocChildIter) ?*Sphalloc {
+        const node = self.node orelse return null;
+        defer self.node = node.next;
+        return self.current();
+    }
+
+    fn current(self: SphallocChildIter) ?*Sphalloc {
+        const node = self.node orelse return null;
+        const sphalloc_node: *SphallocListNode = @fieldParentPtr("node", node);
+        return &sphalloc_node.data;
+    }
+};
+
 pub const Sphalloc = struct {
     block_alloc: BlockAllocator,
     name: []const u8,
+
     // Owned by our own gpa
-    children: Children = .{},
+    children: std.SinglyLinkedList = .{},
     parent: ?*Sphalloc = null,
 
     storage: struct {
         general: GeneralPurposeAllocator,
         arena: BumpAlloc,
     },
-
-    const Children = std.SinglyLinkedList(Sphalloc);
 
     // Self reference requires that sphalloc has a stable location
     pub fn initPinned(self: *Sphalloc, page_alloc: Allocator, comptime name: []const u8) !void {
@@ -757,6 +777,12 @@ pub const Sphalloc = struct {
         };
     }
 
+    pub fn childIter(self: *Sphalloc) SphallocChildIter {
+        return .{
+            .node = self.children.first,
+        };
+    }
+
     pub fn deinit(self: *Sphalloc) void {
         self.freeAllMemory();
         self.removeFromParent();
@@ -769,22 +795,25 @@ pub const Sphalloc = struct {
         }
     }
 
-    fn popChildNode(self: *Sphalloc, child: *Sphalloc) *Children.Node {
+    fn popChildNode(self: *Sphalloc, child: *Sphalloc) *SphallocListNode {
         var it = self.children.first;
-        var last: *Children.Node = undefined;
+        var last: *std.SinglyLinkedList.Node = undefined;
+
         if (it) |node| {
-            if (&node.data == child) {
+            const sphalloc_node: *SphallocListNode = @fieldParentPtr("node", node);
+            if (&sphalloc_node.data == child) {
                 self.children.first = node.next;
-                return node;
+                return sphalloc_node;
             }
             last = node;
             it = node.next;
         }
 
         while (it) |node| {
-            if (&node.data == child) {
+            const sphalloc_node: *SphallocListNode = @fieldParentPtr("node", node);
+            if (&sphalloc_node.data == child) {
                 last.next = node.next;
-                return node;
+                return sphalloc_node;
             }
             last = node;
             it = node.next;
@@ -796,7 +825,8 @@ pub const Sphalloc = struct {
     fn freeAllMemory(self: *Sphalloc) void {
         var it = self.children.first;
         while (it) |node| {
-            node.data.freeAllMemory();
+            const sphalloc_node: *SphallocListNode = @fieldParentPtr("node", node);
+            sphalloc_node.data.freeAllMemory();
             it = node.next;
         }
 
@@ -831,26 +861,27 @@ pub const Sphalloc = struct {
         // General purpose allocator is important here. The child node needs to
         // be valid as long as we live, but we may delete the child node early
         // if it's attached to a shorter lifetime
-        const node = try self.general().create(Children.Node);
+        const node = try self.general().create(SphallocListNode);
         errdefer self.general().destroy(node);
 
         node.* = .{
-            .next = self.children.first,
+            .node = .{},
             .data = undefined,
         };
         try node.data.initPinned(self.block_alloc.page_alloc, name);
         node.data.parent = self;
-        self.children.prepend(node);
+        self.children.prepend(&node.node);
         return &node.data;
     }
 
     pub fn totalMemoryAllocated(self: *Sphalloc) usize {
         var total_memory_allocated: usize = self.block_alloc.allocated();
 
-        var it: ?*Children.Node = self.children.first;
-        while (it) |val| {
-            total_memory_allocated += val.data.totalMemoryAllocated();
-            it = val.next;
+        var it: ?*std.SinglyLinkedList.Node = self.children.first;
+        while (it) |node| {
+            const sphalloc_node: *SphallocListNode = @fieldParentPtr("node", node);
+            total_memory_allocated += sphalloc_node.data.totalMemoryAllocated();
+            it = node.next;
         }
         return total_memory_allocated;
     }
@@ -903,6 +934,28 @@ test "Sphalloc sanity" {
     try test_helpers.cycleRandAllocations(child2.general(), child2_alloations, rand);
 
     child2.deinit();
+    sphalloc.deinit();
+
+    var end_state_buf: [4096]u8 = undefined;
+    const end_state = try test_helpers.getMaps(&end_state_buf);
+    try std.testing.expectEqualStrings(initial_state, end_state);
+}
+
+test "Sphalloc singleChildRemoval" {
+    var initial_state_buf: [4096]u8 = undefined;
+    const initial_state = try test_helpers.getMaps(&initial_state_buf);
+
+    var tiny_page_alloc = TinyPageAllocator(100){
+        .page_allocator = std.heap.page_allocator,
+    };
+
+    var sphalloc: Sphalloc = undefined;
+    try sphalloc.initPinned(tiny_page_alloc.allocator(), "root");
+
+    const child1 = try sphalloc.makeSubAlloc("child1");
+    _ = try child1.arena().alloc(u8, 100);
+    child1.deinit();
+
     sphalloc.deinit();
 
     var end_state_buf: [4096]u8 = undefined;

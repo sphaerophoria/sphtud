@@ -48,19 +48,22 @@ pub const MousePos = sphwindow_events.MousePos;
 pub const KeyTracker = struct {
     const max_pressed_keys = 16;
 
+    gpa: std.mem.Allocator,
     // always lower case
-    held_keys: std.BoundedArray(Key, max_pressed_keys) = .{},
+    held_keys: std.ArrayList(Key) = .{},
     pressed_this_frame: std.ArrayList(KeyEvent),
 
-    pub fn init(gpa: Allocator) KeyTracker {
+    pub fn init(gpa: Allocator) !KeyTracker {
         return .{
-            .pressed_this_frame = std.ArrayList(KeyEvent).init(gpa),
+            .gpa = gpa,
+            .held_keys = std.ArrayList(Key).initBuffer(try gpa.alloc(Key, max_pressed_keys)),
+            .pressed_this_frame = std.ArrayList(KeyEvent){},
         };
     }
 
     pub fn isKeyDown(self: KeyTracker, key: Key) bool {
         const lower_key = key.toLower();
-        for (self.held_keys.slice()) |held| {
+        for (self.held_keys.items) |held| {
             if (held.eql(lower_key)) return true;
         }
 
@@ -76,17 +79,17 @@ pub const KeyTracker = struct {
     }
 
     fn pushDown(self: *KeyTracker, key: KeyEvent) !void {
-        try self.pressed_this_frame.append(key);
+        try self.pressed_this_frame.append(self.gpa, key);
 
         const lower_key = key.key.toLower();
-        for (self.held_keys.slice()) |held| {
+        for (self.held_keys.items) |held| {
             if (held.eql(lower_key)) {
                 std.log.err("Duplicate key down", .{});
                 return;
             }
         }
 
-        self.held_keys.append(lower_key) catch {
+        self.held_keys.appendBounded(lower_key) catch {
             std.log.warn("Too many keys pressed\n", .{});
         };
     }
@@ -94,8 +97,8 @@ pub const KeyTracker = struct {
     fn pushUp(self: *KeyTracker, key: Key) void {
         const lower_key = key.toLower();
         var idx: usize = 0;
-        while (idx < self.held_keys.len) {
-            const held = self.held_keys.buffer[idx];
+        while (idx < self.held_keys.items.len) {
+            const held = self.held_keys.items[idx];
             if (held.eql(lower_key)) {
                 _ = self.held_keys.swapRemove(idx);
             } else {
@@ -120,9 +123,9 @@ pub const InputState = struct {
     frame_scroll: f32 = 0,
     key_tracker: KeyTracker,
 
-    pub fn init(gpa: Allocator) InputState {
+    pub fn init(gpa: Allocator) !InputState {
         return .{
-            .key_tracker = KeyTracker.init(gpa),
+            .key_tracker = try KeyTracker.init(gpa),
         };
     }
 

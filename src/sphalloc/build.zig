@@ -16,7 +16,10 @@ pub fn build(b: *std.Build) void {
 
     const uts = b.addTest(.{
         .name = "sphalloc",
-        .root_source_file = b.path("src/sphalloc.zig"),
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/sphalloc.zig"),
+            .target = b.graph.host,
+        }),
     });
     uts.root_module.addImport("sphutil_noalloc", sphutil_noalloc_dep.module("sphutil_noalloc"));
 

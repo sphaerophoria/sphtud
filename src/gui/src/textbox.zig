@@ -36,13 +36,11 @@ const TextboxAction = union(enum) {
     delete_char: usize,
 };
 
-const EventList = std.BoundedArray(TextboxAction, 100);
-
 pub const TextboxNotifier = struct {
-    channel: *EventList,
+    channel: *std.ArrayList(TextboxAction),
 
     pub fn notify(self: TextboxNotifier, action: TextboxAction) !void {
-        try self.channel.append(action);
+        try self.channel.appendBounded(action);
     }
 };
 
@@ -63,7 +61,7 @@ fn Textbox(comptime Action: type, comptime TextRetriever: type, comptime TextAct
         //
         // This action list is fed through a TextboxNotifier in Action, and we
         // check actions performed on next update()
-        executed_actions: EventList = .{},
+        executed_actions: std.ArrayList(TextboxAction),
         focused: bool = false,
 
         const Self = @This();
@@ -266,6 +264,7 @@ pub fn makeTextbox(comptime Action: type, alloc: gui.GuiAlloc, text_retreiver: a
         .text_action = text_action,
         .cursor_pos_text_idx = new_buffer.text.len,
         .shared = shared,
+        .executed_actions = .initBuffer(try alloc.heap.arena().alloc(TextboxAction, 100)),
     };
 
     return .{

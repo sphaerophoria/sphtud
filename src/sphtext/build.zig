@@ -15,7 +15,7 @@ pub fn build(b: *std.Build) !void {
 
     const uts = b.addTest(.{
         .name = "sphtext_test",
-        .root_source_file = b.path("src/sphtext.zig"),
+        .root_module = b.createModule(.{ .root_source_file = b.path("src/sphtext.zig"), .target = b.graph.host }),
     });
     uts.root_module.addImport("sphmath", sphmath.module("sphmath"));
     uts.root_module.addImport("sphrender", sphrender.module("sphrender"));

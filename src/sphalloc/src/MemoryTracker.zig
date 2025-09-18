@@ -23,7 +23,8 @@ pub fn init(alloc: Allocator, now: std.time.Instant, sample_period_ms: u32, root
 }
 
 pub fn snapshot(leaky: Allocator, root: *Sphalloc, max_elems: usize) ![]Sample {
-    var it = SphallocDfs.init(root);
+    var it: SphallocDfs = undefined;
+    it.initPinned(root);
 
     var name_indexes = std.StringHashMap(usize).init(leaky);
     var ret = try sphutil.RuntimeBoundedArray(Sample).init(leaky, max_elems);
@@ -51,7 +52,8 @@ pub fn step(self: *MemoryTracker, now: std.time.Instant) !void {
 
     self.last_sample = now;
 
-    var it = SphallocDfs.init(self.root);
+    var it: SphallocDfs = undefined;
+    it.initPinned(self.root);
 
     self.num_samples += 1;
 
@@ -165,25 +167,29 @@ pub fn collect(self: MemoryTracker, ret_alloc: std.mem.Allocator, scratch: sphal
 const SphallocDfs = struct {
     const max_depth = 10;
 
-    stack: std.BoundedArray(StackElem, max_depth),
+    stack_buf: [max_depth]StackElem = undefined,
+    stack: std.ArrayList(StackElem),
+
     const StackElem = struct {
         alloc: *Sphalloc,
-        child_idx: usize = 0,
+        iter: sphalloc.SphallocChildIter,
     };
 
-    pub fn init(root: *Sphalloc) SphallocDfs {
-        var stack = std.BoundedArray(StackElem, max_depth){};
-        stack.append(.{
-            .alloc = root,
-        }) catch unreachable;
-
-        return .{
-            .stack = stack,
+    pub fn initPinned(self: *SphallocDfs, root: *Sphalloc) void {
+        self.* = .{
+            .stack_buf = undefined,
+            .stack = undefined,
         };
+
+        self.stack = std.ArrayList(StackElem).initBuffer(&self.stack_buf);
+        self.stack.appendBounded(.{
+            .alloc = root,
+            .iter = root.childIter(),
+        }) catch unreachable;
     }
 
     pub fn next(self: *SphallocDfs) !?*Sphalloc {
-        const stack = self.stack.slice();
+        const stack = self.stack.items;
         if (stack.len == 0) {
             return null;
         }
@@ -194,27 +200,23 @@ const SphallocDfs = struct {
     }
 
     fn last(self: *SphallocDfs) *StackElem {
-        const stack = self.stack.slice();
+        const stack = self.stack.items;
         return &stack[stack.len - 1];
     }
 
     pub fn advance(self: *SphallocDfs) !void {
         var last_elem = self.last();
         while (true) {
-            if (last_elem.child_idx < last_elem.alloc.children.len()) {
-                var child_it = last_elem.alloc.children.first;
-                for (0..last_elem.child_idx) |_| {
-                    child_it = child_it.?.next;
-                }
-                try self.stack.append(.{
-                    .alloc = &child_it.?.data,
+            if (last_elem.iter.next()) |next_child| {
+                try self.stack.appendBounded(.{
+                    .alloc = next_child,
+                    .iter = next_child.childIter(),
                 });
-                last_elem.child_idx += 1;
                 return;
             }
 
             _ = self.stack.pop();
-            if (self.stack.len == 0) {
+            if (self.stack.items.len == 0) {
                 break;
             }
             last_elem = self.last();
