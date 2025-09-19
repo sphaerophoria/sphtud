@@ -241,11 +241,11 @@ test "HttpReader sanity" {
     try std.testing.expectEqual(11, reader.body_len);
     {
         const body = reader.getBody();
-        var body_reader = body.reader();
-        var gr = body_reader.generic();
+        var reader_buf: [4096]u8 = undefined;
+        var body_reader = body.reader(&reader_buf);
         var buf: [4096]u8 = undefined;
 
-        const bytes_read = gr.readAll(&buf);
+        const bytes_read = body_reader.interface.readSliceShort(&buf);
 
         try std.testing.expectEqual(11, bytes_read);
         try std.testing.expectEqualStrings("Hello world", buf[0..11]);
@@ -275,8 +275,8 @@ pub fn makeHttpHeaderComptime(comptime params: HttpHeaderParams) []const u8 {
     return comptime blk: {
         var buf: [try httpHeaderLen(params)]u8 = undefined;
 
-        var fbw = std.io.fixedBufferStream(&buf);
-        try makeHttpHeaderWriter(params, fbw.writer());
+        var writer = std.Io.Writer.fixed(&buf);
+        try makeHttpHeaderWriter(params, &writer);
         const final = buf;
         break :blk &final;
     };
@@ -303,6 +303,7 @@ pub fn makeHttpHeaderWriter(params: HttpHeaderParams, writer: *std.Io.Writer) !v
     }
 
     try http_writer.startBody();
+    try writer.flush();
 }
 
 pub const HttpWriter = struct {
@@ -379,6 +380,23 @@ test "HttpWriter sanity" {
         "X-Custom-Header: custom\r\n" ++
         "\r\n" ++
         "Hello world", allocating.written());
+}
+
+test "comptime header" {
+    const not_found = makeHttpHeaderComptime(.{
+        .status = .not_found,
+        .headers = &.{
+            .{ .key = "test", .value = "value" },
+        },
+        .content_type = "text/http",
+        .content_length = 10,
+    });
+
+    try std.testing.expectEqualStrings("HTTP/1.1 404 Not Found\r\n" ++
+        "Content-Length: 10\r\n" ++
+        "Connection: close\r\n" ++
+        "Content-Type: text/http\r\n" ++
+        "test: value\r\n\r\n", not_found);
 }
 
 test {

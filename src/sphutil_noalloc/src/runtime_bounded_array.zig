@@ -69,7 +69,7 @@ pub fn RuntimeBoundedArray(comptime T: type) type {
             return elem;
         }
 
-        const Writer = std.io.Writer(*Self, anyerror, appendWrite);
+        const Writer = std.io.GenericWriter(*Self, anyerror, appendWrite);
 
         pub fn writer(self: *Self) Writer {
             return .{

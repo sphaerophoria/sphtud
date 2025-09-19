@@ -108,7 +108,7 @@ pub fn connectionStateMachine(alloc: std.mem.Allocator, handlers: []const Handle
 pub const SendFile = struct {
     src: OsHandle,
     dst: OsHandle,
-    offs: usize = 0,
+    offs: i64 = 0,
     len: usize,
 
     const vtable = Handler.VTable{
@@ -145,7 +145,7 @@ pub const SendFile = struct {
     fn poll(ctx: ?*anyopaque, _: *Loop) PollResult {
         const self: *SendFile = @ptrCast(@alignCast(ctx));
         while (true) {
-            self.offs += std.posix.sendfile(self.dst, self.src, self.offs, self.len, &.{}, &.{}, 0) catch |e| {
+            _ = std.os.linux.wrapped.sendfile(self.dst, self.src, &self.offs, self.len) catch |e| {
                 if (e == error.WouldBlock) return .in_progress;
 
                 std.log.err("Failed to send file: {s}", .{@errorName(e)});
@@ -424,7 +424,11 @@ pub fn signalHandler(comptime signals: []const comptime_int, ctx: anytype) !Sign
         return error.BlockSignals;
     }
 
-    const fd = try std.posix.signalfd(-1, &set, std.os.linux.SFD.NONBLOCK);
+    const signal_ret = std.os.linux.signalfd(-1, &set, std.os.linux.SFD.NONBLOCK);
+    const fd: std.os.linux.fd_t = switch (std.posix.errno(signal_ret)) {
+        .SUCCESS => @intCast(signal_ret),
+        else => return error.CreateSignalHandler,
+    };
 
     return .{
         .fd = fd,
@@ -543,7 +547,7 @@ pub const net = struct {
             fn poll(ctx: ?*anyopaque, _: *Loop) PollResult {
                 const self: *Self = @ptrCast(@alignCast(ctx));
                 return self.pollError() catch |e| {
-                    std.log.debug("Connection failure: {s} {}", .{ @errorName(e), @errorReturnTrace().? });
+                    std.log.debug("Connection failure: {s} {f}", .{ @errorName(e), @errorReturnTrace().? });
                     return .complete;
                 };
             }

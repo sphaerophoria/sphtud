@@ -283,12 +283,20 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
                 return BlockIter.init(self.parent, self.start, self.start + self.len);
             }
 
-            pub fn reader(self: Slice) Reader {
+            pub fn reader(self: Slice, buf: []u8) Reader {
                 var it = BlockIter.init(self.parent, self.start, self.start + self.len);
                 const current_slice = it.next() orelse &.{};
                 return .{
                     .it = it,
                     .current_slice = current_slice,
+                    .interface = .{
+                        .vtable = &.{
+                            .stream = Reader.stream,
+                        },
+                        .buffer = buf,
+                        .seek = 0,
+                        .end = 0,
+                    },
                 };
             }
 
@@ -309,45 +317,48 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         const Reader = struct {
             it: BlockIter,
             current_slice: []const u8,
+            interface: std.Io.Reader,
 
-            fn read(self: *Reader, buffer: []u8) anyerror!usize {
-                var out = buffer;
+            fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+                const self: *Reader = @fieldParentPtr("interface", r);
 
+                if (self.current_slice.len == 0) return error.EndOfStream;
+
+                var remaining: std.Io.Limit = limit;
+                var written: usize = 0;
                 while (true) {
-                    const copy_len = @min(out.len, self.current_slice.len);
+                    const copy_len = @min(remaining.toInt() orelse break, self.current_slice.len);
                     if (copy_len == 0) break;
 
-                    @memcpy(out[0..copy_len], self.current_slice[0..copy_len]);
+                    const this_written = try w.write(self.current_slice[0..copy_len]);
+                    written += this_written;
 
                     if (copy_len < self.current_slice.len) {
                         self.current_slice = self.current_slice[copy_len..];
                     } else {
                         self.current_slice = self.it.next() orelse &.{};
                     }
-
-                    if (copy_len < out.len) {
-                        out = out[copy_len..];
-                    } else {
-                        out = &.{};
-                    }
+                    remaining = remaining.subtract(this_written) orelse break;
                 }
 
-                return buffer.len - out.len;
-            }
-
-            pub fn generic(self: *Reader) std.io.GenericReader(*Reader, anyerror, read) {
-                return .{
-                    .context = self,
-                };
+                return written;
             }
         };
 
-        pub fn reader(self: *Self) Reader {
+        pub fn reader(self: *Self, buf: []u8) Reader {
             var it = BlockIter.init(self, 0, self.len);
             const current_slice = it.next() orelse &.{};
             return .{
                 .it = it,
                 .current_slice = current_slice,
+                .interface = .{
+                    .vtable = &.{
+                        .stream = Reader.stream,
+                    },
+                    .buffer = buf,
+                    .seek = 0,
+                    .end = 0,
+                },
             };
         }
 
@@ -809,6 +820,40 @@ test "RuntimeSegmentedList jsonStringify" {
     }
 }
 
+test "RuntimeSegmentedList jsonParse" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    // Sometimes we use ourselves as a buffer then pass a writer along. JSON
+    // parsing is a good stdlib example
+    {
+        var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 10, 500);
+        const data =
+            \\{
+            \\  "test": [1, 2, 3, 4, 5],
+            \\  "test2": 45,
+            \\  "test3": "hello"
+            \\}
+        ;
+
+        const Value = struct {
+            @"test": []const u32,
+            test2: u32,
+            test3: []const u8,
+        };
+        try list.setContents(data);
+
+        var read_buf: [4096]u8 = undefined;
+        var list_reader = list.reader(&read_buf);
+        var jr = std.json.Reader.init(arena.allocator(), &list_reader.interface);
+        const val = try std.json.parseFromTokenSourceLeaky(Value, arena.allocator(), &jr, .{});
+
+        try std.testing.expectEqualStrings("hello", val.test3);
+        try std.testing.expectEqual(45, val.test2);
+        try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 4, 5 }, val.@"test");
+    }
+}
+
 test "RuntimeSegmentedList append slice" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -981,11 +1026,11 @@ test "RuntimeSegmentedList slicing" {
     }
 
     {
-        var reader = slice.reader();
-        const gr = reader.generic();
+        var reader_buf: [4096]u8 = undefined;
+        var reader = slice.reader(&reader_buf);
 
         var buf: [1024]u8 = undefined;
-        const read_len = try gr.readAll(&buf);
+        const read_len = try reader.interface.readSliceShort(&buf);
         try std.testing.expectEqualStrings("uick brown fox jumped over the", buf[0..read_len]);
     }
 }
@@ -997,11 +1042,11 @@ test "RuntimeSegmentedList reader" {
     var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 20, 2000);
     try list.setContents("The quick brown fox jumped over the lazy dog");
 
-    var reader = list.reader();
-    const gr = reader.generic();
+    var reader_buf: [4096]u8 = undefined;
+    var reader = list.reader(&reader_buf);
 
     var buf: [1024]u8 = undefined;
-    const read_len = try gr.readAll(&buf);
+    const read_len = try reader.interface.readSliceShort(&buf);
     try std.testing.expectEqualStrings("The quick brown fox jumped over the lazy dog", buf[0..read_len]);
 }
 
