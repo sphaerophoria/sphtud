@@ -106,13 +106,15 @@ pub fn Button(comptime Action: type, comptime ActionGenerator: type) type {
 
             var ret: ?Action = null;
 
-            const mouse_down_in_box = input_bounds.containsOptMousePos(input_state.mouse_down_location);
+            const mouse_pressed_in_box = input_bounds.containsOptMousePos(input_state.mouse_down_location);
             const cursor_in_box = input_bounds.containsMousePos(input_state.mouse_pos);
 
-            if (mouse_down_in_box and cursor_in_box) {
-                self.state = .clicked;
-
-                if (input_state.mouse_released) {
+            if (mouse_pressed_in_box and cursor_in_box) {
+                if (input_state.mouse_pressed) {
+                    self.state = .clicked;
+                }
+                if (self.state == .clicked and input_state.mouse_released) {
+                    self.state = .none;
                     ret = getAction(Action, &self.click_action);
                 }
             } else if (cursor_in_box) {
