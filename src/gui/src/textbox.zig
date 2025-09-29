@@ -348,7 +348,7 @@ fn makeLabelBounds(style: TextboxStyle, left_offs: i32, label_size: PixelSize, w
 }
 
 fn getCursorOffsetFromText(
-    glyph_locations: sphutil.RuntimeSegmentedList(TextRenderer.TextLayout.GlyphLoc),
+    glyph_locations: sphutil.RuntimeSegmentedListSphalloc(TextRenderer.TextLayout.GlyphLoc),
     layout_bounds: gui.gui_text.LayoutBounds,
     cursor_pos: usize,
 ) i32 {

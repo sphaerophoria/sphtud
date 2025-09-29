@@ -42,7 +42,7 @@ pub const VJustification = enum {
 pub fn Grid(comptime Action: type) type {
     return struct {
         columns: []const ColumnConfig,
-        items: sphutil.RuntimeSegmentedList(LayoutItem),
+        items: sphutil.RuntimeSegmentedListSphalloc(LayoutItem),
         item_pad: u31,
         grid_width: u31 = 0,
         focused_idx: ?usize = null,
@@ -71,9 +71,9 @@ pub fn Grid(comptime Action: type) type {
 
             self.* = .{
                 .columns = normalized,
-                .items = try sphutil.RuntimeSegmentedList(LayoutItem).init(
+                .items = try sphutil.RuntimeSegmentedListSphalloc(LayoutItem).init(
                     alloc.arena(),
-                    alloc.block_alloc.page_alloc,
+                    alloc.block_alloc.allocator(),
                     typical_elems,
                     max_elems,
                 ),

@@ -218,8 +218,8 @@ pub const FdRefBufsWriter = struct {
 
 pub const Loop = struct {
     fd: i32,
-    force_poll: sphutil.RuntimeSegmentedList(usize),
-    handler_pool: sphutil.RuntimeSegmentedList(Handler),
+    force_poll: sphutil.RuntimeSegmentedListSphalloc(usize),
+    handler_pool: sphutil.RuntimeSegmentedListSphalloc(Handler),
 
     pub fn init(alloc: *sphalloc.Sphalloc) !Loop {
         const fd = try std.posix.epoll_create1(0);

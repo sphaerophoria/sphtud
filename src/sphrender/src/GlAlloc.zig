@@ -2,7 +2,7 @@ const std = @import("std");
 const gl = @import("gl");
 const sphalloc = @import("sphalloc");
 const sphutil = @import("sphutil");
-const RuntimeSegmentedList = sphutil.RuntimeSegmentedList;
+const RuntimeSegmentedList = sphutil.RuntimeSegmentedListSphalloc;
 const Sphalloc = sphalloc.Sphalloc;
 
 // I'm not going to bother with implementing unmanaged versions of these right

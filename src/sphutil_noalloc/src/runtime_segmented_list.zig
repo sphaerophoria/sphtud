@@ -1,7 +1,19 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const RuntimeBoundedArray = @import("sphutil.zig").RuntimeBoundedArray;
-const sphalloc = @import("sphalloc");
+const RuntimeBoundedArray = @import("runtime_bounded_array.zig").RuntimeBoundedArray;
+const options = @import("options");
+
+pub const ExpansionAllocInfo = struct {
+    min_expansion_size_log2: comptime_int,
+    supports_free: bool,
+};
+
+pub fn RuntimeSegmentedListLinearAlloc(comptime T: type) type {
+    return RuntimeSegmentedListConfigurable(T, .{
+        .min_expansion_size_log2 = 0,
+        .supports_free = false,
+    });
+}
 
 /// Very similar in concept to standard library SegmentedList with a few
 /// notable differences
@@ -9,7 +21,7 @@ const sphalloc = @import("sphalloc");
 /// * Initial block is runtime allocated
 /// * Dynamic segment list is allocated up front (maybe it shouldn't be...)
 /// * Dynamic segments are created with a tiny page allocator
-pub fn RuntimeSegmentedList(comptime T: type) type {
+pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_alloc_info: ExpansionAllocInfo) type {
     return struct {
         alloc: Allocator,
         // Block storage. block[0] is a pre-allocated block on init, blocks
@@ -52,6 +64,10 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
                 .initial_block_len = small_size,
                 .capacity = max_size,
             };
+        }
+
+        pub fn initSingleAlloc(arena: Allocator, small_size: usize, max_size: usize) !Self {
+            return Self.init(arena, arena, small_size, max_size);
         }
 
         pub fn append(self: *Self, elem: T) !void {
@@ -363,6 +379,8 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         }
 
         fn freeUnusedBlocks(self: *Self) void {
+            if (!expansion_alloc_info.supports_free) return;
+
             var unused_block_it = UnusedBlocksIt.init(self);
 
             while (unused_block_it.next()) |block| {
@@ -472,7 +490,7 @@ pub fn RuntimeSegmentedList(comptime T: type) type {
         fn firstExpansionSize(initial_len: usize) usize {
             if (initial_len == 0) return 0;
             const initial_len_log2: usize = std.math.log2_int_ceil(usize, @sizeOf(T) * initial_len);
-            const min_page_size_log2: usize = @max(initial_len_log2, sphalloc.tiny_page_log2);
+            const min_page_size_log2: usize = @max(initial_len_log2, expansion_alloc_info.min_expansion_size_log2);
 
             return (@as(usize, 1) << @intCast(min_page_size_log2)) / @sizeOf(T);
         }
@@ -567,11 +585,19 @@ test "RuntimeSegmentedList expansion idx slot start" {
     try std.testing.expectEqual(1600, blockStart(100, 3, 500));
 }
 
+pub fn TestingRSL(comptime T: type) type {
+    return RuntimeSegmentedListConfigurable(T, .{
+        // Originally implemented in the context of tiny page allocator, so all
+        // initial tests are written for this size
+        .min_expansion_size_log2 = 8,
+        .supports_free = true,
+    });
+}
 test "RuntimeSegmentedList append" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var list = try RuntimeSegmentedList(i32).init(
+    var list = try TestingRSL(i32).init(
         arena.allocator(),
         std.heap.page_allocator,
         5,
@@ -602,7 +628,7 @@ test "RuntimeSegmentedList iter" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var list = try RuntimeSegmentedList(usize).init(
+    var list = try TestingRSL(usize).init(
         arena.allocator(),
         std.heap.page_allocator,
         5,
@@ -625,7 +651,7 @@ test "RuntimeSegmentedList setContents" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
+    var list = try TestingRSL(u8).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
 
     const content = "The quick brown fox jumped over the lazy dog " ** 50;
     try list.setContents(content);
@@ -669,13 +695,13 @@ test "RuntimeSegmentedList UnusedBlockIter" {
     defer arena.deinit();
 
     // FIXME: Double arena seems wrong
-    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), arena.allocator(), 20, 1 << 20);
+    var list = try TestingRSL(u8).init(arena.allocator(), arena.allocator(), 20, 1 << 20);
 
     const content = "The quick brown fox jumped over the lazy dog " ** 50;
     try list.setContents(content);
     list.len = 20 + 256 + 10;
 
-    var it = RuntimeSegmentedList(u8).UnusedBlocksIt.init(&list);
+    var it = TestingRSL(u8).UnusedBlocksIt.init(&list);
 
     {
         const next = it.next();
@@ -695,7 +721,7 @@ test "RuntimeSegmentedList UnusedBlockIter" {
     }
 
     list.len = 3;
-    it = RuntimeSegmentedList(u8).UnusedBlocksIt.init(&list);
+    it = TestingRSL(u8).UnusedBlocksIt.init(&list);
 
     {
         const next = it.next();
@@ -714,7 +740,7 @@ test "RuntimeSegmentedList content matches" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
+    var list = try TestingRSL(u8).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
 
     const content = "The quick brown fox jumped over the lazy dog";
     try list.setContents(content);
@@ -729,7 +755,7 @@ test "RuntimeSegmentedList get" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var list = try RuntimeSegmentedList(usize).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
+    var list = try TestingRSL(usize).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
 
     for (0..20000) |i| {
         try list.append(i);
@@ -747,7 +773,7 @@ test "RuntimeSegmentedList makeContiguous" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var list = try RuntimeSegmentedList(usize).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
+    var list = try TestingRSL(usize).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
 
     for (0..20000) |i| {
         try list.append(i);
@@ -763,7 +789,7 @@ test "RuntimeSegmentedList iter offset" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var list = try RuntimeSegmentedList(usize).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
+    var list = try TestingRSL(usize).init(arena.allocator(), std.heap.page_allocator, 20, 1 << 20);
 
     // Empty list
     {
@@ -812,7 +838,7 @@ test "RuntimeSegmentedList jsonStringify" {
     defer arena.deinit();
 
     {
-        var list = try RuntimeSegmentedList(u16).init(arena.allocator(), std.heap.page_allocator, 20, 500);
+        var list = try TestingRSL(u16).init(arena.allocator(), std.heap.page_allocator, 20, 500);
         const data = &[_]u16{ 16, 32, 123, 542, 99 };
         try list.setContents(data);
         const s = try std.json.Stringify.valueAlloc(arena.allocator(), list, .{});
@@ -827,7 +853,7 @@ test "RuntimeSegmentedList jsonParse" {
     // Sometimes we use ourselves as a buffer then pass a writer along. JSON
     // parsing is a good stdlib example
     {
-        var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 10, 500);
+        var list = try TestingRSL(u8).init(arena.allocator(), std.heap.page_allocator, 10, 500);
         const data =
             \\{
             \\  "test": [1, 2, 3, 4, 5],
@@ -858,7 +884,7 @@ test "RuntimeSegmentedList append slice" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 20, 3000);
+    var list = try TestingRSL(u8).init(arena.allocator(), std.heap.page_allocator, 20, 3000);
 
     // Copying into empty list
     try list.appendSlice("asdf");
@@ -927,7 +953,7 @@ test "RuntimeSegmentedList getWritableArea" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 40, 2000);
+    var list = try TestingRSL(u8).init(arena.allocator(), std.heap.page_allocator, 40, 2000);
 
     // Initial block
     {
@@ -971,7 +997,7 @@ test "RuntimeSegmentedList asContiguousSlice" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 20, 2000);
+    var list = try TestingRSL(u8).init(arena.allocator(), std.heap.page_allocator, 20, 2000);
     try list.setContents("The quick brown fox jumped over the lazy dog");
 
     // Already contiguous
@@ -998,7 +1024,7 @@ test "RuntimeSegmentedList slicing" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 20, 2000);
+    var list = try TestingRSL(u8).init(arena.allocator(), std.heap.page_allocator, 20, 2000);
     try list.setContents("The quick brown fox jumped over the lazy dog");
 
     var slice = list.slice(5, 35);
@@ -1039,7 +1065,7 @@ test "RuntimeSegmentedList reader" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var list = try RuntimeSegmentedList(u8).init(arena.allocator(), std.heap.page_allocator, 20, 2000);
+    var list = try TestingRSL(u8).init(arena.allocator(), std.heap.page_allocator, 20, 2000);
     try list.setContents("The quick brown fox jumped over the lazy dog");
 
     var reader_buf: [4096]u8 = undefined;
@@ -1051,7 +1077,7 @@ test "RuntimeSegmentedList reader" {
 }
 
 test "RuntimeSegmentedList empty" {
-    var empty: RuntimeSegmentedList(u8) = .empty;
+    var empty: TestingRSL(u8) = .empty;
 
     {
         var it = empty.iter();
@@ -1074,7 +1100,106 @@ test "RuntimeSegmentedList shrinkEmptyList" {
     var expansion_gpa = std.heap.DebugAllocator(.{ .safety = false }).init;
     defer _ = expansion_gpa.deinit();
 
-    var list = try RuntimeSegmentedList(u8).init(initial_gpa.allocator(), expansion_gpa.allocator(), 5, 1000);
+    var list = try TestingRSL(u8).init(initial_gpa.allocator(), expansion_gpa.allocator(), 5, 1000);
 
     list.shrink(0);
+}
+
+test "RuntimeSegmentedList no min expansion size" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var list = try RuntimeSegmentedListLinearAlloc(i32).initSingleAlloc(
+        arena.allocator(),
+        8,
+        1000,
+    );
+
+    // Block sizes should be 8, 8, 16, 32, 64, but the last block only has 1 elem
+    const expected_sizes: []const usize = &.{ 8, 8, 16, 32, 1 };
+
+    for (0..8 + 8 + 16 + 32 + 1) |i| {
+        try list.append(@intCast(i));
+    }
+
+    var block_it = list.blockIter();
+    var i: usize = 0;
+    while (block_it.next()) |block| {
+        try std.testing.expectEqual(expected_sizes[i], block.len);
+        i += 1;
+    }
+}
+
+test "RuntimeSegmentedList configured expansion size" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var list = try RuntimeSegmentedListConfigurable(i32, .{
+        .min_expansion_size_log2 = 12,
+        .supports_free = false,
+    }).initSingleAlloc(
+        arena.allocator(),
+        7,
+        10000,
+    );
+
+    const expected_sizes: []const usize = &.{ 7, 4096 / @sizeOf(i32), 1 };
+
+    for (0..7 + 4096 / @sizeOf(i32) + 1) |i| {
+        try list.append(@intCast(i));
+    }
+
+    var block_it = list.blockIter();
+    var i: usize = 0;
+    while (block_it.next()) |block| {
+        try std.testing.expectEqual(expected_sizes[i], block.len);
+        i += 1;
+    }
+}
+
+test "RuntimeSegmentedList does not free when it shouldn't" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var list = try RuntimeSegmentedListLinearAlloc(i32).initSingleAlloc(
+        arena.allocator(),
+        1,
+        1000,
+    );
+
+    // 1, 1, 2, 4, 8
+    try list.append(4);
+
+    try list.append(5);
+
+    try list.append(6);
+    try list.append(7);
+
+    try list.append(8);
+    try list.append(9);
+    try list.append(10);
+    try list.append(11);
+
+    var previous_pointers: [5]?[*]i32 = undefined;
+    @memcpy(&previous_pointers, list.blocks[0..5]);
+
+    try std.testing.expect(previous_pointers[0] != null);
+    try std.testing.expect(previous_pointers[1] != null);
+    try std.testing.expect(previous_pointers[2] != null);
+    try std.testing.expect(previous_pointers[3] != null);
+    try std.testing.expect(previous_pointers[4] == null);
+
+    list.shrink(0);
+
+    for (&previous_pointers, list.blocks[0..5]) |e, a| {
+        try std.testing.expectEqual(e, a);
+    }
+
+    for (0..8) |i| {
+        try list.append(@intCast(i));
+    }
+
+    for (&previous_pointers, list.blocks[0..5]) |e, a| {
+        try std.testing.expectEqual(e, a);
+    }
 }

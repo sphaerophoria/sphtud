@@ -120,7 +120,7 @@ test "HttpHeader sanity" {
 
 pub const HttpReader = struct {
     state: State = .reading_header,
-    buf: sphutil.RuntimeSegmentedList(u8),
+    buf: sphutil.RuntimeSegmentedListSphalloc(u8),
     header: ?HttpHeader = null,
     body_start: usize = 0,
     body_len: usize = 0,
@@ -142,7 +142,7 @@ pub const HttpReader = struct {
         return try self.buf.asContiguousSlice(alloc, header.target.start, header.target.end);
     }
 
-    pub fn getBody(self: *HttpReader) sphutil.RuntimeSegmentedList(u8).Slice {
+    pub fn getBody(self: *HttpReader) sphutil.RuntimeSegmentedListSphalloc(u8).Slice {
         if (self.body_start >= self.buf.len) return self.buf.slice(0, 0);
 
         return self.buf.slice(self.body_start, self.buf.len);
