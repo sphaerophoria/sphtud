@@ -132,7 +132,7 @@ const MultiLineGraphRetriever = struct {
 };
 
 pub fn main() !void {
-    var allocators: sphrender.AppAllocators(100) = undefined;
+    var allocators: sphrender.AppAllocators = undefined;
     try allocators.initPinned(10 * 1024 * 1024);
 
     var window: sphwindow.Window = undefined;

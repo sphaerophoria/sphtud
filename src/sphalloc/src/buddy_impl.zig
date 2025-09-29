@@ -115,11 +115,13 @@ fn hasSibling(ctx: anytype, ptr: [*]u8, list_idx: usize) ?usize {
     const ptr_u = @intFromPtr(ptr);
     const shift_amount = list_idx + Ctx.min_block_log2 + 1;
     const cmp = ptr_u >> @intCast(shift_amount);
-    const free_list = ctx.getList(list_idx);
+    var free_list_it = ctx.getListIter(list_idx);
 
     var ret: ?usize = null;
-    for (0..free_list.len) |i| {
-        const list_val = @intFromPtr(free_list[i]);
+    var i: usize = 0;
+    while (free_list_it.next()) |list_val_ptr| {
+        defer i += 1;
+        const list_val = @intFromPtr(list_val_ptr);
         if (list_val >> @intCast(shift_amount) == cmp) {
             ret = i;
         }

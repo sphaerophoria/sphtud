@@ -216,7 +216,9 @@ test "HttpReader sanity" {
         "\r\n" ++
         "Hello world";
 
-    var tpa = sphalloc.TinyPageAllocator(100){};
+    var tpa: sphalloc.TinyPageAllocator = undefined;
+    try tpa.initPinned();
+
     var root_alloc: sphalloc.Sphalloc = undefined;
     try root_alloc.initPinned(tpa.allocator(), "root");
     defer root_alloc.deinit();

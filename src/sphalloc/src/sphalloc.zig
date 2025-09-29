@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 const buddy_impl = @import("buddy_impl.zig");
+const sphutil = @import("sphutil_noalloc");
 
 pub const MemoryTracker = @import("MemoryTracker.zig");
 
@@ -505,107 +506,152 @@ test "BufAllocator allocator collision linear allocators" {
 pub const tiny_page_log2 = 8;
 pub const tiny_page_size = 1 << tiny_page_log2;
 
-pub fn TinyPageAllocator(comptime max_free_elems: comptime_int) type {
-    return struct {
-        // Some expected constraints...
-        //
-        // Blocks of sizes 2^small - 2^12
-        // One of these for the whole program
-        // Allocations will only be powers of 2
-        // Frees should be relatively rare
-        // Allocations may happen more often
-        // We do not have a more granular allocator yet
+pub const TinyPageAllocator = struct {
+    // Some expected constraints...
+    //
+    // Blocks of sizes 2^small - 2^12
+    // One of these for the whole program
+    // Allocations will only be powers of 2
+    // Frees should be relatively rare
+    // Allocations may happen more often
+    // We do not have a more granular allocator yet
 
-        const page_size_log2 = std.math.log2(std.heap.pageSize());
-        const num_lists = page_size_log2 - tiny_page_log2;
+    const page_size_log2 = std.math.log2(std.heap.pageSize());
+    const num_lists = page_size_log2 - tiny_page_log2;
 
-        page_allocator: Allocator = std.heap.page_allocator,
-        free_lists: [num_lists][max_free_elems][*]u8 = undefined,
-        list_lens: [num_lists]usize = [1]usize{0} ** num_lists,
+    const typical_free_elems = 20;
 
-        const Self = @This();
+    const FreeList = sphutil.RuntimeSegmentedListConfigurable([*]u8, .{
+        .min_expansion_size_log2 = std.math.log2(std.heap.pageSize()),
+        .supports_free = true,
+    });
 
-        const allocator_vtable: Allocator.VTable = .{
-            .alloc = Self.alloc,
-            .resize = nullResize,
-            .free = Self.free,
-            .remap = nullRemap,
+    page_allocator: Allocator = std.heap.page_allocator,
+    alloc_buf: [1536]u8,
+    free_lists: [num_lists]FreeList,
+
+    const Self = @This();
+
+    const allocator_vtable: Allocator.VTable = .{
+        .alloc = Self.alloc,
+        .resize = nullResize,
+        .free = Self.free,
+        .remap = nullRemap,
+    };
+
+    pub fn initPinned(self: *TinyPageAllocator) !void {
+        var initial_alloc = BufAllocator.init(&self.alloc_buf);
+        for (&self.free_lists) |*fl| {
+            fl.* = try FreeList.init(
+                initial_alloc.allocator(),
+                std.heap.page_allocator,
+                typical_free_elems,
+                // log2(1G) == 30, which means we need on the order of 30
+                // expansion slots, which is ~240 bytes per free list (it's
+                // actually smaller because the starting size is already of
+                // size 100, but this is a good enough approximation). This is
+                // completely reasonable in the context of one TPA per app, we
+                // can afford the ~1k bytes for free list tracking (measured
+                // it's actually more like 600 bytes)
+                //
+                // In fact the size is relatively insignificant when comparing
+                // to the previous pre-alloc list sizes (100). With lists of
+                // 100, we need 100 * @sizeOf(ptr) * num_lists bytes, which on
+                // an x86_64 machine with a page size of 4096 is 3.2k. The
+                // extra 600 bytes for 10^7 times more room in the list is
+                // worthwhile
+                //
+                // Since our min block size is 256 bytes, this provisions for
+                // 256G of insanely fragmented memory. We will run into major
+                // performance problems before we run out of room due to the
+                // linear search that goes on in this buffer on free
+                //
+                // Also note that if this was insanely out of hand we'd run out
+                // of room in our alloc_buf
+                1 * 1024 * 1024 * 1024,
+            );
+        }
+        self.page_allocator = std.heap.page_allocator;
+    }
+
+    pub fn allocator(self: *Self) Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &allocator_vtable,
+        };
+    }
+
+    const BuddyAllocImplCtx = struct {
+        parent: *Self,
+        page_allocator: Allocator,
+
+        pub const min_block_log2 = tiny_page_log2;
+        pub const max_size_log2 = page_size_log2;
+
+        const Iter = struct {
+            inner: FreeList.Iter,
+
+            pub fn next(self: *Iter) ?[*]u8 {
+                const val = self.inner.next() orelse return null;
+                return val.*;
+            }
         };
 
-        pub fn allocator(self: *Self) Allocator {
+        pub fn getListIter(self: BuddyAllocImplCtx, list_idx: usize) Iter {
             return .{
-                .ptr = self,
-                .vtable = &allocator_vtable,
+                .inner = self.parent.free_lists[list_idx].iter(),
             };
         }
 
-        const BuddyAllocImplCtx = struct {
-            parent: *Self,
-            page_allocator: Allocator,
-
-            pub const min_block_log2 = tiny_page_log2;
-            pub const max_size_log2 = page_size_log2;
-
-            pub fn getList(self: BuddyAllocImplCtx, list_idx: usize) [][*]u8 {
-                return self.parent.free_lists[list_idx][0..self.parent.list_lens[list_idx]];
-            }
-
-            pub fn isListFull(self: BuddyAllocImplCtx, list_idx: usize) bool {
-                return self.parent.list_lens[list_idx] == max_free_elems;
-            }
-
-            pub fn isListEmpty(self: BuddyAllocImplCtx, list_idx: usize) bool {
-                return self.parent.list_lens[list_idx] == 0;
-            }
-
-            pub fn pushBlock(self: BuddyAllocImplCtx, ptr: [*]u8, list_idx: usize) !void {
-                const free_list = &self.parent.free_lists[list_idx];
-                const len = &self.parent.list_lens[list_idx];
-                if (len.* == max_free_elems) return error.OutOfMemory;
-
-                free_list[len.*] = ptr;
-                len.* += 1;
-            }
-
-            pub fn popBlock(self: BuddyAllocImplCtx, list_idx: usize) ?[*]u8 {
-                const free_list = &self.parent.free_lists[list_idx];
-                const len = &self.parent.list_lens[list_idx];
-
-                if (len.* == 0) return null;
-
-                len.* -= 1;
-                defer free_list[len.*] = undefined;
-                return free_list[len.*];
-            }
-
-            pub fn swapRemove(self: BuddyAllocImplCtx, list_idx: usize, sub_idx: usize) [*]u8 {
-                const free_list = &self.parent.free_lists[list_idx];
-                const len = &self.parent.list_lens[list_idx];
-
-                const ret = free_list[sub_idx];
-                len.* -= 1;
-                free_list[sub_idx] = free_list[len.*];
-                return ret;
-            }
-        };
-
-        fn makeBuddyAllocCtx(ctx: *anyopaque) BuddyAllocImplCtx {
-            const self: *Self = @ptrCast(@alignCast(ctx));
-            return .{
-                .parent = self,
-                .page_allocator = self.page_allocator,
-            };
+        pub fn isListFull(self: BuddyAllocImplCtx, list_idx: usize) bool {
+            const free_list = &self.parent.free_lists[list_idx];
+            return free_list.len == free_list.capacity;
         }
 
-        fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
-            return buddy_impl.alloc(makeBuddyAllocCtx(ctx), len, alignment, ret_addr);
+        pub fn isListEmpty(self: BuddyAllocImplCtx, list_idx: usize) bool {
+            const free_list = &self.parent.free_lists[list_idx];
+            return free_list.len == 0;
         }
 
-        fn free(ctx: *anyopaque, buf: []u8, alignment: Alignment, ret_addr: usize) void {
-            return buddy_impl.free(makeBuddyAllocCtx(ctx), buf, alignment, ret_addr);
+        pub fn pushBlock(self: BuddyAllocImplCtx, ptr: [*]u8, list_idx: usize) !void {
+            const free_list = &self.parent.free_lists[list_idx];
+            try free_list.append(ptr);
+        }
+
+        pub fn popBlock(self: BuddyAllocImplCtx, list_idx: usize) ?[*]u8 {
+            const free_list = &self.parent.free_lists[list_idx];
+
+            if (free_list.len == 0) return null;
+
+            const last = free_list.get(free_list.len - 1);
+            free_list.shrink(free_list.len - 1);
+            return last;
+        }
+
+        pub fn swapRemove(self: BuddyAllocImplCtx, list_idx: usize, sub_idx: usize) [*]u8 {
+            const free_list = &self.parent.free_lists[list_idx];
+            const removed = free_list.get(sub_idx);
+            free_list.swapRemove(sub_idx);
+            return removed;
         }
     };
-}
+
+    fn makeBuddyAllocCtx(ctx: *anyopaque) BuddyAllocImplCtx {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        return .{
+            .parent = self,
+            .page_allocator = self.page_allocator,
+        };
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: Alignment, ret_addr: usize) ?[*]u8 {
+        return buddy_impl.alloc(makeBuddyAllocCtx(ctx), len, alignment, ret_addr);
+    }
+
+    fn free(ctx: *anyopaque, buf: []u8, alignment: Alignment, ret_addr: usize) void {
+        return buddy_impl.free(makeBuddyAllocCtx(ctx), buf, alignment, ret_addr);
+    }
+};
 
 const GeneralPurposeAllocator = struct {
     const min_block_log2 = 3;
@@ -647,8 +693,22 @@ const GeneralPurposeAllocator = struct {
         pub const min_block_log2 = Self.min_block_log2;
         pub const max_size_log2 = tiny_page_log2;
 
-        pub fn getList(self: BuddyAllocImplCtx, list_idx: usize) [][*]u8 {
-            return self.parent.free_lists[list_idx].items;
+        const Iter = struct {
+            list: [][*]u8,
+            i: usize = 0,
+
+            pub fn next(self: *Iter) ?[*]u8 {
+                if (self.i >= self.list.len) return null;
+                defer self.i += 1;
+
+                return self.list[self.i];
+            }
+        };
+
+        pub fn getListIter(self: BuddyAllocImplCtx, list_idx: usize) Iter {
+            return .{
+                .list = self.parent.free_lists[list_idx].items,
+            };
         }
 
         pub fn isListFull(_: BuddyAllocImplCtx, _: usize) bool {
@@ -697,33 +757,41 @@ const GeneralPurposeAllocator = struct {
     }
 };
 
+fn compareListLens(expected: []const usize, lists: []const TinyPageAllocator.FreeList) !void {
+    try std.testing.expectEqual(expected.len, lists.len);
+
+    for (expected, lists) |expected_len, list| {
+        try std.testing.expectEqual(expected_len, list.len);
+    }
+}
 test "TinyPageAlloc alloc sanity" {
-    const TestType = TinyPageAllocator(100);
-    var page_alloc = TestType{ .page_allocator = std.heap.page_allocator };
+    var page_alloc: TinyPageAllocator = undefined;
+    try page_alloc.initPinned();
+
     const alloc = page_alloc.allocator();
     const block5 = try alloc.alloc(u8, 256);
-    try std.testing.expectEqualSlices(usize, &.{ 1, 1, 1, 1 }, &page_alloc.list_lens);
+    try compareListLens(&.{ 1, 1, 1, 1 }, &page_alloc.free_lists);
     const block4 = try alloc.alloc(u8, 256);
-    try std.testing.expectEqualSlices(usize, &.{ 0, 1, 1, 1 }, &page_alloc.list_lens);
+    try compareListLens(&.{ 0, 1, 1, 1 }, &page_alloc.free_lists);
     const block3 = try alloc.alloc(u8, 256);
-    try std.testing.expectEqualSlices(usize, &.{ 1, 0, 1, 1 }, &page_alloc.list_lens);
+    try compareListLens(&.{ 1, 0, 1, 1 }, &page_alloc.free_lists);
 
     const block2 = try alloc.alloc(u8, 1024);
-    try std.testing.expectEqualSlices(usize, &.{ 1, 0, 0, 1 }, &page_alloc.list_lens);
+    try compareListLens(&.{ 1, 0, 0, 1 }, &page_alloc.free_lists);
 
     const block = try alloc.alloc(u8, 512);
-    try std.testing.expectEqualSlices(usize, &.{ 1, 1, 1, 0 }, &page_alloc.list_lens);
+    try compareListLens(&.{ 1, 1, 1, 0 }, &page_alloc.free_lists);
 
     alloc.free(block);
-    try std.testing.expectEqualSlices(usize, &.{ 1, 0, 0, 1 }, &page_alloc.list_lens);
+    try compareListLens(&.{ 1, 0, 0, 1 }, &page_alloc.free_lists);
 
     alloc.free(block2);
-    try std.testing.expectEqualSlices(usize, &.{ 1, 0, 1, 1 }, &page_alloc.list_lens);
+    try compareListLens(&.{ 1, 0, 1, 1 }, &page_alloc.free_lists);
 
     alloc.free(block4);
     alloc.free(block5);
     alloc.free(block3);
-    try std.testing.expectEqualSlices(usize, &.{ 0, 0, 0, 0 }, &page_alloc.list_lens);
+    try compareListLens(&.{ 0, 0, 0, 0 }, &page_alloc.free_lists);
 }
 
 pub const SphallocListNode = struct {
@@ -899,9 +967,8 @@ test "Sphalloc sanity" {
     var initial_state_buf: [4096]u8 = undefined;
     const initial_state = try test_helpers.getMaps(&initial_state_buf);
 
-    var tiny_page_alloc = TinyPageAllocator(100){
-        .page_allocator = std.heap.page_allocator,
-    };
+    var tiny_page_alloc: TinyPageAllocator = undefined;
+    try tiny_page_alloc.initPinned();
 
     var sphalloc: Sphalloc = undefined;
     try sphalloc.initPinned(tiny_page_alloc.allocator(), "root");
@@ -945,9 +1012,8 @@ test "Sphalloc singleChildRemoval" {
     var initial_state_buf: [4096]u8 = undefined;
     const initial_state = try test_helpers.getMaps(&initial_state_buf);
 
-    var tiny_page_alloc = TinyPageAllocator(100){
-        .page_allocator = std.heap.page_allocator,
-    };
+    var tiny_page_alloc: TinyPageAllocator = undefined;
+    try tiny_page_alloc.initPinned();
 
     var sphalloc: Sphalloc = undefined;
     try sphalloc.initPinned(tiny_page_alloc.allocator(), "root");

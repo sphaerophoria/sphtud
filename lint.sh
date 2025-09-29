@@ -14,6 +14,7 @@ popd
 
 pushd src/gui/
 zig build test
+zig build
 popd
 
 pushd src/sphutil/
