@@ -8,11 +8,13 @@ pub const ExpansionAllocInfo = struct {
     supports_free: bool,
 };
 
+pub const linear_alloc_info = ExpansionAllocInfo{
+    .min_expansion_size_log2 = 0,
+    .supports_free = false,
+};
+
 pub fn RuntimeSegmentedListLinearAlloc(comptime T: type) type {
-    return RuntimeSegmentedListConfigurable(T, .{
-        .min_expansion_size_log2 = 0,
-        .supports_free = false,
-    });
+    return RuntimeSegmentedListConfigurable(T, linear_alloc_info);
 }
 
 /// Very similar in concept to standard library SegmentedList with a few
@@ -95,12 +97,47 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             }
         }
 
+        // Fills the block at self.len with elem T
+        pub fn fillBlock(self: *Self, elem: T) !void {
+            const first_expansion_size = firstExpansionSize(self.initial_block_len);
+            if (self.len >= self.capacity) {
+                return error.OutOfMemory;
+            }
+
+            const to_fill = idxToBlockId(self.initial_block_len, self.len, first_expansion_size);
+            const block_end = blockStart(self.initial_block_len, to_fill + 1, first_expansion_size);
+            const to_fill_start = blockStart(self.initial_block_len, to_fill, first_expansion_size);
+
+            const new_len = @min(self.capacity, block_end);
+
+            try self.ensureBlockAllocated(to_fill);
+            @memset(self.blocks[to_fill].?[self.len - to_fill_start .. new_len - to_fill_start], elem);
+            self.len = new_len;
+        }
+
         pub fn get(self: Self, idx: usize) T {
             return getImpl(self, idx).*;
         }
 
         pub fn getPtr(self: *Self, idx: usize) *T {
             return getImpl(self.*, idx);
+        }
+
+        pub fn indexFromPtr(self: *Self, ptr: *T) ?usize {
+            var it = self.blockIter();
+            const ptr_u: usize = @intFromPtr(ptr);
+
+            while (it.next()) |block| {
+                const block_u: usize = @intFromPtr(block.ptr);
+                if (ptr_u < block_u) continue;
+                const offs = (ptr_u - block_u) / @sizeOf(T);
+                if (offs < block.len) {
+                    const block_start = blockStart(self.initial_block_len, it.block_id - 1, firstExpansionSize(self.initial_block_len));
+                    return block_start + offs;
+                }
+            }
+
+            return null;
         }
 
         pub fn shrink(self: *Self, size: usize) void {
@@ -111,6 +148,13 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
         pub fn clear(self: *Self) void {
             self.len = 0;
             self.freeUnusedBlocks();
+        }
+
+        pub fn blockStartForIdx(self: *const Self, idx: usize) usize {
+            const first_expansion_size = firstExpansionSize(self.initial_block_len);
+            const block = idxToBlockId(self.initial_block_len, idx, first_expansion_size);
+            const block_start = blockStart(self.initial_block_len, block, first_expansion_size);
+            return block_start;
         }
 
         pub fn swapRemove(self: *Self, idx: usize) void {
@@ -1202,4 +1246,51 @@ test "RuntimeSegmentedList does not free when it shouldn't" {
     for (&previous_pointers, list.blocks[0..5]) |e, a| {
         try std.testing.expectEqual(e, a);
     }
+}
+
+test "RuntimeSegmentedList fill block" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var list = try RuntimeSegmentedListLinearAlloc(u8).initSingleAlloc(
+        arena.allocator(),
+        8,
+        55,
+    );
+
+    try list.append(0);
+    try list.append(0);
+    // 2
+
+    try list.fillBlock(1);
+    // 8
+    try list.fillBlock(2);
+    // 16
+    try list.fillBlock(3);
+    // 32
+    try list.fillBlock(4);
+    // 55
+
+    var it = list.iter();
+    for (0..2) |_| {
+        try std.testing.expectEqual(0, it.next().?.*);
+    }
+
+    for (2..8) |_| {
+        try std.testing.expectEqual(1, it.next().?.*);
+    }
+
+    for (8..16) |_| {
+        try std.testing.expectEqual(2, it.next().?.*);
+    }
+
+    for (16..32) |_| {
+        try std.testing.expectEqual(3, it.next().?.*);
+    }
+
+    for (32..55) |_| {
+        try std.testing.expectEqual(4, it.next().?.*);
+    }
+
+    try std.testing.expectEqual(null, it.next());
 }
