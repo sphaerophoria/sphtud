@@ -24,12 +24,12 @@ pub const Handler = struct {
     fd: OsHandle,
 
     pub const VTable = struct {
-        poll: *const fn (ctx: ?*anyopaque, loop: *Loop) PollResult,
+        poll: *const fn (ctx: ?*anyopaque, loop: *Loop, reason: PollReason) PollResult,
         close: *const fn (ctx: ?*anyopaque) void,
     };
 
-    pub fn poll(self: Handler, loop: *Loop) PollResult {
-        return self.vtable.poll(self.ptr, loop);
+    pub fn poll(self: Handler, loop: *Loop, reason: PollReason) PollResult {
+        return self.vtable.poll(self.ptr, loop, reason);
     }
 
     pub fn close(self: Handler) void {
@@ -216,6 +216,15 @@ pub const FdRefBufsWriter = struct {
     fn finish(_: ?*anyopaque) void {}
 };
 
+pub const PollReason = union(enum) {
+    init,
+    io: struct {
+        read: bool,
+        write: bool,
+        hup: bool,
+    },
+};
+
 pub const Loop = struct {
     fd: i32,
     force_poll: sphutil.RuntimeSegmentedListSphalloc(usize),
@@ -283,7 +292,14 @@ pub const Loop = struct {
         }
 
         for (events[0..num_fds]) |event| {
-            try self.pollHandler(event.data.ptr, &to_remove, &to_add, null);
+            const reason = PollReason{
+                .io = .{
+                    .hup = (event.events & std.os.linux.EPOLL.HUP) != 0,
+                    .read = (event.events & std.os.linux.EPOLL.IN) != 0,
+                    .write = (event.events & std.os.linux.EPOLL.OUT) != 0,
+                },
+            };
+            try self.pollHandler(event.data.ptr, reason, &to_remove, &to_add, null);
         }
 
         try self.pollForced(scratch, &to_remove, &to_add);
@@ -330,16 +346,16 @@ pub const Loop = struct {
 
             var it = self.force_poll.iter();
             while (it.next()) |idx| {
-                try self.pollHandler(idx.*, to_remove, to_add, &to_force);
+                try self.pollHandler(idx.*, .init, to_remove, to_add, &to_force);
             }
             self.force_poll.clear();
             try self.force_poll.appendSlice(to_force.items);
         }
     }
 
-    fn pollHandler(self: *Loop, idx: usize, to_remove: *sphutil.RuntimeBoundedArray(usize), to_add: *sphutil.RuntimeBoundedArray(Handler), to_force: ?*sphutil.RuntimeBoundedArray(usize)) !void {
+    fn pollHandler(self: *Loop, idx: usize, reason: PollReason, to_remove: *sphutil.RuntimeBoundedArray(usize), to_add: *sphutil.RuntimeBoundedArray(Handler), to_force: ?*sphutil.RuntimeBoundedArray(usize)) !void {
         const handler = self.handler_pool.getPtr(idx);
-        switch (handler.poll(self)) {
+        switch (handler.poll(self, reason)) {
             .in_progress => {},
             .replace_handler => |new_handler| {
                 if (new_handler.fd != handler.fd) {
@@ -457,7 +473,7 @@ pub const net = struct {
                 };
             }
 
-            fn poll(ctx: ?*anyopaque, loop: *Loop) PollResult {
+            fn poll(ctx: ?*anyopaque, loop: *Loop, _: PollReason) PollResult {
                 const self: *Self = @ptrCast(@alignCast(ctx));
                 return self.pollError(loop) catch |e| {
                     std.log.debug("Failed to accept connection: {s}", .{@errorName(e)});
@@ -697,7 +713,7 @@ const TestConnection = struct {
         };
     }
 
-    fn poll(ctx: ?*anyopaque, _: *Loop) PollResult {
+    fn poll(ctx: ?*anyopaque, _: *Loop, _: PollReason) PollResult {
         const self: *TestConnection = @ptrCast(@alignCast(ctx));
         self.state.received_len += self.inner.stream.read(self.state.received_data[self.state.received_len..]) catch unreachable;
         return .complete;
