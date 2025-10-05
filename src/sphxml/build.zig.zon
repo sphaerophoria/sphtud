@@ -1,0 +1,10 @@
+.{
+    .name = .sphxml,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.15.0",
+    .dependencies = .{},
+    .paths = .{
+        "sphxml.zig",
+    },
+    .fingerprint = 0xf581e09e352a0298,
+}

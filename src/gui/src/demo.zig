@@ -138,6 +138,8 @@ pub fn main() !void {
     var window: sphwindow.Window = undefined;
     try window.initPinned("sphui demo", 800, 600);
 
+    try sphrender.initGl(window.glLoader());
+
     gl.glEnable(gl.GL_SCISSOR_TEST);
     gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA);
     gl.glEnable(gl.GL_BLEND);

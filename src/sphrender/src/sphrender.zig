@@ -13,6 +13,10 @@ const sphmath = @import("sphmath");
 const sphalloc = @import("sphalloc");
 const Sphalloc = sphalloc.Sphalloc;
 
+pub fn initGl(loader: *const fn ([*c]const u8) callconv(.c) ?*const fn () callconv(.c) void) !void {
+    try gl.load(loader);
+}
+
 pub const UniformType = enum {
     image,
     float,

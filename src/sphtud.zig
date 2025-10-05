@@ -9,3 +9,4 @@ pub const render = if (config.export_sphrender) @import("sphrender") else void;
 pub const ui = if (config.export_sphrender) @import("sphui") else void;
 pub const window = if (config.export_sphwindow) @import("sphwindow") else void;
 pub const event = @import("sphevent");
+pub const xml = @import("sphxml");

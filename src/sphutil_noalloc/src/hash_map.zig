@@ -23,6 +23,15 @@ pub fn AutoHashMapLinear(comptime K: type, comptime V: type) type {
     );
 }
 
+pub fn StringHashMapLinear(comptime V: type) type {
+    return HashMap(
+        []const u8,
+        V,
+        std.hash_map.StringContext,
+        sphutil.runtime_segmented_list.linear_alloc_info,
+    );
+}
+
 pub fn HashMap(
     comptime K: type,
     comptime V: type,

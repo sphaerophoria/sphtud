@@ -7,6 +7,7 @@ pub const RuntimeSegmentedListConfigurable = runtime_segmented_list.RuntimeSegme
 pub const RuntimeSegmentedListLinearAlloc = runtime_segmented_list.RuntimeSegmentedListLinearAlloc;
 
 pub const AutoHashMapLinear = hash_map.AutoHashMapLinear;
+pub const StringHashMapLinear = hash_map.StringHashMapLinear;
 
 test {
     const std = @import("std");
