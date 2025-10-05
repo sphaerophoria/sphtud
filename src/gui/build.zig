@@ -8,10 +8,14 @@ const Dependencies = struct {
     sphutil: *std.Build.Module,
     sphwindow_events: *std.Build.Module,
 
-    fn init(b: *std.Build) Dependencies {
+    fn init(b: *std.Build, gl_extensions: []const []const u8) Dependencies {
         const sphmath = b.dependency("sphmath", .{});
-        const sphrender = b.dependency("sphrender", .{});
-        const sphtext = b.dependency("sphtext", .{});
+        const sphrender = b.dependency("sphrender", .{
+            .gl_extensions = gl_extensions,
+        });
+        const sphtext = b.dependency("sphtext", .{
+            .gl_extensions = gl_extensions,
+        });
         const sphalloc = b.dependency("sphalloc", .{});
         const sphutil = b.dependency("sphutil", .{});
         const sphwindow_events = b.dependency("sphwindow_events", .{});
@@ -38,8 +42,9 @@ const Dependencies = struct {
 
 pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "");
+    const gl_extensions = b.option([]const []const u8, "gl_extensions", "") orelse &.{};
 
-    const deps = Dependencies.init(b);
+    const deps = Dependencies.init(b, gl_extensions);
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 

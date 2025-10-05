@@ -37,4 +37,8 @@ pushd src/sphevent/
 zig build test
 popd
 
+pushd src/sphxml/
+zig build test
+popd
+
 zig build

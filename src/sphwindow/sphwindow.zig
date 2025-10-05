@@ -50,6 +50,10 @@ pub const Window = struct {
         self.queue = .{ .items = &self.queue_buf };
     }
 
+    pub fn glLoader(_: *Window) *const fn ([*c]const u8) callconv(.c) ?*const fn () callconv(.c) void {
+        return @ptrCast(&glfwb.glfwGetProcAddress);
+    }
+
     pub fn deinit(self: *Window) void {
         glfwb.glfwDestroyWindow(self.window);
         glfwb.glfwTerminate();

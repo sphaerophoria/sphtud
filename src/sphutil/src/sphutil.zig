@@ -7,6 +7,7 @@ pub const RuntimeBoundedArray = noalloc.RuntimeBoundedArray;
 pub const RuntimeSegmentedListConfigurable = noalloc.RuntimeSegmentedListConfigurable;
 pub const RuntimeSegmentedListLinearAlloc = noalloc.RuntimeSegmentedListLinearAlloc;
 pub const hash_map = noalloc.hash_map;
+pub const StringHashMapLinear = noalloc.StringHashMapLinear;
 
 pub const sphalloc_expansion_alloc_info = noalloc.runtime_segmented_list.ExpansionAllocInfo{
     .min_expansion_size_log2 = sphalloc.tiny_page_log2,

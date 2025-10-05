@@ -30,6 +30,9 @@
         .sphttp = .{
             .path = "src/sphttp",
         },
+        .sphxml = .{
+            .path = "src/sphxml",
+        },
     },
     .paths = .{
         "src",
