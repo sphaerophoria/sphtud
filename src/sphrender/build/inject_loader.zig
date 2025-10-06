@@ -283,7 +283,7 @@ pub fn main() !void {
     );
 
     for (desired_protos) |proto| {
-        try stdout.print("    {s} = @ptrCast(if (loader(\"{s}\")) |v| v else return error.MissingPrototype);\n", .{ proto, proto });
+        try stdout.print("    if (loader(\"{s}\")) |v| {s} = @ptrCast(v);\n", .{ proto, proto });
     }
     try stdout.writeAll("}\n");
     try stdout.flush();

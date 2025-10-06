@@ -119,8 +119,8 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             return getImpl(self, idx).*;
         }
 
-        pub fn getPtr(self: *Self, idx: usize) *T {
-            return getImpl(self.*, idx);
+        pub fn getPtr(self: Self, idx: usize) *T {
+            return getImpl(self, idx);
         }
 
         pub fn indexFromPtr(self: *Self, ptr: *T) ?usize {

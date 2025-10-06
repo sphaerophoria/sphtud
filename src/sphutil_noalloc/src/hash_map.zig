@@ -119,12 +119,29 @@ pub fn HashMap(
             }
         }
 
+        pub fn putNoClobber(self: *Self, key: K, val: V) !void {
+            const gop = try self.getOrPut(key);
+
+            if (gop.found_existing) {
+                return error.AlreadyExists;
+            }
+
+            gop.val.* = val;
+        }
+
         pub fn put(self: *Self, key: K, val: V) !void {
             const gop = try self.getOrPut(key);
             gop.val.* = val;
         }
 
-        pub fn get(self: *Self, key: K) ?V {
+        pub fn contains(self: *const Self, key: K) bool {
+            switch (self.findNode(key)) {
+                .found => return true,
+                .missing => return false,
+            }
+        }
+
+        pub fn get(self: *const Self, key: K) ?V {
             switch (self.findNode(key)) {
                 .found => |n| return n.node.val,
                 .missing => return null,
@@ -138,11 +155,13 @@ pub fn HashMap(
             }
         }
 
-        pub fn remove(self: *Self, key: K) !void {
+        pub fn remove(self: *Self, key: K) ?V {
             const to_remove = switch (self.findNode(key)) {
                 .found => |n| n,
-                .missing => return,
+                .missing => return null,
             };
+
+            const ret = to_remove.node.val;
 
             to_remove.from_ptr.* = to_remove.node.node.next;
 
@@ -167,6 +186,8 @@ pub fn HashMap(
                 self.rehash(self.buckets.len, new_num_buckets);
                 self.buckets.shrink(new_num_buckets);
             }
+
+            return ret;
         }
 
         fn replaceBStorageWithA(a: *ListNode, b_from: *?*std.SinglyLinkedList.Node, b: *ListNode) void {
@@ -215,7 +236,7 @@ pub fn HashMap(
             missing: u64,
         };
 
-        fn findNode(self: *Self, key: K) GetNodeResult {
+        fn findNode(self: *const Self, key: K) GetNodeResult {
             const hash = self.ctx.hash(key);
             const bucket_id = hash % self.buckets.len;
             const bucket = self.buckets.getPtr(bucket_id);
@@ -313,7 +334,7 @@ test "HashMap random insertion removal" {
         const key = rand.intRangeAtMost(i32, 0, 999);
 
         _ = ref.remove(key);
-        try map.remove(key);
+        _ = map.remove(key);
     }
 
     try std.testing.expectEqual(ref.count(), map.len);
@@ -354,6 +375,6 @@ test "HashMap page expansion" {
     }
 
     for (0..50) |i| {
-        try map.remove(@intCast(i));
+        _ = map.remove(@intCast(i));
     }
 }
