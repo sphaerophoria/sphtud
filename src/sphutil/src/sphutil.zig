@@ -23,6 +23,12 @@ pub fn AutoHashMapSphalloc(comptime K: type, comptime V: type) type {
     return noalloc.hash_map.AutoHashMapConfigurable(K, V, sphalloc_expansion_alloc_info);
 }
 
+pub const ObjectPoolLinear = noalloc.ObjectPoolLinear;
+pub const ObjectPoolConfigurable = noalloc.ObjectPoolConfigurable;
+pub fn ObjectPoolSphalloc(comptime T: type, comptime Handle: type) type {
+    return noalloc.object_pool.ObjectPoolConfigurable(T, Handle, sphalloc_expansion_alloc_info);
+}
+
 test {
     std.testing.refAllDeclsRecursive(@This());
 }

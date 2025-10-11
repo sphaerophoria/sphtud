@@ -105,6 +105,10 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             return self.impl().appendSlice(data);
         }
 
+        pub fn addOne(self: Self) !*T {
+            return self.impl().addOne();
+        }
+
         // Fills the block at self.len with elem T
         pub fn fillBlock(self: *Self, elem: T) !void {
             return self.impl().fillBlock(elem);
@@ -120,6 +124,10 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
 
         pub fn indexFromPtr(self: *Self, ptr: *T) ?usize {
             return self.implConst().indexFromPtr(ptr);
+        }
+
+        pub fn pop(self: *Self) ?T {
+            return self.impl().pop();
         }
 
         pub fn shrink(self: *Self, size: usize) void {
@@ -267,6 +275,10 @@ pub fn RuntimeSegmentedListConfigurableUnmanaged(comptime T: type, comptime expa
             return self.impl(expansion_alloc).appendSlice(data);
         }
 
+        pub fn addOne(self: *Self, expansion_alloc: std.mem.Allocator) !*T {
+            return self.impl(expansion_alloc).addOne();
+        }
+
         // Fills the block at self.len with elem T
         pub fn fillBlock(self: *Self, expansion_alloc: std.mem.Allocator, elem: T) !void {
             return self.impl(expansion_alloc).fillBlock(elem);
@@ -282,6 +294,10 @@ pub fn RuntimeSegmentedListConfigurableUnmanaged(comptime T: type, comptime expa
 
         pub fn indexFromPtr(self: *Self, ptr: *T) ?usize {
             return self.implConst().indexFromPtr(ptr);
+        }
+
+        pub fn pop(self: *Self, expansion_alloc: std.mem.Allocator) ?T {
+            return self.impl(expansion_alloc).pop();
         }
 
         pub fn shrink(self: *Self, expansion_alloc: std.mem.Allocator, size: usize) void {
@@ -393,6 +409,23 @@ fn RSLImpl(comptime T: type, comptime expansion_alloc_info: ExpansionAllocInfo) 
             self.appendToBlock(block, elem);
         }
 
+        pub fn addOne(self: Self) !*T {
+            if (self.len.* == self.capacity) return error.OutOfMemory;
+
+            const first_expansion_size = firstExpansionSize(self.initial_block_len);
+            const block = idxToBlockId(self.initial_block_len, self.len.*, first_expansion_size);
+
+            try self.ensureBlockAllocated(block);
+            self.len.* += 1;
+
+            const elem_idx = self.len.* - 1;
+            const block_start = blockStart(self.initial_block_len, block, first_expansion_size);
+            const block_offs = elem_idx - block_start;
+            const ret = &self.blocks[block].?[block_offs];
+            ret.* = undefined;
+            return ret;
+        }
+
         pub fn appendSlice(self: Self, data: []const T) !void {
             if (self.len.* + data.len > self.capacity) {
                 return error.OutOfMemory;
@@ -424,6 +457,13 @@ fn RSLImpl(comptime T: type, comptime expansion_alloc_info: ExpansionAllocInfo) 
             try self.ensureBlockAllocated(to_fill);
             @memset(self.blocks[to_fill].?[self.len.* - to_fill_start .. new_len - to_fill_start], elem);
             self.len.* = new_len;
+        }
+
+        pub fn pop(self: Self) ?T {
+            if (self.len.* == 0) return null;
+            const ret = self.implConst().get(self.len.* - 1);
+            self.shrink(self.len.* - 1);
+            return ret;
         }
 
         pub fn shrink(self: Self, size: usize) void {
