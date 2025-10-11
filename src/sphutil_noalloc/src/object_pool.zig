@@ -173,8 +173,12 @@ fn idxFromHandle(handle: anytype) usize {
     }
 }
 
-fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime expansion_alloc_info: rsl.ExpansionAllocInfo) type {
+pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type) type {
+}
+
+pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime expansion_alloc_info: rsl.ExpansionAllocInfo) type {
     return struct{
+        // FIMXE: This alloc is held 4 times in this struct lol
         expansion_alloc: std.mem.Allocator,
         objects: Objects,
         tombstones: BitSet(expansion_alloc_info), // True on dead
@@ -187,6 +191,20 @@ fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime expa
             handle: Handle,
             val: *T,
         };
+
+        pub fn init(
+            prealloc_alloc: std.mem.Allocator,
+            expansion_alloc: std.mem.Allocator,
+            prealloc_size: usize,
+            max_size: usize,
+        ) Self {
+            return .{
+                .expansion_alloc = expansion_alloc,
+                .objects = try .init(prealloc_alloc, expansion_alloc, prealloc_size, max_size),
+                .tombstones = try .init(prealloc_alloc, expansion_alloc, prealloc_size, max_size),
+                .free_list = try .init(prealloc_alloc, expansion_alloc, prealloc_size, max_size),
+            };
+        }
 
         pub fn acquire(self: *Self) WithHandle {
             if (self.free_list.pop()) |idx| {
@@ -349,5 +367,24 @@ fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime expa
         }
     };
 }
+
+test "ObjectPool sanity" {
+
+    ObjectPoolConfigurable
+
+}
+
+test "ObjectPool defrag" {
+
+}
+
+test "ObjectPool memory reclaimable" {
+
+}
+
+test "ObjectPool low density" {
+
+}
+
 
 // FIXME: Lots of testing for object pool
