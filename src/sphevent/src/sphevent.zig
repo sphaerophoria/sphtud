@@ -535,7 +535,7 @@ pub const net = struct {
                     }
 
                     // Intentionally a little late so errdefers all work themselves out :)
-                    try setNonblock(connection.stream);
+                    try setNonblock(connection.stream.handle);
 
                     try loop.register(conn_handler);
                 }
@@ -550,7 +550,7 @@ pub const net = struct {
     }
 
     pub fn server(comptime Loop: type, s: std.net.Server, ctx: anytype) !Server(Loop, @TypeOf(ctx)) {
-        try setNonblock(s.stream);
+        try setNonblock(s.stream.handle);
         return .{
             .inner = s,
             .ctx = ctx,
@@ -708,11 +708,11 @@ fn getNonblock(handle: OsHandle) !bool {
     return flags_s.NONBLOCK;
 }
 
-fn setNonblock(conn: std.net.Stream) !void {
-    var flags = try std.posix.fcntl(conn.handle, std.posix.F.GETFL, 0);
+pub fn setNonblock(handle: OsHandle) !void {
+    var flags = try std.posix.fcntl(handle, std.posix.F.GETFL, 0);
     var flags_s: *std.posix.O = @ptrCast(&flags);
     flags_s.NONBLOCK = true;
-    _ = try std.posix.fcntl(conn.handle, std.posix.F.SETFL, flags);
+    _ = try std.posix.fcntl(handle, std.posix.F.SETFL, flags);
 }
 
 const TestConnection = struct {
