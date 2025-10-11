@@ -227,6 +227,10 @@ pub fn LoopConfigurable(comptime expansion_info: sphutil.runtime_segmented_list.
             ptr: ?*anyopaque,
             vtable: *const VTable,
             fd: OsHandle,
+            desired_events: struct {
+                read: bool,
+                write: bool,
+            },
 
             pub const VTable = struct {
                 poll: *const fn (ctx: ?*anyopaque, loop: *Self, reason: PollReason) PollResult,
@@ -271,7 +275,7 @@ pub fn LoopConfigurable(comptime expansion_info: sphutil.runtime_segmented_list.
             try self.handler_pool.append(handler);
             const handler_idx = self.handler_pool.len - 1;
 
-            var event = makeEvent(handler_idx);
+            var event = makeEvent(handler_idx, handler.desired_events.read, handler.desired_events.write);
             try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_ADD, handler.fd, &event);
 
             try self.force_poll.append(handler_idx);
@@ -339,7 +343,7 @@ pub fn LoopConfigurable(comptime expansion_info: sphutil.runtime_segmented_list.
                 if (handler_idx < self.handler_pool.len) {
                     std.debug.assert(self.force_poll.len == 0);
                     const swapped_handler = self.handler_pool.get(handler_idx);
-                    var new_event = makeEvent(handler_idx);
+                    var new_event = makeEvent(handler_idx, swapped_handler.desired_events.read, swapped_handler.desired_events.write);
                     try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_MOD, swapped_handler.fd, &new_event);
                 }
             }
@@ -390,9 +394,16 @@ pub fn LoopConfigurable(comptime expansion_info: sphutil.runtime_segmented_list.
             }
         }
 
-        fn makeEvent(handler_idx: usize) std.os.linux.epoll_event {
+        fn makeEvent(
+            handler_idx: usize,
+            wants_read: bool,
+            wants_write: bool,
+        ) std.os.linux.epoll_event {
+            var events = std.os.linux.EPOLL.ET | std.os.linux.EPOLL.HUP;
+            if (wants_read) events |= std.os.linux.EPOLL.IN;
+            if (wants_write) events |= std.os.linux.EPOLL.OUT;
             return std.os.linux.epoll_event{
-                .events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.OUT | std.os.linux.EPOLL.ET | std.os.linux.EPOLL.HUP,
+                .events = events,
                 .data = .{ .ptr = handler_idx },
             };
         }
@@ -481,6 +492,10 @@ pub const net = struct {
             pub fn handler(self: *Self) Loop.Handler {
                 return .{
                     .ptr = self,
+                    .desired_events = .{
+                        .read = true,
+                        .write = true,
+                    },
                     .vtable = &handler_vtable,
                     .fd = self.inner.stream.handle,
                 };
@@ -722,6 +737,10 @@ const TestConnection = struct {
     fn handler(self: *TestConnection) LoopLinear.Handler {
         return .{
             .ptr = self,
+            .desired_events = .{
+                .read = true,
+                .write = true,
+            },
             .vtable = &vtable,
             .fd = self.inner.stream.handle,
         };
