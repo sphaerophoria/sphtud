@@ -82,7 +82,9 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             self.appendToBlock(block, elem);
         }
 
-        pub fn addOne(self: *Self) *T {
+        pub fn addOne(self: *Self) !*T {
+            if (self.len == self.capacity) return error.OutOfMemory;
+
             const first_expansion_size = firstExpansionSize(self.initial_block_len);
             const block = idxToBlockId(self.initial_block_len, self.len, first_expansion_size);
 
@@ -154,7 +156,6 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
 
             return null;
         }
-
 
         pub fn pop(self: *Self) ?T {
             if (self.len == 0) return null;

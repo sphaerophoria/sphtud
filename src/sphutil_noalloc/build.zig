@@ -14,6 +14,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    b.installArtifact(tests);
     const run_test = b.addRunArtifact(tests);
     test_step.dependOn(&run_test.step);
 }

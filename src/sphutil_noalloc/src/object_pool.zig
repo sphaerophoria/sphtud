@@ -85,7 +85,7 @@ pub fn BitSet(comptime expansion_alloc_info: rsl.ExpansionAllocInfo) type {
         }
 
         pub fn shrink(self: *Self, bit_size: usize) void {
-            self.storage.shrink(bit_size / 8);
+            self.storage.shrink(std.mem.alignForward(usize, bit_size, 8) / 8);
         }
 
         // Rounds up to next 8
@@ -101,15 +101,14 @@ pub fn BitSet(comptime expansion_alloc_info: rsl.ExpansionAllocInfo) type {
             return std.mem.alignForward(usize, bit_size, 8) / 8;
         }
 
-
-        pub fn iterFrom(self: *Self, bit_idx: usize) Iter {
+        pub fn iterFrom(self: Self, bit_idx: usize) Iter {
             var storage_iter = self.storage.iterFrom(bit_idx / 8);
             const first_byte = storage_iter.next();
-            const first_bit = if (first_byte == null) bit_idx % 8 else 0;
+            const first_bit: u8 = if (first_byte != null) @truncate(bit_idx % 8) else 8;
 
             return .{
                 .storage_iter = storage_iter,
-                .current_byte = first_byte,
+                .current_byte = if (first_byte) |b| b.* else 0,
                 .bit_idx = first_bit,
             };
         }
@@ -125,7 +124,6 @@ test "bitset sanity" {
         16,
         128,
     );
-
 
     try bitset.grow(3, true);
     try std.testing.expectEqual(8, bitset.bitLen());
@@ -159,7 +157,7 @@ test "bitset sanity" {
 
 fn handleFromIdx(comptime Handle: type, idx: usize) Handle {
     switch (@typeInfo(Handle)) {
-        .@"struct" => return .init(idx),
+        .@"struct" => return .fromIdx(idx),
         .int => return @intCast(idx),
         else => comptime unreachable,
     }
@@ -173,11 +171,12 @@ fn idxFromHandle(handle: anytype) usize {
     }
 }
 
-pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type) type {
+pub fn ObjectPoolLinear(comptime T: type, comptime Handle: type) type {
+    return ObjectPoolConfigurable(T, Handle, rsl.linear_alloc_info);
 }
 
 pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime expansion_alloc_info: rsl.ExpansionAllocInfo) type {
-    return struct{
+    return struct {
         // FIMXE: This alloc is held 4 times in this struct lol
         expansion_alloc: std.mem.Allocator,
         objects: Objects,
@@ -197,7 +196,7 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             expansion_alloc: std.mem.Allocator,
             prealloc_size: usize,
             max_size: usize,
-        ) Self {
+        ) !Self {
             return .{
                 .expansion_alloc = expansion_alloc,
                 .objects = try .init(prealloc_alloc, expansion_alloc, prealloc_size, max_size),
@@ -206,9 +205,9 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             };
         }
 
-        pub fn acquire(self: *Self) WithHandle {
+        pub fn acquire(self: *Self) !WithHandle {
             if (self.free_list.pop()) |idx| {
-                const handle = Handle.init(idx);
+                const handle = Handle.fromIdx(idx);
                 std.debug.assert(self.tombstones.get(idx));
                 const ptr = self.objects.getPtr(idx);
                 self.tombstones.set(idx, false);
@@ -220,14 +219,14 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             }
 
             const idx = self.objects.len;
-            const val = self.objects.addOne(undefined);
+            const val = try self.objects.addOne();
             if (idx % 8 == 0) {
-                self.tombstones.appendByte(0xff);
+                try self.tombstones.appendByte(0xff);
             }
             self.tombstones.set(idx, false);
 
             return .{
-                .idx = handleFromIdx(idx),
+                .handle = handleFromIdx(Handle, idx),
                 .val = val,
             };
         }
@@ -235,7 +234,6 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
         pub fn release(self: *Self, handle: Handle) void {
             const idx = idxFromHandle(handle);
             std.debug.assert(!self.tombstones.get(idx));
-
 
             // FIXME: If handle == objects.len it should pop instead of
             // appending to free list
@@ -246,42 +244,44 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             self.tombstones.set(idx, true);
         }
 
+        pub fn get(self: Self, handle: Handle) *T {
+            return self.objects.getPtr(idxFromHandle(handle));
+        }
+
         pub const Iter = struct {
+            idx: usize,
             objects: Objects.Iter,
             tombs: BitSet(expansion_alloc_info).Iter,
 
-            fn next(self: *Iter) ?*T {
+            fn next(self: *Iter) ?WithHandle {
                 while (true) {
                     const maybe_ret = self.objects.next() orelse return null;
-                    const is_dead = self.tombs.next();
+                    const is_dead = self.tombs.next() orelse unreachable;
+                    defer self.idx += 1;
 
                     if (!is_dead) {
-                        return maybe_ret;
+                        return .{
+                            .handle = handleFromIdx(Handle, self.idx),
+                            .val = maybe_ret,
+                        };
                     }
                 }
             }
         };
 
+        pub fn iter(self: *Self) Iter {
+            return .{
+                .idx = 0,
+                .objects = self.objects.iter(),
+                .tombs = self.tombstones.iter(),
+            };
+        }
 
         fn relciamMemory(self: *Self, move_ctx: anytype) void {
             if (self.objects.len == 0) return;
 
-            var ts_byte_iter = self.tombstones.storage.iter();
-
-            var holes: usize = 0;
-            // 9 elems -> 1 iter
-            for (0..self.objects.len / 8) |_| {
-                const ts_byte = ts_byte_iter.next().?.*;
-                holes += @popCount(ts_byte);
-            }
-
-            const remainder = self.objects.len % 8;
-            if (remainder != 0) {
-                const b = ts_byte_iter.next().?;
-                // 00000111
-                const mask = (1 << remainder) - 1;
-                holes += @popCount(b & mask);
-            }
+            // FIXME: Probably don't need to count these... we should know how many there are
+            const holes = self.countHoles();
 
             const last_block_start = self.objects.blockStartForIdx(self.objects.len - 1);
             const after_removal_block_start = self.objects.blockStartForIdx(self.objects.len - holes);
@@ -291,11 +291,10 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
                 return;
             }
 
-            self.defrag(move_ctx);
+            self.defragInner(move_ctx, holes);
         }
 
         // FIXME: impl defragIfDensityLow
-
 
         // Defrag for releasing memory
         //   * Only need to move things IF it results in a block of memory being popped from RSL
@@ -305,7 +304,32 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
         //   * Some heuristic on denisty?
         //   * Input ratio of skipped/set objects
 
-        fn defrag(self: *Self, move_ctx: anytype, num_holes: usize) void {
+        pub fn defrag(self: *Self, move_ctx: anytype) void {
+            const holes = self.countHoles();
+            self.defragInner(move_ctx, holes);
+        }
+
+        fn countHoles(self: *Self) usize {
+            var ts_byte_iter = self.tombstones.storage.iter();
+            var holes: usize = 0;
+            // 9 elems -> 1 iter
+            for (0..self.objects.len / 8) |_| {
+                const ts_byte = ts_byte_iter.next().?.*;
+                holes += @popCount(ts_byte);
+            }
+
+            const remainder: u3 = @truncate(self.objects.len);
+            if (remainder != 0) {
+                const b = ts_byte_iter.next().?;
+                // 00000111
+                const mask = (@as(u8, 1) << remainder) - 1;
+                holes += @popCount(b.* & mask);
+            }
+
+            return holes;
+        }
+
+        fn defragInner(self: *Self, move_ctx: anytype, num_holes: usize) void {
             // Work with indexes for now, despite extra math in RSL to resolve
             // block indexes. Because I'm too stupid :). We can make the
             // argument that defrag is already expensive and should be
@@ -314,14 +338,16 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             var tail: usize = self.objects.len - 1;
             var head: usize = 0;
 
-            while (head < tail) {
-                const to = self.findNextHole(&head) orelse return;
-                const from = self.findNextFree(&tail) orelse return;
+            while (true) {
+                const to = self.findNextHole(&head) orelse break;
+                const from = self.findNextPresent(&tail) orelse break;
+                if (head >= tail) break;
 
                 to.* = from.*;
                 from.* = undefined;
-                move_ctx.notifyMoved(head);
+                move_ctx.notifyMoved(handleFromIdx(Handle, tail), handleFromIdx(Handle, head));
                 head += 1;
+                tail -= 1;
             }
 
             const new_len = self.objects.len - num_holes;
@@ -329,18 +355,18 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             self.tombstones.shrink(new_len);
             self.free_list.shrink(0);
 
-            var tomb_iter = self.tombstones.iter();
+            var tomb_iter = self.tombstones.storage.iter();
             while (tomb_iter.next()) |val| {
                 val.* = 0;
             }
         }
 
         fn findNextHole(self: Self, head: *usize) ?*T {
-            const tombstone_iter = self.tombstones.iterFrom(head.*);
+            var tombstone_iter = self.tombstones.iterFrom(head.*);
 
-            while (tombstone_iter.next()) |val| blk: {
+            while (tombstone_iter.next()) |val| {
                 if (val) {
-                    break :blk;
+                    break;
                 }
 
                 head.* += 1;
@@ -350,17 +376,17 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             return self.objects.getPtr(head.*);
         }
 
-        fn findNextFree(self: Self, tail: *usize) ?*T {
+        fn findNextPresent(self: Self, tail: *usize) ?*T {
             // FIXME: Maybe we should add an reverse iter so that we don't have
             // to do so much block indexing
 
-            while (true) blk: {
-                const val = self.tombstones.get(tail);
-                if (val) {
-                    break :blk;
+            while (true)  {
+                const val = self.tombstones.get(tail.*);
+                if (!val) {
+                    break;
                 }
 
-                if (tail == 0) return null;
+                if (tail.* == 0) return null;
                 tail.* -= 1;
             }
             return self.objects.getPtr(tail.*);
@@ -368,23 +394,133 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
     };
 }
 
+const TrackedPool = struct{
+    pool: ObjectPoolLinear(usize, Handle),
+    map: std.AutoHashMap(Handle, usize),
+
+
+    const Handle = struct {
+        inner: usize,
+
+        fn fromIdx(val: usize) @This() {
+            return .{
+                .inner = val,
+            };
+        }
+    };
+
+    pub fn init(alloc: std.mem.Allocator) !TrackedPool {
+        const pool = try ObjectPoolLinear(usize, Handle).init(
+            alloc,
+            alloc,
+            16,
+            1024,
+        );
+
+        const map = std.AutoHashMap(Handle, usize).init(alloc);
+
+        return .{
+            .pool = pool,
+            .map = map,
+
+        };
+    }
+
+    pub fn insertIfMissing(self: *TrackedPool) !void {
+        const item = self.pool.acquire() catch |e| {
+            if (e == error.OutOfMemory) return;
+            return e;
+        };
+        item.val.* = @intCast(item.handle.inner);
+        try self.map.put(item.handle, @intCast(item.handle.inner));
+    }
+
+    pub fn removeIfPresent(self: *TrackedPool, idx: usize) void {
+        const handle = Handle.fromIdx(idx);
+        if (!self.map.remove(handle)) {
+            return;
+        }
+
+        self.pool.release(handle);
+    }
+
+    pub fn checkMapMatchesPool(self: *TrackedPool, alloc: std.mem.Allocator) !void {
+        var seen_handles = std.AutoHashMap(TrackedPool.Handle, void).init(alloc);
+        defer seen_handles.deinit();
+
+        var it = self.pool.iter();
+        while (it.next()) |item| {
+            const map_val = self.map.get(item.handle) orelse {
+                std.debug.print("{d} missing\n", .{item.handle.inner});
+                return error.MissingElement;
+            };
+            try std.testing.expectEqual(map_val, item.val.*);
+
+            const gop = try seen_handles.getOrPut(item.handle);
+            try std.testing.expectEqual(false, gop.found_existing);
+        }
+
+        try std.testing.expectEqual(self.map.count(), seen_handles.count());
+    }
+};
+
+
+
 test "ObjectPool sanity" {
+    var fba_buf: [1 * 1024 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&fba_buf);
+    const alloc = fba.allocator();
 
-    ObjectPoolConfigurable
+    var testing_pool = try TrackedPool.init(alloc);
 
+    for (0..50) |_| {
+        // Initialize pool with incrementing u32s, track them in map as well for
+        // comparison later after defrag
+        for (0..1000) |_| {
+            try testing_pool.insertIfMissing();
+        }
+
+        var rng = std.Random.DefaultPrng.init(0);
+        const random = rng.random();
+
+        for (0..500) |_| {
+            const to_remove = random.intRangeAtMost(u32, 0, 1000);
+            testing_pool.removeIfPresent(to_remove);
+        }
+
+        try testing_pool.checkMapMatchesPool(std.testing.allocator);
+
+        const MoveCtx = struct {
+            tracked_pool: *TrackedPool,
+            failed: bool,
+
+            pub fn notifyMoved(self: *@This(), from: TrackedPool.Handle, to: TrackedPool.Handle) void {
+                // Discard removed value as we want each element to match it's own index
+                _ = self.tracked_pool.map.fetchRemove(from) orelse {
+                    std.log.err("Value at {d} is not in map\n", .{from.inner});
+                    self.failed = true;
+                    return;
+                };
+                self.tracked_pool.pool.get(to).* = to.inner;
+                self.tracked_pool.map.put(to, to.inner) catch { self.failed = true; };
+            }
+
+        };
+
+        var move_ctx = MoveCtx {.tracked_pool = &testing_pool, .failed = false };
+        testing_pool.pool.defrag(&move_ctx);
+
+        try std.testing.expectEqual(false, move_ctx.failed);
+        try testing_pool.checkMapMatchesPool(std.testing.allocator);
+    }
 }
 
-test "ObjectPool defrag" {
+test "ObjectPool custom handle" {}
 
-}
+test "ObjectPool defrag" {}
 
-test "ObjectPool memory reclaimable" {
+test "ObjectPool memory reclaimable" {}
 
-}
-
-test "ObjectPool low density" {
-
-}
-
+test "ObjectPool low density" {}
 
 // FIXME: Lots of testing for object pool
