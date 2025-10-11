@@ -82,6 +82,21 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             self.appendToBlock(block, elem);
         }
 
+        pub fn addOne(self: *Self) *T {
+            const first_expansion_size = firstExpansionSize(self.initial_block_len);
+            const block = idxToBlockId(self.initial_block_len, self.len, first_expansion_size);
+
+            try self.ensureBlockAllocated(block);
+            self.len += 1;
+
+            const elem_idx = self.len - 1;
+            const block_start = blockStart(self.initial_block_len, block, first_expansion_size);
+            const block_offs = elem_idx - block_start;
+            const ret = &self.blocks[block].?[block_offs];
+            ret.* = undefined;
+            return ret;
+        }
+
         pub fn appendSlice(self: *Self, data: []const T) !void {
             if (self.len + data.len > self.capacity) {
                 return error.OutOfMemory;
@@ -138,6 +153,14 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             }
 
             return null;
+        }
+
+
+        pub fn pop(self: *Self) ?T {
+            if (self.len == 0) return null;
+            const ret = self.get(self.len - 1);
+            self.shrink(self.len - 1);
+            return ret;
         }
 
         pub fn shrink(self: *Self, size: usize) void {
