@@ -277,21 +277,19 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             };
         }
 
-        fn relciamMemory(self: *Self, move_ctx: anytype) void {
+        pub fn relciamMemory(self: *Self, move_ctx: anytype) void {
             if (self.objects.len == 0) return;
 
-            // FIXME: Probably don't need to count these... we should know how many there are
-            const holes = self.countHoles();
-
             const last_block_start = self.objects.blockStartForIdx(self.objects.len - 1);
-            const after_removal_block_start = self.objects.blockStartForIdx(self.objects.len - holes);
+            const after_removal_block_start = self.objects.blockStartForIdx(self.objects.len - self.free_list.len);
 
-            // FIXME: Should never be greater idiot
+            std.debug.assert(after_removal_block_start <= last_block_start);
+
             if (after_removal_block_start >= last_block_start) {
                 return;
             }
 
-            self.defragInner(move_ctx, holes);
+            self.defrag(move_ctx);
         }
 
         // FIXME: impl defragIfDensityLow
@@ -305,31 +303,6 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
         //   * Input ratio of skipped/set objects
 
         pub fn defrag(self: *Self, move_ctx: anytype) void {
-            const holes = self.countHoles();
-            self.defragInner(move_ctx, holes);
-        }
-
-        fn countHoles(self: *Self) usize {
-            var ts_byte_iter = self.tombstones.storage.iter();
-            var holes: usize = 0;
-            // 9 elems -> 1 iter
-            for (0..self.objects.len / 8) |_| {
-                const ts_byte = ts_byte_iter.next().?.*;
-                holes += @popCount(ts_byte);
-            }
-
-            const remainder: u3 = @truncate(self.objects.len);
-            if (remainder != 0) {
-                const b = ts_byte_iter.next().?;
-                // 00000111
-                const mask = (@as(u8, 1) << remainder) - 1;
-                holes += @popCount(b.* & mask);
-            }
-
-            return holes;
-        }
-
-        fn defragInner(self: *Self, move_ctx: anytype, num_holes: usize) void {
             // Work with indexes for now, despite extra math in RSL to resolve
             // block indexes. Because I'm too stupid :). We can make the
             // argument that defrag is already expensive and should be
@@ -350,7 +323,7 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
                 tail -= 1;
             }
 
-            const new_len = self.objects.len - num_holes;
+            const new_len = self.objects.len - self.free_list.len;
             self.objects.shrink(new_len);
             self.tombstones.shrink(new_len);
             self.free_list.shrink(0);
@@ -380,7 +353,7 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             // FIXME: Maybe we should add an reverse iter so that we don't have
             // to do so much block indexing
 
-            while (true)  {
+            while (true) {
                 const val = self.tombstones.get(tail.*);
                 if (!val) {
                     break;
@@ -394,10 +367,9 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
     };
 }
 
-const TrackedPool = struct{
+const TrackedPool = struct {
     pool: ObjectPoolLinear(usize, Handle),
     map: std.AutoHashMap(Handle, usize),
-
 
     const Handle = struct {
         inner: usize,
@@ -405,6 +377,24 @@ const TrackedPool = struct{
         fn fromIdx(val: usize) @This() {
             return .{
                 .inner = val,
+            };
+        }
+    };
+
+    const MoveCtx = struct {
+        tracked_pool: *TrackedPool,
+        failed: bool,
+
+        pub fn notifyMoved(self: *@This(), from: TrackedPool.Handle, to: TrackedPool.Handle) void {
+            // Discard removed value as we want each element to match it's own index
+            _ = self.tracked_pool.map.fetchRemove(from) orelse {
+                std.log.err("Value at {d} is not in map\n", .{from.inner});
+                self.failed = true;
+                return;
+            };
+            self.tracked_pool.pool.get(to).* = to.inner;
+            self.tracked_pool.map.put(to, to.inner) catch {
+                self.failed = true;
             };
         }
     };
@@ -422,7 +412,6 @@ const TrackedPool = struct{
         return .{
             .pool = pool,
             .map = map,
-
         };
     }
 
@@ -462,9 +451,14 @@ const TrackedPool = struct{
 
         try std.testing.expectEqual(self.map.count(), seen_handles.count());
     }
+
+    pub fn moveCtx(self: *TrackedPool) MoveCtx {
+        return .{
+            .tracked_pool = self,
+            .failed = false,
+        };
+    }
 };
-
-
 
 test "ObjectPool sanity" {
     var fba_buf: [1 * 1024 * 1024]u8 = undefined;
@@ -490,24 +484,7 @@ test "ObjectPool sanity" {
 
         try testing_pool.checkMapMatchesPool(std.testing.allocator);
 
-        const MoveCtx = struct {
-            tracked_pool: *TrackedPool,
-            failed: bool,
-
-            pub fn notifyMoved(self: *@This(), from: TrackedPool.Handle, to: TrackedPool.Handle) void {
-                // Discard removed value as we want each element to match it's own index
-                _ = self.tracked_pool.map.fetchRemove(from) orelse {
-                    std.log.err("Value at {d} is not in map\n", .{from.inner});
-                    self.failed = true;
-                    return;
-                };
-                self.tracked_pool.pool.get(to).* = to.inner;
-                self.tracked_pool.map.put(to, to.inner) catch { self.failed = true; };
-            }
-
-        };
-
-        var move_ctx = MoveCtx {.tracked_pool = &testing_pool, .failed = false };
+        var move_ctx = testing_pool.moveCtx();
         testing_pool.pool.defrag(&move_ctx);
 
         try std.testing.expectEqual(false, move_ctx.failed);
@@ -515,12 +492,10 @@ test "ObjectPool sanity" {
     }
 }
 
-test "ObjectPool custom handle" {}
-
-test "ObjectPool defrag" {}
-
-test "ObjectPool memory reclaimable" {}
-
-test "ObjectPool low density" {}
-
-// FIXME: Lots of testing for object pool
+//test "ObjectPool memory reclaimable" {
+//    unreachable;
+//}
+//
+//test "ObjectPool low density" {
+//    unreachable;
+//}
