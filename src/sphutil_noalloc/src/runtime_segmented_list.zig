@@ -37,7 +37,338 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
         blocks: []?[*]T,
         initial_block_len: usize,
         capacity: usize,
+        len: usize,
+
+        // Every expansion block doubles in size
+
+        const Self = @This();
+        const ImplConst = RSLImplConst(T, expansion_alloc_info);
+        const UnusedBlocksIt = RSLImpl(T, expansion_alloc_info).UnusedBlocksIt;
+
+        pub const Slice = ImplConst.Slice;
+        pub const Iter = ImplConst.Iter;
+        pub const BlockIter = ImplConst.BlockIter;
+        pub const Reader = ImplConst.Reader;
+
+        pub const empty = Self{
+            .alloc = undefined,
+            .blocks = &.{},
+            .initial_block_len = 0,
+            .capacity = 0,
+            .len = 0,
+        };
+
+        pub fn init(arena: Allocator, tiny_page_alloc: Allocator, small_size: usize, max_size: usize) !Self {
+            const unmanaged = try RuntimeSegmentedListConfigurableUnmanaged(T, expansion_alloc_info).init(
+                arena,
+                small_size,
+                max_size,
+            );
+
+            return .{
+                .alloc = tiny_page_alloc,
+                .blocks = unmanaged.blocks,
+                .initial_block_len = unmanaged.initial_block_len,
+                .capacity = unmanaged.capacity,
+                .len = unmanaged.len,
+            };
+        }
+
+        pub fn initSingleAlloc(arena: Allocator, small_size: usize, max_size: usize) !Self {
+            return Self.init(arena, arena, small_size, max_size);
+        }
+
+        fn impl(self: *Self) RSLImpl(T, expansion_alloc_info) {
+            return .{
+                .alloc = self.alloc,
+                .blocks = self.blocks,
+                .initial_block_len = self.initial_block_len,
+                .capacity = self.capacity,
+                .len = &self.len,
+            };
+        }
+
+        fn implConst(self: Self) RSLImplConst(T, expansion_alloc_info) {
+            return .{
+                .blocks = self.blocks,
+                .initial_block_len = self.initial_block_len,
+                .capacity = self.capacity,
+                .len = self.len,
+            };
+        }
+
+        pub fn append(self: *Self, elem: T) !void {
+            return self.impl().append(elem);
+        }
+
+        pub fn appendSlice(self: *Self, data: []const T) !void {
+            return self.impl().appendSlice(data);
+        }
+
+        // Fills the block at self.len with elem T
+        pub fn fillBlock(self: *Self, elem: T) !void {
+            return self.impl().fillBlock(elem);
+        }
+
+        pub fn get(self: Self, idx: usize) T {
+            return self.implConst().get(idx);
+        }
+
+        pub fn getPtr(self: Self, idx: usize) *T {
+            return self.implConst().getPtr(idx);
+        }
+
+        pub fn indexFromPtr(self: *Self, ptr: *T) ?usize {
+            return self.implConst().indexFromPtr(ptr);
+        }
+
+        pub fn shrink(self: *Self, size: usize) void {
+            return self.impl().shrink(size);
+        }
+
+        pub fn clear(self: *Self) void {
+            return self.impl().clear();
+        }
+
+        pub fn blockStartForIdx(self: *const Self, idx: usize) usize {
+            return self.implConst().blockStartForIdx(idx);
+        }
+
+        pub fn swapRemove(self: *Self, idx: usize) void {
+            return self.impl().swapRemove(idx);
+        }
+
+        pub fn setContents(self: *Self, content: []const T) !void {
+            return self.impl().setContents(content);
+        }
+
+        pub fn contentMatches(self: Self, content: []const T) bool {
+            return self.implConst().contentMatches(content);
+        }
+
+        pub fn makeContiguous(self: *const Self, alloc: Allocator) ![]T {
+            return self.implConst().makeContiguous(alloc);
+        }
+
+        pub fn asContiguousSlice(self: *const Self, alloc: Allocator, start: usize, end: usize) ![]T {
+            return self.implConst().asContiguousSlice(alloc, start, end);
+        }
+
+        // Get the next contiguous block of memory for writing
+        pub fn getWritableArea(self: *Self) ![]T {
+            return self.impl().getWritableArea();
+        }
+
+        // Paired with getWritableArea can be used to flag how much of the
+        // writeable area we populated
+        pub fn grow(self: *Self, amount: usize) void {
+            return self.impl().grow(amount);
+        }
+
+        pub fn jsonStringify(self: Self, jw: anytype) !void {
+            return self.implConst().jsonStringify(jw);
+        }
+
+        pub fn slice(self: *Self, start: usize, end: usize) Slice {
+            return self.implConst().slice(start, end);
+        }
+
+        pub fn reader(self: *Self, buf: []u8) Reader {
+            return self.implConst().reader(buf);
+        }
+
+        pub fn blockIter(self: *const Self) BlockIter {
+            return self.implConst().blockIter();
+        }
+
+        pub fn iter(self: *const Self) Iter {
+            return self.implConst().iter();
+        }
+
+        pub fn iterFrom(self: *const Self, idx: usize) Iter {
+            return self.implConst().iterFrom(idx);
+        }
+    };
+}
+
+pub fn RuntimeSegmentedListConfigurableUnmanaged(comptime T: type, comptime expansion_alloc_info: ExpansionAllocInfo) type {
+    return struct {
+        // Block storage. block[0] is a pre-allocated block on init, blocks
+        // 1..N are dynamically allocated.
+        //
+        // Since the lengths are known, based off the index, we don't have to
+        // store them
+        //
+        // Number of blocks is fixed on initialization, we do not attempt
+        // to resize
+        blocks: []?[*]T,
+        initial_block_len: usize,
+        capacity: usize,
         len: usize = 0,
+
+        // Every expansion block doubles in size
+
+        const Self = @This();
+        const Impl = RSLImpl(T, expansion_alloc_info);
+        const ImplConst = RSLImplConst(T, expansion_alloc_info);
+
+        pub const Slice = Impl.Slice;
+        pub const Iter = ImplConst.Iter;
+        pub const BlockIter = ImplConst.BlockIter;
+        pub const Reader = Impl.Reader;
+
+        pub const empty = Self{
+            .alloc = undefined,
+            .blocks = &.{},
+            .initial_block_len = 0,
+            .capacity = 0,
+            .len = 0,
+        };
+
+        pub fn init(arena: Allocator, small_size: usize, max_size: usize) !Self {
+            const max_idx = max_size - 1;
+            const num_blocks = idxToBlockId(small_size, max_idx, Impl.firstExpansionSize(small_size)) + 1;
+            const blocks = try arena.alloc(?[*]T, num_blocks);
+            comptime std.debug.assert(@sizeOf(?[*]T) == @sizeOf(*T));
+            @memset(blocks, null);
+            blocks[0] = (try arena.alloc(T, small_size)).ptr;
+
+            return .{
+                .blocks = blocks,
+                .initial_block_len = small_size,
+                .capacity = max_size,
+            };
+        }
+
+        fn impl(self: *Self, expansion_alloc: std.mem.Allocator) RSLImpl(T, expansion_alloc_info) {
+            return .{
+                .alloc = expansion_alloc,
+                .blocks = self.blocks,
+                .initial_block_len = self.initial_block_len,
+                .capacity = self.capacity,
+                .len = &self.len,
+            };
+        }
+
+        fn implConst(self: Self) RSLImplConst(T, expansion_alloc_info) {
+            return .{
+                .blocks = self.blocks,
+                .initial_block_len = self.initial_block_len,
+                .capacity = self.capacity,
+                .len = self.len,
+            };
+        }
+
+        pub fn append(self: *Self, expansion_alloc: std.mem.Allocator, elem: T) !void {
+            return self.impl(expansion_alloc).append(elem);
+        }
+
+        pub fn appendSlice(self: *Self, expansion_alloc: std.mem.Allocator, data: []const T) !void {
+            return self.impl(expansion_alloc).appendSlice(data);
+        }
+
+        // Fills the block at self.len with elem T
+        pub fn fillBlock(self: *Self, expansion_alloc: std.mem.Allocator, elem: T) !void {
+            return self.impl(expansion_alloc).fillBlock(elem);
+        }
+
+        pub fn get(self: Self, idx: usize) T {
+            return self.implConst().get(idx);
+        }
+
+        pub fn getPtr(self: Self, idx: usize) *T {
+            return self.implConst().getPtr(idx);
+        }
+
+        pub fn indexFromPtr(self: *Self, ptr: *T) ?usize {
+            return self.implConst().indexFromPtr(ptr);
+        }
+
+        pub fn shrink(self: *Self, expansion_alloc: std.mem.Allocator, size: usize) void {
+            return self.impl(expansion_alloc).shrink(size);
+        }
+
+        pub fn clear(self: *Self, expansion_alloc: std.mem.Allocator) void {
+            return self.impl(expansion_alloc).clear();
+        }
+
+        pub fn blockStartForIdx(self: *const Self, idx: usize) usize {
+            return self.implConst().blockStartForIdx(idx);
+        }
+
+        pub fn swapRemove(self: *Self, expansion_alloc: std.mem.Allocator, idx: usize) void {
+            return self.impl(expansion_alloc).swapRemove(idx);
+        }
+
+        pub fn setContents(self: *Self, expansion_alloc: std.mem.Allocator, content: []const T) !void {
+            return self.impl(expansion_alloc).setContents(content);
+        }
+
+        pub fn contentMatches(self: Self, content: []const T) bool {
+            return self.implConst().contentMatches(content);
+        }
+
+        pub fn makeContiguous(self: *const Self, alloc: Allocator) ![]T {
+            return self.implConst().makeContiguous(alloc);
+        }
+
+        pub fn asContiguousSlice(self: *const Self, alloc: Allocator, start: usize, end: usize) ![]T {
+            return self.implConst().asContiguousSlice(alloc, start, end);
+        }
+
+        // Get the next contiguous block of memory for writing
+        pub fn getWritableArea(self: *Self, expansion_alloc: std.mem.Allocator) ![]T {
+            return self.impl(expansion_alloc).getWritableArea();
+        }
+
+        // Paired with getWritableArea can be used to flag how much of the
+        // writeable area we populated
+        pub fn grow(self: *Self, expansion_alloc: std.mem.Allocator, amount: usize) void {
+            return self.impl(expansion_alloc).grow(amount);
+        }
+
+        pub fn jsonStringify(self: Self, jw: anytype) !void {
+            return self.implConst().jsonStringify(jw);
+        }
+
+        pub fn slice(self: *Self, start: usize, end: usize) Slice {
+            return self.implConst().slice(start, end);
+        }
+
+        pub fn reader(self: *Self, buf: []u8) Reader {
+            return self.implConst().reader(buf);
+        }
+
+        pub fn blockIter(self: *const Self) BlockIter {
+            return self.implConst().blockIter();
+        }
+
+        pub fn iter(self: *const Self) Iter {
+            return self.implConst().iter();
+        }
+
+        pub fn iterFrom(self: *const Self, idx: usize) Iter {
+            return self.implConst().iterFrom(idx);
+        }
+    };
+}
+
+// FIXME: Remove functions handled by implConst
+fn RSLImpl(comptime T: type, comptime expansion_alloc_info: ExpansionAllocInfo) type {
+    return struct {
+        alloc: Allocator,
+        // Block storage. block[0] is a pre-allocated block on init, blocks
+        // 1..N are dynamically allocated.
+        //
+        // Since the lengths are known, based off the index, we don't have to
+        // store them
+        //
+        // Number of blocks is fixed on initialization, we do not attempt
+        // to resize
+        blocks: []?[*]T,
+        initial_block_len: usize,
+        capacity: usize,
+        len: *usize,
 
         // Every expansion block doubles in size
 
@@ -52,38 +383,18 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             .len = 0,
         };
 
-        pub fn init(arena: Allocator, tiny_page_alloc: Allocator, small_size: usize, max_size: usize) !Self {
-            const max_idx = max_size - 1;
-            const num_blocks = idxToBlockId(small_size, max_idx, firstExpansionSize(small_size)) + 1;
-            const blocks = try arena.alloc(?[*]T, num_blocks);
-            comptime std.debug.assert(@sizeOf(?[*]T) == @sizeOf(*T));
-            @memset(blocks, null);
-            blocks[0] = (try arena.alloc(T, small_size)).ptr;
-
-            return .{
-                .alloc = tiny_page_alloc,
-                .blocks = blocks,
-                .initial_block_len = small_size,
-                .capacity = max_size,
-            };
-        }
-
-        pub fn initSingleAlloc(arena: Allocator, small_size: usize, max_size: usize) !Self {
-            return Self.init(arena, arena, small_size, max_size);
-        }
-
-        pub fn append(self: *Self, elem: T) !void {
-            if (self.len >= self.capacity) {
+        pub fn append(self: Self, elem: T) !void {
+            if (self.len.* >= self.capacity) {
                 return error.OutOfMemory;
             }
 
-            const block = idxToBlockId(self.initial_block_len, self.len, firstExpansionSize(self.initial_block_len));
+            const block = idxToBlockId(self.initial_block_len, self.len.*, firstExpansionSize(self.initial_block_len));
             try self.ensureBlockAllocated(block);
             self.appendToBlock(block, elem);
         }
 
-        pub fn appendSlice(self: *Self, data: []const T) !void {
-            if (self.len + data.len > self.capacity) {
+        pub fn appendSlice(self: Self, data: []const T) !void {
+            if (self.len.* + data.len > self.capacity) {
                 return error.OutOfMemory;
             }
 
@@ -93,27 +404,194 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
                 const copy_len = @min(writeable_area.len, remaining.len);
                 @memcpy(writeable_area[0..copy_len], remaining[0..copy_len]);
                 remaining = if (copy_len == data.len) &.{} else remaining[copy_len..];
-                self.len += copy_len;
+                self.len.* += copy_len;
             }
         }
 
-        // Fills the block at self.len with elem T
-        pub fn fillBlock(self: *Self, elem: T) !void {
+        // Fills the block at self.len.* with elem T
+        pub fn fillBlock(self: Self, elem: T) !void {
             const first_expansion_size = firstExpansionSize(self.initial_block_len);
-            if (self.len >= self.capacity) {
+            if (self.len.* >= self.capacity) {
                 return error.OutOfMemory;
             }
 
-            const to_fill = idxToBlockId(self.initial_block_len, self.len, first_expansion_size);
+            const to_fill = idxToBlockId(self.initial_block_len, self.len.*, first_expansion_size);
             const block_end = blockStart(self.initial_block_len, to_fill + 1, first_expansion_size);
             const to_fill_start = blockStart(self.initial_block_len, to_fill, first_expansion_size);
 
             const new_len = @min(self.capacity, block_end);
 
             try self.ensureBlockAllocated(to_fill);
-            @memset(self.blocks[to_fill].?[self.len - to_fill_start .. new_len - to_fill_start], elem);
-            self.len = new_len;
+            @memset(self.blocks[to_fill].?[self.len.* - to_fill_start .. new_len - to_fill_start], elem);
+            self.len.* = new_len;
         }
+
+        pub fn shrink(self: Self, size: usize) void {
+            self.len.* = size;
+            self.freeUnusedBlocks();
+        }
+
+        pub fn clear(self: Self) void {
+            self.len.* = 0;
+            self.freeUnusedBlocks();
+        }
+
+        pub fn swapRemove(self: Self, idx: usize) void {
+            if (self.len.* - 1 == idx) {
+                self.len.* -= 1;
+                return;
+            }
+
+            const last = self.implConst().get(self.len.* - 1);
+            self.implConst().getPtr(idx).* = last;
+            self.len.* -= 1;
+        }
+
+        pub fn setContents(self: Self, content: []const T) !void {
+            if (content.len >= self.capacity) {
+                return error.OutOfMemory;
+            }
+
+            self.len.* = 0; // In case of failure
+
+            defer self.freeUnusedBlocks();
+
+            try self.appendSlice(content);
+        }
+
+        // Get the next contiguous block of memory for writing
+        pub fn getWritableArea(self: Self) ![]T {
+            if (self.len.* >= self.capacity) {
+                return &.{};
+            }
+
+            const first_expansion_size = firstExpansionSize(self.initial_block_len);
+            const block = idxToBlockId(self.initial_block_len, self.len.*, first_expansion_size);
+            const block_start = blockStart(self.initial_block_len, block, first_expansion_size);
+            const block_size = blockSize(block, self.initial_block_len, first_expansion_size);
+
+            try self.ensureBlockAllocated(block);
+            return self.blocks[block].?[self.len.* - block_start .. block_size];
+        }
+
+        // Paired with getWritableArea can be used to flag how much of the
+        // writeable area we populated
+        pub fn grow(self: Self, amount: usize) void {
+            std.debug.assert(amount <= (self.getWritableArea() catch unreachable).len);
+            self.len.* += amount;
+        }
+
+        const UnusedBlocksIt = struct {
+            parent: Self,
+            block_idx: usize,
+
+            fn init(parent: Self) UnusedBlocksIt {
+                const last_used_block = idxToBlockId(
+                    parent.initial_block_len,
+                    parent.len.* -| 1,
+                    firstExpansionSize(parent.initial_block_len),
+                );
+
+                return .{
+                    .parent = parent,
+                    .block_idx = last_used_block + 1,
+                };
+            }
+
+            const Output = struct {
+                idx: usize,
+                block: []T,
+            };
+
+            fn next(self: *UnusedBlocksIt) ?Output {
+                if (self.block_idx >= self.parent.blocks.len) {
+                    return null;
+                }
+
+                const block = self.parent.blocks[self.block_idx] orelse return null;
+
+                defer self.block_idx += 1;
+                const block_size = blockSize(self.block_idx, self.parent.initial_block_len, firstExpansionSize(self.parent.initial_block_len));
+
+                return .{
+                    .idx = self.block_idx,
+                    .block = block[0..block_size],
+                };
+            }
+        };
+
+        fn freeUnusedBlocks(self: Self) void {
+            if (!expansion_alloc_info.supports_free) return;
+
+            var unused_block_it = UnusedBlocksIt.init(self);
+
+            while (unused_block_it.next()) |block| {
+                self.alloc.free(block.block);
+                self.blocks[block.idx] = null;
+            }
+        }
+
+        fn appendToBlock(self: Self, block: usize, elem: T) void {
+            const first_expansion_size = firstExpansionSize(self.initial_block_len);
+            const block_start = blockStart(self.initial_block_len, block, first_expansion_size);
+            const block_offs = self.len.* - block_start;
+            std.debug.assert(block_offs < blockSize(block, self.initial_block_len, first_expansion_size));
+            self.blocks[block].?[block_offs] = elem;
+            self.len.* += 1;
+        }
+
+        fn ensureBlockAllocated(self: Self, block: usize) !void {
+            if (self.blocks[block] == null) {
+                self.blocks[block] = (try self.alloc.alloc(T, blockSize(block, self.initial_block_len, firstExpansionSize(self.initial_block_len)))).ptr;
+            }
+        }
+
+        fn firstExpansionSize(initial_len: usize) usize {
+            return firstExpansionSizeCommon(
+                T,
+                initial_len,
+                expansion_alloc_info.min_expansion_size_log2,
+            );
+        }
+
+        fn implConst(self: Self) RSLImplConst(T, expansion_alloc_info) {
+            return .{
+                .blocks = self.blocks,
+                .initial_block_len = self.initial_block_len,
+                .capacity = self.capacity,
+                .len = self.len.*,
+            };
+        }
+    };
+}
+
+fn RSLImplConst(comptime T: type, comptime expansion_alloc_info: ExpansionAllocInfo) type {
+    return struct {
+        // Block storage. block[0] is a pre-allocated block on init, blocks
+        // 1..N are dynamically allocated.
+        //
+        // Since the lengths are known, based off the index, we don't have to
+        // store them
+        //
+        // Number of blocks is fixed on initialization, we do not attempt
+        // to resize
+        blocks: []const ?[*]T,
+        initial_block_len: usize,
+        capacity: usize,
+        len: usize,
+
+        // Every expansion block doubles in size
+
+        const Self = @This();
+        const grow_factor = 2;
+
+        pub const empty = Self{
+            .alloc = undefined,
+            .blocks = &.{},
+            .initial_block_len = 0,
+            .capacity = 0,
+            .len = 0,
+        };
 
         pub fn get(self: Self, idx: usize) T {
             return getImpl(self, idx).*;
@@ -123,7 +601,7 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             return getImpl(self, idx);
         }
 
-        pub fn indexFromPtr(self: *Self, ptr: *T) ?usize {
+        pub fn indexFromPtr(self: Self, ptr: *T) ?usize {
             var it = self.blockIter();
             const ptr_u: usize = @intFromPtr(ptr);
 
@@ -140,32 +618,11 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             return null;
         }
 
-        pub fn shrink(self: *Self, size: usize) void {
-            self.len = size;
-            self.freeUnusedBlocks();
-        }
-
-        pub fn clear(self: *Self) void {
-            self.len = 0;
-            self.freeUnusedBlocks();
-        }
-
         pub fn blockStartForIdx(self: *const Self, idx: usize) usize {
             const first_expansion_size = firstExpansionSize(self.initial_block_len);
             const block = idxToBlockId(self.initial_block_len, idx, first_expansion_size);
             const block_start = blockStart(self.initial_block_len, block, first_expansion_size);
             return block_start;
-        }
-
-        pub fn swapRemove(self: *Self, idx: usize) void {
-            if (self.len - 1 == idx) {
-                self.len -= 1;
-                return;
-            }
-
-            const last = self.get(self.len - 1);
-            self.getPtr(idx).* = last;
-            self.len -= 1;
         }
 
         fn getImpl(self: Self, idx: usize) *T {
@@ -175,18 +632,6 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             const block = idxToBlockId(self.initial_block_len, idx, first_expansion_size);
             const block_start = blockStart(self.initial_block_len, block, first_expansion_size);
             return &self.blocks[block].?[idx - block_start];
-        }
-
-        pub fn setContents(self: *Self, content: []const T) !void {
-            if (content.len >= self.capacity) {
-                return error.OutOfMemory;
-            }
-
-            self.len = 0; // In case of failure
-
-            defer self.freeUnusedBlocks();
-
-            try self.appendSlice(content);
         }
 
         pub fn contentMatches(self: Self, content: []const T) bool {
@@ -244,67 +689,6 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             return ret.items;
         }
 
-        // Get the next contiguous block of memory for writing
-        pub fn getWritableArea(self: *Self) ![]T {
-            if (self.len >= self.capacity) {
-                return &.{};
-            }
-
-            const first_expansion_size = firstExpansionSize(self.initial_block_len);
-            const block = idxToBlockId(self.initial_block_len, self.len, first_expansion_size);
-            const block_start = blockStart(self.initial_block_len, block, first_expansion_size);
-            const block_size = blockSize(block, self.initial_block_len, first_expansion_size);
-
-            try self.ensureBlockAllocated(block);
-            return self.blocks[block].?[self.len - block_start .. block_size];
-        }
-
-        // Paired with getWritableArea can be used to flag how much of the
-        // writeable area we populated
-        pub fn grow(self: *Self, amount: usize) void {
-            std.debug.assert(amount <= (self.getWritableArea() catch unreachable).len);
-            self.len += amount;
-        }
-
-        const UnusedBlocksIt = struct {
-            parent: *Self,
-            block_idx: usize,
-
-            fn init(parent: *Self) UnusedBlocksIt {
-                const last_used_block = idxToBlockId(
-                    parent.initial_block_len,
-                    parent.len -| 1,
-                    firstExpansionSize(parent.initial_block_len),
-                );
-
-                return .{
-                    .parent = parent,
-                    .block_idx = last_used_block + 1,
-                };
-            }
-
-            const Output = struct {
-                idx: usize,
-                block: []T,
-            };
-
-            fn next(self: *UnusedBlocksIt) ?Output {
-                if (self.block_idx >= self.parent.blocks.len) {
-                    return null;
-                }
-
-                const block = self.parent.blocks[self.block_idx] orelse return null;
-
-                defer self.block_idx += 1;
-                const block_size = blockSize(self.block_idx, self.parent.initial_block_len, firstExpansionSize(self.parent.initial_block_len));
-
-                return .{
-                    .idx = self.block_idx,
-                    .block = block[0..block_size],
-                };
-            }
-        };
-
         pub fn jsonStringify(self: Self, jw: anytype) !void {
             // NOTE string lists are not serialized as strings. The standard
             // library does this with some members that are not easy for us to
@@ -323,7 +707,7 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
         }
 
         pub const Slice = struct {
-            parent: *Self,
+            parent: Self,
             start: usize,
             len: usize,
 
@@ -366,7 +750,7 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             }
         };
 
-        pub fn slice(self: *Self, start: usize, end: usize) Slice {
+        pub fn slice(self: Self, start: usize, end: usize) Slice {
             return .{
                 .parent = self,
                 .start = start,
@@ -405,7 +789,7 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             }
         };
 
-        pub fn reader(self: *Self, buf: []u8) Reader {
+        pub fn reader(self: Self, buf: []u8) Reader {
             var it = BlockIter.init(self, 0, self.len);
             const current_slice = it.next() orelse &.{};
             return .{
@@ -422,39 +806,13 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             };
         }
 
-        fn freeUnusedBlocks(self: *Self) void {
-            if (!expansion_alloc_info.supports_free) return;
-
-            var unused_block_it = UnusedBlocksIt.init(self);
-
-            while (unused_block_it.next()) |block| {
-                self.alloc.free(block.block);
-                self.blocks[block.idx] = null;
-            }
-        }
-
-        fn appendToBlock(self: *Self, block: usize, elem: T) void {
-            const first_expansion_size = firstExpansionSize(self.initial_block_len);
-            const block_start = blockStart(self.initial_block_len, block, first_expansion_size);
-            const block_offs = self.len - block_start;
-            std.debug.assert(block_offs < blockSize(block, self.initial_block_len, first_expansion_size));
-            self.blocks[block].?[block_offs] = elem;
-            self.len += 1;
-        }
-
-        fn ensureBlockAllocated(self: *Self, block: usize) !void {
-            if (self.blocks[block] == null) {
-                self.blocks[block] = (try self.alloc.alloc(T, blockSize(block, self.initial_block_len, firstExpansionSize(self.initial_block_len)))).ptr;
-            }
-        }
-
         pub const BlockIter = struct {
-            parent: *const Self,
+            parent: Self,
             block_id: usize,
             start: usize,
             end: usize,
 
-            fn init(parent: *const Self, start: usize, end: usize) BlockIter {
+            fn init(parent: Self, start: usize, end: usize) BlockIter {
                 return .{
                     .parent = parent,
                     .block_id = idxToBlockId(parent.initial_block_len, start, firstExpansionSize(parent.initial_block_len)),
@@ -484,7 +842,7 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             }
         };
 
-        pub fn blockIter(self: *const Self) BlockIter {
+        pub fn blockIter(self: Self) BlockIter {
             return BlockIter.init(self, 0, self.len);
         }
 
@@ -494,7 +852,7 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             slice_idx: usize = 0,
             end: usize = 0,
 
-            fn init(parent: *const Self, idx: usize, end: usize) Iter {
+            fn init(parent: Self, idx: usize, end: usize) Iter {
                 var inner = BlockIter.init(parent, idx, end);
                 const current_slice: []T = inner.next() orelse &.{};
 
@@ -523,22 +881,30 @@ pub fn RuntimeSegmentedListConfigurable(comptime T: type, comptime expansion_all
             }
         };
 
-        pub fn iter(self: *const Self) Iter {
+        pub fn iter(self: Self) Iter {
             return Iter.init(self, 0, self.len);
         }
 
-        pub fn iterFrom(self: *const Self, idx: usize) Iter {
+        pub fn iterFrom(self: Self, idx: usize) Iter {
             return Iter.init(self, @min(idx, self.len), self.len);
         }
 
         fn firstExpansionSize(initial_len: usize) usize {
-            if (initial_len == 0) return 0;
-            const initial_len_log2: usize = std.math.log2_int_ceil(usize, @sizeOf(T) * initial_len);
-            const min_page_size_log2: usize = @max(initial_len_log2, expansion_alloc_info.min_expansion_size_log2);
-
-            return (@as(usize, 1) << @intCast(min_page_size_log2)) / @sizeOf(T);
+            return firstExpansionSizeCommon(
+                T,
+                initial_len,
+                expansion_alloc_info.min_expansion_size_log2,
+            );
         }
     };
+}
+
+fn firstExpansionSizeCommon(comptime T: type, initial_len: usize, min_expansion_size_log2: comptime_int) usize {
+    if (initial_len == 0) return 0;
+    const initial_len_log2: usize = std.math.log2_int_ceil(usize, @sizeOf(T) * initial_len);
+    const min_page_size_log2: usize = @max(initial_len_log2, min_expansion_size_log2);
+
+    return (@as(usize, 1) << @intCast(min_page_size_log2)) / @sizeOf(T);
 }
 
 fn idxToBlockId(initial_size: usize, idx: usize, first_expansion_size: usize) usize {
@@ -745,7 +1111,7 @@ test "RuntimeSegmentedList UnusedBlockIter" {
     try list.setContents(content);
     list.len = 20 + 256 + 10;
 
-    var it = TestingRSL(u8).UnusedBlocksIt.init(&list);
+    var it = TestingRSL(u8).UnusedBlocksIt.init(list.impl());
 
     {
         const next = it.next();
@@ -765,7 +1131,7 @@ test "RuntimeSegmentedList UnusedBlockIter" {
     }
 
     list.len = 3;
-    it = TestingRSL(u8).UnusedBlocksIt.init(&list);
+    it = TestingRSL(u8).UnusedBlocksIt.init(list.impl());
 
     {
         const next = it.next();
