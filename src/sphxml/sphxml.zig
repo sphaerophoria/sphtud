@@ -117,6 +117,17 @@ pub const Item = struct {
             .data = self.attributes,
         };
     }
+
+    pub fn attributeByKey(self: Item, key: []const u8) !?[]const u8 {
+        var it = self.attributeIt();
+        while (try it.next()) |attr| {
+            if (std.mem.eql(u8, attr.key, key)) {
+                return attr.val;
+            }
+        }
+
+        return null;
+    }
 };
 
 pub const AttributeIt = struct {
