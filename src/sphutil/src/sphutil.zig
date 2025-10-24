@@ -29,6 +29,8 @@ pub fn ObjectPoolSphalloc(comptime T: type, comptime Handle: type) type {
     return noalloc.object_pool.ObjectPoolConfigurable(T, Handle, sphalloc_expansion_alloc_info);
 }
 
+pub const IoPipe = noalloc.IoPipe;
+
 test {
     std.testing.refAllDeclsRecursive(@This());
 }

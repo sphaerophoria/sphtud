@@ -16,6 +16,8 @@ pub const ObjectPoolConfigurable = object_pool.ObjectPoolConfigurable;
 
 pub const BitSet = bit_set.BitSet;
 
+pub const IoPipe = @import("io_pipe.zig").Pipe;
+
 test {
     const std = @import("std");
     std.testing.refAllDeclsRecursive(@This());
