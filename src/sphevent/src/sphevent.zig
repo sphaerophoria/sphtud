@@ -214,6 +214,7 @@ pub fn LoopConfigurable(comptime expansion_info: sphutil.runtime_segmented_list.
         fd: i32,
         force_poll: sphutil.RuntimeSegmentedListConfigurable(usize, expansion_info),
         handler_pool: sphutil.RuntimeSegmentedListConfigurable(Handler, expansion_info),
+        is_shutdown: bool = false,
 
         const Self = @This();
 
@@ -286,6 +287,8 @@ pub fn LoopConfigurable(comptime expansion_info: sphutil.runtime_segmented_list.
             while (it.next()) |handler| {
                 handler.close();
             }
+
+            self.is_shutdown = true;
         }
 
         pub fn wait(self: *Self, scratch: sphalloc.LinearAllocator) !void {
@@ -299,6 +302,9 @@ pub fn LoopConfigurable(comptime expansion_info: sphutil.runtime_segmented_list.
             var to_add = try sphutil.RuntimeBoundedArray(Handler).init(scratch.allocator(), max_update_size);
 
             try self.pollForced(scratch, &to_remove, &to_add);
+
+            // Initial poll may shut down the event loop, which makes it invalid to call poll on these file handles?
+            if (self.is_shutdown) return;
 
             var events: [num_events]std.os.linux.epoll_event = undefined;
 

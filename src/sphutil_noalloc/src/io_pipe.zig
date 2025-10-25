@@ -4,7 +4,7 @@ pub const Pipe = struct {
     writer: std.Io.Writer,
     read_head: usize = 0,
 
-    fn init(buf: []u8) Pipe {
+    pub fn init(buf: []u8) Pipe {
         return .{
             .writer = .{
                 .vtable = &.{
@@ -24,7 +24,7 @@ pub const Pipe = struct {
         if (w.buffer.len == w.end) return error.WriteFailed;
 
         const write_start = w.end;
-        for (data[0..data.len - 1]) |slice| {
+        for (data[0 .. data.len - 1]) |slice| {
             const copy_len = @min(slice.len, w.buffer.len - w.end);
             if (copy_len == 0) break;
 
@@ -42,7 +42,7 @@ pub const Pipe = struct {
         return w.end - write_start;
     }
 
-    fn rebase(w: *std.Io.Writer, preserve: usize, capacity: usize) !void  {
+    fn rebase(w: *std.Io.Writer, preserve: usize, capacity: usize) !void {
         const self: *Pipe = @fieldParentPtr("writer", w);
 
         const preserved_start = w.end - preserve;
@@ -57,12 +57,12 @@ pub const Pipe = struct {
         w.end = len;
     }
 
-    const RwPipeReader = struct {
+    pub const PipeReader = struct {
         parent: *Pipe,
         interface: std.Io.Reader,
 
         fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) !usize {
-            const self: *RwPipeReader = @fieldParentPtr("interface", r);
+            const self: *PipeReader = @fieldParentPtr("interface", r);
 
             const dest = limit.slice(try w.writableSliceGreedy(1));
             const readable_buf = self.parent.writer.buffered()[self.parent.read_head..];
@@ -80,7 +80,7 @@ pub const Pipe = struct {
         }
     };
 
-    fn reader(self: *Pipe, buf: []u8) RwPipeReader {
+    pub fn reader(self: *Pipe, buf: []u8) PipeReader {
         return .{
             .parent = self,
             .interface = .{
@@ -88,7 +88,7 @@ pub const Pipe = struct {
                 .end = 0,
                 .seek = 0,
                 .vtable = &.{
-                    .stream = RwPipeReader.stream,
+                    .stream = PipeReader.stream,
                 },
             },
         };
@@ -129,7 +129,6 @@ test "piped writing" {
     {
         const s = reader.interface.take(3);
         try std.testing.expectEqual(error.ReadFailed, s);
-
     }
 
     try std.testing.expectEqual(8, try pipe.writer.write("way too long"));
@@ -175,5 +174,4 @@ test "pipe splat" {
         const s = reader.interface.take(1);
         try std.testing.expectEqual(error.ReadFailed, s);
     }
-
 }
