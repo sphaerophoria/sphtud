@@ -185,6 +185,13 @@ pub const LinearAllocator = struct {
         checkpoint: *const fn (ctx: ?*anyopaque) usize,
         restore: *const fn (ctx: ?*anyopaque, restore_point: usize) void,
         allocator: *const fn (ctx: ?*anyopaque) std.mem.Allocator,
+        makeDoubleEnded: *const fn (ctx: ?*anyopaque) anyerror!DoubleEnded,
+        commitDoubleEnded: *const fn (ctx: ?*anyopaque, double_ended: DoubleEnded) void,
+    };
+
+    const DoubleEnded = struct {
+        preserve: LinearAllocator,
+        discard: LinearAllocator,
     };
 
     pub fn checkpoint(self: LinearAllocator) usize {
@@ -197,6 +204,18 @@ pub const LinearAllocator = struct {
 
     pub fn allocator(self: LinearAllocator) std.mem.Allocator {
         return self.vtable.allocator(self.ctx);
+    }
+
+    // Max out the linear allocator and convert into 2 linear allocators. One
+    // from each side of the newly allocated buffer
+    pub fn makeDoubleEnded(self: LinearAllocator) !DoubleEnded {
+        return self.vtable.makeDoubleEnded(self.ctx);
+    }
+
+    // Merge allocations from preserve into parent allocator, dropping
+    // allocations from discard
+    pub fn commitDoubleEnded(self: LinearAllocator, double_ended: DoubleEnded) void {
+        return self.vtable.commitDoubleEnded(self.ctx, double_ended);
     }
 };
 
@@ -306,6 +325,8 @@ pub const BufAllocator = struct {
         .checkpoint = frontCheckpoint,
         .restore = frontRestoreCtx,
         .allocator = frontAllocatorCtx,
+        .makeDoubleEnded = frontMakeDoubleEnded,
+        .commitDoubleEnded = frontCommitDoubleEnded,
     };
 
     fn frontAllocatorCtx(ctx: ?*anyopaque) std.mem.Allocator {
@@ -328,10 +349,52 @@ pub const BufAllocator = struct {
         self.front_idx = front_idx;
     }
 
+    fn frontMakeDoubleEnded(ctx: ?*anyopaque) !LinearAllocator.DoubleEnded {
+        const self: *BufAllocator = @ptrCast(@alignCast(ctx));
+
+        const child_alloc = try self.backAllocator().create(BufAllocator);
+
+        const old_front = self.front_idx;
+        const len = self.back_idx - self.front_idx;
+        self.front_idx = self.back_idx;
+
+        child_alloc.* = .{
+            .buf = self.buf[old_front..][0..len],
+            .front_idx = 0,
+            .back_idx = len,
+        };
+
+        return .{
+            .preserve = child_alloc.linear(),
+            .discard = child_alloc.backLinear(),
+        };
+    }
+
+    fn frontCommitDoubleEnded(ctx: ?*anyopaque, double_ended: LinearAllocator.DoubleEnded) void {
+        const self: *BufAllocator = @ptrCast(@alignCast(ctx));
+
+        std.debug.assert(self.front_idx == self.back_idx);
+        std.debug.assert(&front_linear_vtable == double_ended.preserve.vtable);
+        std.debug.assert(double_ended.preserve.ctx == double_ended.discard.ctx);
+
+        const child_alloc: *BufAllocator = @ptrCast(@alignCast(double_ended.preserve.ctx));
+
+        const child_buf_start: usize = @intFromPtr(child_alloc.buf.ptr);
+        const my_buf_start: usize = @intFromPtr(self.buf.ptr);
+
+        std.debug.assert(my_buf_start + self.front_idx == child_buf_start + child_alloc.buf.len);
+
+        const old_front = self.front_idx;
+        self.front_idx = self.front_idx - child_alloc.buf.len + child_alloc.front_idx;
+        @memset(self.buf[self.front_idx..old_front], undefined);
+    }
+
     const back_linear_vtable = LinearAllocator.VTable{
         .checkpoint = backCheckpoint,
         .restore = backRestoreCtx,
         .allocator = backAllocatorCtx,
+        .makeDoubleEnded = backMakeDoubleEnded,
+        .commitDoubleEnded = backCommitDoubleEnded,
     };
 
     fn backAllocatorCtx(ctx: ?*anyopaque) std.mem.Allocator {
@@ -354,6 +417,45 @@ pub const BufAllocator = struct {
             @memset(self.buf[self.back_idx..back_idx], undefined);
         }
         self.back_idx = back_idx;
+    }
+
+    fn backMakeDoubleEnded(ctx: ?*anyopaque) !LinearAllocator.DoubleEnded {
+        const self: *BufAllocator = @ptrCast(@alignCast(ctx));
+
+        const child_alloc = try self.backAllocator().create(BufAllocator);
+
+        const len = self.back_idx - self.front_idx;
+        self.back_idx = self.front_idx;
+
+        child_alloc.* = .{
+            .buf = self.buf[self.back_idx..][0..len],
+            .front_idx = 0,
+            .back_idx = len,
+        };
+
+        return .{
+            .preserve = child_alloc.backLinear(),
+            .discard = child_alloc.linear(),
+        };
+    }
+
+    fn backCommitDoubleEnded(ctx: ?*anyopaque, double_ended: LinearAllocator.DoubleEnded) void {
+        const self: *BufAllocator = @ptrCast(@alignCast(ctx));
+
+        std.debug.assert(self.front_idx == self.back_idx);
+        std.debug.assert(&back_linear_vtable == double_ended.preserve.vtable);
+        std.debug.assert(double_ended.preserve.ctx == double_ended.discard.ctx);
+
+        const child_alloc: *BufAllocator = @ptrCast(@alignCast(double_ended.preserve.ctx));
+
+        const child_buf_start: usize = @intFromPtr(child_alloc.buf.ptr);
+        const my_buf_start: usize = @intFromPtr(self.buf.ptr);
+
+        std.debug.assert(my_buf_start + self.back_idx == child_buf_start);
+
+        const old_back = self.back_idx;
+        self.back_idx = self.back_idx + child_alloc.buf.len - child_alloc.back_idx;
+        @memset(self.buf[old_back..self.back_idx], undefined);
     }
 
     fn allocLeft(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
@@ -501,6 +603,59 @@ test "BufAllocator allocator collision linear allocators" {
 
     try std.testing.expectError(error.OutOfMemory, left_alloc.allocator().alloc(u8, 51));
     left_alloc.restore(left_checkpoint);
+}
+
+fn testTypicalScratchPattern(alloc: std.mem.Allocator, scratch: LinearAllocator) !struct { []const u8, []const u8 } {
+    const tmp = try scratch.allocator().alloc(u8, 5);
+    @memset(tmp, 1);
+
+    const preserved = try alloc.alloc(u8, 5);
+    @memset(preserved, 2);
+
+    return .{ preserved, tmp };
+}
+
+test "BufAllocator allocator nested linear" {
+    var buf: [200]u8 align(4) = undefined;
+    var buf_alloc = BufAllocator.init(&buf);
+
+    const a = try buf_alloc.allocator().alloc(u8, 5);
+    @memset(a, 'a');
+
+    const b = try buf_alloc.backAllocator().alloc(u8, 5);
+    @memset(b, 'b');
+
+    {
+        const scratch = buf_alloc.backLinear();
+
+        const cp = scratch.checkpoint();
+        defer scratch.restore(cp);
+
+        const tmp = try scratch.makeDoubleEnded();
+        const ret = try testTypicalScratchPattern(tmp.preserve.allocator(), tmp.discard);
+        try std.testing.expectEqualSlices(u8, &.{ 1, 1, 1, 1, 1 }, ret[1]);
+        scratch.commitDoubleEnded(tmp);
+        try std.testing.expectEqualSlices(u8, &.{ 2, 2, 2, 2, 2 }, ret[0]);
+        try std.testing.expectEqualSlices(u8, &.{ undefined, undefined, undefined, undefined, undefined }, ret[1]);
+    }
+
+    {
+        const scratch = buf_alloc.linear();
+
+        const cp = scratch.checkpoint();
+        defer scratch.restore(cp);
+
+        const tmp = try scratch.makeDoubleEnded();
+        const ret = try testTypicalScratchPattern(tmp.preserve.allocator(), tmp.discard);
+        try std.testing.expectEqualSlices(u8, &.{ 1, 1, 1, 1, 1 }, ret[1]);
+        scratch.commitDoubleEnded(tmp);
+        try std.testing.expectEqualSlices(u8, &.{ undefined, undefined, undefined, undefined, undefined }, ret[1]);
+        try std.testing.expectEqualSlices(u8, &.{ 2, 2, 2, 2, 2 }, ret[0]);
+    }
+
+    // Make sure the original pieces are all the same
+    try std.testing.expectEqualSlices(u8, "aaaaa", a);
+    try std.testing.expectEqualSlices(u8, "bbbbb", b);
 }
 
 pub const tiny_page_log2 = 8;
