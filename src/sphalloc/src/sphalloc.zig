@@ -223,12 +223,77 @@ pub const BufAllocator = struct {
     buf: []u8,
     front_idx: usize,
     back_idx: usize,
+    tracer: ?*Tracer,
+
+    pub const Tracer = struct {
+        const num_elems = 8;
+
+        buf: []const u8,
+        front_history: [num_elems]usize,
+        back_history: [num_elems]usize,
+        hist_idx: u8,
+
+        pub fn init(buf: []const u8) Tracer {
+            return .{
+                .buf = buf,
+                .front_history = @splat(asUsize(buf.ptr)),
+                .back_history = @splat(asUsize(buf.ptr) + buf.len),
+                .hist_idx = 0,
+            };
+        }
+
+        pub fn reclaimUnusedMemory(self: *Tracer) !void {
+            const start = self.maxStart();
+            const end = self.minEnd();
+
+            const aligned_start = std.mem.alignForward(usize, start, std.heap.pageSize());
+            const aligned_end = std.mem.alignBackward(usize, end, std.heap.pageSize());
+
+            const len = aligned_end -| aligned_start;
+            if (len != 0) {
+                try std.posix.madvise(@ptrFromInt(aligned_start), len, std.os.linux.MADV.DONTNEED);
+            }
+            self.hist_idx = (self.hist_idx + 1) % num_elems;
+            self.resetCurrentVals();
+        }
+
+        fn resetCurrentVals(self: *Tracer) void {
+            self.front_history[self.hist_idx] = asUsize(self.buf.ptr);
+            self.back_history[self.hist_idx] = asUsize(self.buf.ptr) + self.buf.len;
+        }
+
+        fn notifyFrontAlloc(self: *Tracer, addr: [*]const u8) void {
+            self.front_history[self.hist_idx] = @max(self.front_history[self.hist_idx], asUsize(addr));
+        }
+
+        fn notifyBackAlloc(self: *Tracer, addr: [*]const u8) void {
+            self.back_history[self.hist_idx] = @min(self.back_history[self.hist_idx], asUsize(addr));
+        }
+
+        fn maxStart(self: *Tracer) usize {
+            return std.mem.max(usize, &self.front_history);
+        }
+
+        fn minEnd(self: *Tracer) usize {
+            return std.mem.min(usize, &self.back_history);
+        }
+    };
 
     pub fn init(buf: []u8) BufAllocator {
         return .{
             .buf = buf,
             .front_idx = 0,
             .back_idx = buf.len,
+            .tracer = null,
+        };
+    }
+
+    pub fn initWithTracing(buf: []u8, tracer: *Tracer) BufAllocator {
+        return .{
+            .buf = buf,
+            .front_idx = 0,
+            .back_idx = buf.len,
+            .tracer = tracer,
         };
     }
 
@@ -362,6 +427,7 @@ pub const BufAllocator = struct {
             .buf = self.buf[old_front..][0..len],
             .front_idx = 0,
             .back_idx = len,
+            .tracer = self.tracer,
         };
 
         return .{
@@ -431,6 +497,7 @@ pub const BufAllocator = struct {
             .buf = self.buf[self.back_idx..][0..len],
             .front_idx = 0,
             .back_idx = len,
+            .tracer = self.tracer,
         };
 
         return .{
@@ -472,6 +539,10 @@ pub const BufAllocator = struct {
         }
 
         self.front_idx = ret_end - buf_ptr;
+        if (self.tracer) |t| {
+            t.notifyFrontAlloc(self.buf.ptr + self.front_idx);
+        }
+
         return @ptrFromInt(ret_addr);
     }
 
@@ -488,6 +559,9 @@ pub const BufAllocator = struct {
         }
 
         self.back_idx = ret_addr - buf_ptr;
+        if (self.tracer) |t| {
+            t.notifyBackAlloc(self.buf.ptr + self.back_idx);
+        }
         return @ptrFromInt(ret_addr);
     }
 };
@@ -603,6 +677,37 @@ test "BufAllocator allocator collision linear allocators" {
 
     try std.testing.expectError(error.OutOfMemory, left_alloc.allocator().alloc(u8, 51));
     left_alloc.restore(left_checkpoint);
+}
+
+test "BufAllocator tracing" {
+    var buf: [256]u8 align(4) = undefined;
+    var tracer = BufAllocator.Tracer.init(&buf);
+    var buf_alloc = BufAllocator.initWithTracing(&buf, &tracer);
+
+    _ = try buf_alloc.allocator().alloc(u8, 50);
+    _ = try buf_alloc.backAllocator().alloc(u8, 30);
+
+    for (0..5) |_| {
+        buf_alloc.reset();
+        try tracer.reclaimUnusedMemory();
+
+        _ = try buf_alloc.allocator().alloc(u8, 12);
+        _ = try buf_alloc.backAllocator().alloc(u8, 14);
+    }
+
+    try std.testing.expectEqual(asUsize(&buf) + 50, tracer.maxStart());
+    try std.testing.expectEqual(asUsize(&buf) + 256 - 30, tracer.minEnd());
+
+    for (0..5) |_| {
+        buf_alloc.reset();
+        try tracer.reclaimUnusedMemory();
+
+        _ = try buf_alloc.allocator().alloc(u8, 12);
+        _ = try buf_alloc.backAllocator().alloc(u8, 14);
+    }
+
+    try std.testing.expectEqual(12, tracer.maxStart() - asUsize(&buf));
+    try std.testing.expectEqual(256 - 14, tracer.minEnd() - asUsize(&buf));
 }
 
 fn testTypicalScratchPattern(alloc: std.mem.Allocator, scratch: LinearAllocator) !struct { []const u8, []const u8 } {
@@ -1285,6 +1390,9 @@ pub const failing_allocator = std.mem.Allocator{
     .vtable = &failing_vtable,
 };
 
+fn asUsize(p: [*]const u8) usize {
+    return @intFromPtr(p);
+}
 test {
     std.testing.refAllDeclsRecursive(@This());
 }
