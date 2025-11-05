@@ -10,6 +10,7 @@ const ScratchAlloc = sphalloc.ScratchAlloc;
 pub const ImageSamplerUniforms = struct {
     input_image: sphrender.Texture,
     transform: sphmath.Mat3x3 = sphmath.Transform.identity.inner,
+    depth: f32 = 0.0,
 };
 
 pub const image_sampler_frag_rgba =
@@ -112,6 +113,14 @@ pub const ImageRenderer = struct {
             .transform = transform.inner,
         });
     }
+
+    pub fn renderTextureAtDepth(self: ImageRenderer, texture: sphrender.Texture, transform: sphmath.Transform, depth: f32) void {
+        self.prog.render(self.render_source, .{
+            .input_image = texture,
+            .transform = transform.inner,
+            .depth = depth,
+        });
+    }
 };
 
 pub const Vertex = struct {
@@ -131,10 +140,11 @@ pub const vertex_shader =
     \\    0.0, 1.0, 0.0,
     \\    0.0, 0.0, 1.0
     \\);
+    \\uniform float depth = 0.0;
     \\void main()
     \\{
     \\    vec3 transformed = transform * vec3(vPos, 1.0);
-    \\    gl_Position = vec4(transformed.x, transformed.y, 0.0, transformed.z);
+    \\    gl_Position = vec4(transformed.x, transformed.y, depth, transformed.z);
     \\    uv = vUv;
     \\}
 ;

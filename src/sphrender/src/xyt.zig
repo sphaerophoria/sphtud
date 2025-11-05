@@ -69,6 +69,7 @@ pub const RenderSource = shader_program.RenderSourceTyped(Vertex);
 pub const SolidColorUniforms = struct {
     color: sphmath.Vec3,
     transform: sphmath.Mat3x3,
+    depth: f32 = 0.0,
 };
 
 pub const SolidColorProgram = Program(SolidColorUniforms);
@@ -95,9 +96,10 @@ pub const vertex_shader =
     \\    0.0, 1.0, 0.0,
     \\    0.0, 0.0, 1.0
     \\);
+    \\uniform float depth = 0.0;
     \\void main()
     \\{
     \\    vec3 transformed = transform * vec3(vPos, 1.0);
-    \\    gl_Position = vec4(transformed.x, transformed.y, 0.0, transformed.z);
+    \\    gl_Position = vec4(transformed.x, transformed.y, depth, transformed.z);
     \\}
 ;
