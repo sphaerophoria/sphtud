@@ -126,6 +126,10 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             }
         }
 
+        pub fn count(self: Self) usize {
+            return self.objects.len - self.free_list.len;
+        }
+
         fn needsMemoryReclamation(self: *const Self) bool {
             if (self.objects.len == 0) return false;
 
