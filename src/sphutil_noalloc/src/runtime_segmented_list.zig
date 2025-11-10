@@ -1700,3 +1700,5 @@ test "RuntimeSegmentedList fill block" {
 
     try std.testing.expectEqual(null, it.next());
 }
+
+// FIXME: Test empty list

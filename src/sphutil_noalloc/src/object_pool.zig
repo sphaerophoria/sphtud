@@ -91,6 +91,10 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             return self.objects.getPtr(idxFromHandle(handle));
         }
 
+        pub fn count(self: Self) usize {
+            return self.objects.len - self.free_list.len;
+        }
+
         pub const Iter = struct {
             idx: usize,
             objects: Objects.Iter,

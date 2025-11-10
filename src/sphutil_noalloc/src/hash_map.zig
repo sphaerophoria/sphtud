@@ -269,7 +269,7 @@ pub fn HashMap(
                 return;
             }
 
-            while (self.len >= self.noCollisionCapacity()) {
+            while (self.len > self.noCollisionCapacity()) {
                 try self.buckets.fillBlock(.{});
             }
 
