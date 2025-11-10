@@ -246,6 +246,20 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
 
                 extra = to_move;
             }
+
+            var tomb_it = self.tombstones.iter();
+            var free_list_it = self.free_list.iter();
+
+            var idx: usize = 0;
+            var free_count: usize = 0;
+            while (tomb_it.next()) |tomb| {
+                defer idx += 1;
+                if (tomb) {
+                    free_list_it.next().?.* = idx;
+                    free_count += 1;
+                }
+            }
+            std.debug.assert(free_count == self.free_list.len);
         }
 
         fn getOrMakeHole(self: *Self, expansion_alloc: std.mem.Allocator) !usize {
@@ -347,6 +361,13 @@ const TrackedPool = struct {
         }
 
         try std.testing.expectEqual(self.map.count(), seen_handles.count());
+    }
+
+    pub fn checkFreeList(self: *TrackedPool) !void {
+        var free_it = self.pool.free_list.iter();
+        while (free_it.next()) |free_idx| {
+            if (!self.pool.tombstones.get(free_idx.*)) return error.CorruptFreeList;
+        }
     }
 
     pub fn moveCtx(self: *TrackedPool) MoveCtx {
@@ -463,4 +484,5 @@ test "ObjectPool scramble" {
 
     try std.testing.expectEqual(false, move_ctx.failed);
     try testing_pool.checkMapMatchesPool(std.testing.allocator);
+    try testing_pool.checkFreeList();
 }
