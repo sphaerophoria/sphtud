@@ -748,7 +748,12 @@ const TestConnection = struct {
 
     fn poll(ctx: ?*anyopaque, _: *LoopLinear, _: PollReason) LoopLinear.PollResult {
         const self: *TestConnection = @ptrCast(@alignCast(ctx));
-        self.state.received_len += self.inner.stream.read(self.state.received_data[self.state.received_len..]) catch unreachable;
+        self.state.received_len += self.inner.stream.read(self.state.received_data[self.state.received_len..]) catch |e| {
+            if (e == error.WouldBlock) {
+                return .in_progress;
+            }
+            unreachable;
+        };
         return .complete;
     }
 
