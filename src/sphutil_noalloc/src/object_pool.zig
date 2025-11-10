@@ -253,7 +253,10 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             var idx: usize = 0;
             var free_count: usize = 0;
             while (tomb_it.next()) |tomb| {
+                if (idx >= self.objects.len) break;
+
                 defer idx += 1;
+
                 if (tomb) {
                     free_list_it.next().?.* = idx;
                     free_count += 1;
@@ -485,4 +488,17 @@ test "ObjectPool scramble" {
     try std.testing.expectEqual(false, move_ctx.failed);
     try testing_pool.checkMapMatchesPool(std.testing.allocator);
     try testing_pool.checkFreeList();
+}
+
+test "ObjectPool empty scramble" {
+    var fba_buf: [1 * 1024 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&fba_buf);
+    const alloc = fba.allocator();
+
+    var rng = std.Random.DefaultPrng.init(0);
+    const random = rng.random();
+
+    var testing_pool = try TrackedPool.init(alloc);
+    var move_ctx = testing_pool.moveCtx();
+    try testing_pool.pool.scramble(testing_pool.expansion_alloc, alloc, random, &move_ctx);
 }
