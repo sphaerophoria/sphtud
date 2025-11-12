@@ -1,0 +1,41 @@
+const std = @import("std");
+
+const ExpansionAlloc = @This();
+
+pub const Info = struct {
+    min_expansion_size_log2: u8,
+    supports_free: bool,
+
+    pub const linear: *const Info = &.{
+        .min_expansion_size_log2 = 0,
+        .supports_free = false,
+    };
+};
+
+info: *const Info,
+alloc: std.mem.Allocator,
+
+pub fn linear(alloc: std.mem.Allocator) ExpansionAlloc {
+    return .{
+        .info = .linear,
+        .alloc = alloc,
+    };
+}
+
+pub fn general(alloc: std.mem.Allocator) ExpansionAlloc {
+    return .{
+        .info = &.{
+            .min_expansion_size_log2 = 0,
+            .supports_free = true,
+        },
+        .alloc = alloc,
+    };
+}
+
+pub const system_page = ExpansionAlloc{
+    .info = &.{
+        .min_expansion_size_log2 = @intCast(std.math.log2(std.heap.pageSize())),
+        .supports_free = true,
+    },
+    .alloc = std.heap.page_allocator,
+};

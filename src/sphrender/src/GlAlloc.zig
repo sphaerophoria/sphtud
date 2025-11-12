@@ -2,7 +2,7 @@ const std = @import("std");
 const gl = @import("gl");
 const sphalloc = @import("sphalloc");
 const sphutil = @import("sphutil");
-const RuntimeSegmentedList = sphutil.RuntimeSegmentedListSphalloc;
+const RuntimeSegmentedList = sphutil.RuntimeSegmentedList;
 const Sphalloc = sphalloc.Sphalloc;
 
 // I'm not going to bother with implementing unmanaged versions of these right
@@ -24,31 +24,31 @@ pub fn init(alloc: *Sphalloc) !GlAlloc {
         .alloc = alloc,
         .vbos = try RuntimeSegmentedList(gl.GLuint).init(
             alloc.arena(),
-            alloc.block_alloc.allocator(),
+            alloc.expansion(),
             typical_size,
             max_size,
         ),
         .vaos = try RuntimeSegmentedList(gl.GLuint).init(
             alloc.arena(),
-            alloc.block_alloc.allocator(),
+            alloc.expansion(),
             typical_size,
             max_size,
         ),
         .programs = try RuntimeSegmentedList(gl.GLuint).init(
             alloc.arena(),
-            alloc.block_alloc.allocator(),
+            alloc.expansion(),
             typical_size,
             max_size,
         ),
         .textures = try RuntimeSegmentedList(gl.GLuint).init(
             alloc.arena(),
-            alloc.block_alloc.allocator(),
+            alloc.expansion(),
             typical_size,
             max_size,
         ),
         .children = try RuntimeSegmentedList(*GlAlloc).init(
             alloc.arena(),
-            alloc.block_alloc.allocator(),
+            alloc.expansion(),
             typical_size,
             max_size,
         ),

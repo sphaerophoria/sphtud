@@ -192,9 +192,9 @@ fn findDesiredProtos(alloc: std.mem.Allocator, scratch: sphalloc.LinearAllocator
 
     var gl_xml_parser = GlXmlParser.init(&f_reader);
 
-    var desired_protos = try sphutil.hash_map.StringHashMapLinear(void).init(
+    var desired_protos = try sphutil.hash_map.StringHashMap(void).init(
         scratch.allocator(),
-        scratch.allocator(),
+        scratch.expansion(),
         1000,
         1000,
     );

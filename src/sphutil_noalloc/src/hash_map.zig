@@ -1,34 +1,20 @@
 const std = @import("std");
 const sphutil = @import("sphutil_noalloc.zig");
+const ExpansionAlloc = sphutil.ExpansionAlloc;
 
-pub fn AutoHashMapConfigurable(
-    comptime K: type,
-    comptime V: type,
-    comptime expansion_alloc_info: sphutil.runtime_segmented_list.ExpansionAllocInfo,
-) type {
+pub fn AutoHashMap(comptime K: type, comptime V: type) type {
     return HashMap(
         K,
         V,
         std.hash_map.AutoContext(K),
-        expansion_alloc_info,
     );
 }
 
-pub fn AutoHashMapLinear(comptime K: type, comptime V: type) type {
-    return HashMap(
-        K,
-        V,
-        std.hash_map.AutoContext(K),
-        sphutil.runtime_segmented_list.linear_alloc_info,
-    );
-}
-
-pub fn StringHashMapLinear(comptime V: type) type {
+pub fn StringHashMap(comptime V: type) type {
     return HashMap(
         []const u8,
         V,
         std.hash_map.StringContext,
-        sphutil.runtime_segmented_list.linear_alloc_info,
     );
 }
 
@@ -36,11 +22,9 @@ pub fn HashMap(
     comptime K: type,
     comptime V: type,
     comptime Context: type,
-    comptime expansion_alloc_info: sphutil.runtime_segmented_list.ExpansionAllocInfo,
 ) type {
     return struct {
-        alloc: std.mem.Allocator,
-        buckets: sphutil.RuntimeSegmentedListConfigurable(std.SinglyLinkedList, expansion_alloc_info),
+        buckets: sphutil.RuntimeSegmentedList(std.SinglyLinkedList),
         node_storage: NodeStorage,
 
         len: usize,
@@ -48,7 +32,7 @@ pub fn HashMap(
 
         const Self = @This();
 
-        const NodeStorage = sphutil.RuntimeSegmentedListConfigurable(ListNode, expansion_alloc_info);
+        const NodeStorage = sphutil.RuntimeSegmentedList(ListNode);
         const ListNode = struct {
             node: std.SinglyLinkedList.Node,
             key: K,
@@ -60,7 +44,7 @@ pub fn HashMap(
 
         pub fn init(
             arena: std.mem.Allocator,
-            expansion_alloc: std.mem.Allocator,
+            expansion_alloc: ExpansionAlloc,
             typical_size: usize,
             max_size: usize,
         ) !Self {
@@ -68,7 +52,6 @@ pub fn HashMap(
             const max_buckets = max_size * 100 / max_load_percent;
 
             var ret = Self{
-                .alloc = arena,
                 .buckets = try .init(arena, expansion_alloc, typical_buckets, max_buckets),
                 .node_storage = try .init(arena, expansion_alloc, typical_size, max_size),
                 .len = 0,
@@ -177,7 +160,7 @@ pub fn HashMap(
             self.node_storage.shrink(self.node_storage.len - 1);
             self.len -= 1;
 
-            while (expansion_alloc_info.supports_free) {
+            while (self.node_storage.alloc.info.supports_free) {
                 const new_num_buckets = self.buckets.blockStartForIdx(self.buckets.len -| 1);
                 if (self.len >= new_num_buckets * min_load_percent / 100) {
                     break;
@@ -311,13 +294,21 @@ test "HashMap random insertion removal" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
+    const expansion_alloc = sphutil.ExpansionAlloc{
+        .info = &.{
+            .min_expansion_size_log2 = 0,
+            .supports_free = false,
+        },
+        .alloc = arena.allocator(),
+    };
+
     var rng = std.Random.DefaultPrng.init(0);
     const rand = rng.random();
 
     var ref = std.AutoHashMap(i32, i32).init(arena.allocator());
-    var map = try AutoHashMapLinear(i32, i32).init(
+    var map = try AutoHashMap(i32, i32).init(
         arena.allocator(),
-        arena.allocator(),
+        expansion_alloc,
         20,
         1000,
     );
@@ -360,12 +351,17 @@ test "HashMap page expansion" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var map = try AutoHashMapConfigurable(i32, i32, .{
-        .min_expansion_size_log2 = 4,
-        .supports_free = true,
-    }).init(
+    const expansion_alloc = ExpansionAlloc{
+        .info = &.{
+            .min_expansion_size_log2 = 4,
+            .supports_free = true,
+        },
+        .alloc = std.testing.allocator,
+    };
+
+    var map = try AutoHashMap(i32, i32).init(
         arena.allocator(),
-        std.testing.allocator,
+        expansion_alloc,
         5,
         1000,
     );

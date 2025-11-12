@@ -206,6 +206,13 @@ pub const LinearAllocator = struct {
         return self.vtable.allocator(self.ctx);
     }
 
+    pub fn expansion(self: LinearAllocator) sphutil.ExpansionAlloc {
+        return .{
+            .info = .linear,
+            .alloc = self.allocator(),
+        };
+    }
+
     // Max out the linear allocator and convert into 2 linear allocators. One
     // from each side of the newly allocated buffer
     pub fn makeDoubleEnded(self: LinearAllocator) !DoubleEnded {
@@ -301,6 +308,13 @@ pub const BufAllocator = struct {
         return .{
             .ptr = self,
             .vtable = &front_vtable,
+        };
+    }
+
+    pub fn expansion(self: *BufAllocator) sphutil.ExpansionAlloc {
+        return .{
+            .info = .linear,
+            .alloc = self.allocator(),
         };
     }
 
@@ -781,12 +795,8 @@ pub const TinyPageAllocator = struct {
 
     const typical_free_elems = 20;
 
-    const FreeList = sphutil.RuntimeSegmentedListConfigurable([*]u8, .{
-        .min_expansion_size_log2 = std.math.log2(std.heap.pageSize()),
-        .supports_free = true,
-    });
+    const FreeList = sphutil.RuntimeSegmentedList([*]u8);
 
-    page_allocator: Allocator = std.heap.page_allocator,
     alloc_buf: [1536]u8,
     free_lists: [num_lists]FreeList,
 
@@ -804,7 +814,7 @@ pub const TinyPageAllocator = struct {
         for (&self.free_lists) |*fl| {
             fl.* = try FreeList.init(
                 initial_alloc.allocator(),
-                std.heap.page_allocator,
+                .system_page,
                 typical_free_elems,
                 // log2(1G) == 30, which means we need on the order of 30
                 // expansion slots, which is ~240 bytes per free list (it's
@@ -831,7 +841,6 @@ pub const TinyPageAllocator = struct {
                 1 * 1024 * 1024 * 1024,
             );
         }
-        self.page_allocator = std.heap.page_allocator;
     }
 
     pub fn allocator(self: *Self) Allocator {
@@ -843,7 +852,7 @@ pub const TinyPageAllocator = struct {
 
     const BuddyAllocImplCtx = struct {
         parent: *Self,
-        page_allocator: Allocator,
+        page_allocator: std.mem.Allocator,
 
         pub const min_block_log2 = tiny_page_log2;
         pub const max_size_log2 = page_size_log2;
@@ -900,7 +909,7 @@ pub const TinyPageAllocator = struct {
         const self: *Self = @ptrCast(@alignCast(ctx));
         return .{
             .parent = self,
-            .page_allocator = self.page_allocator,
+            .page_allocator = std.heap.page_allocator,
         };
     }
 
@@ -1183,6 +1192,16 @@ pub const Sphalloc = struct {
 
     pub fn general(self: *Sphalloc) Allocator {
         return self.storage.general.allocator();
+    }
+
+    pub fn expansion(self: *Sphalloc) sphutil.ExpansionAlloc {
+        return .{
+            .info = &.{
+                .min_expansion_size_log2 = tiny_page_log2,
+                .supports_free = true,
+            },
+            .alloc = self.block_alloc.allocator(),
+        };
     }
 
     pub fn makeSubAlloc(self: *Sphalloc, comptime name: []const u8) !*Sphalloc {

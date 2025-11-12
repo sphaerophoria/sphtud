@@ -4,31 +4,13 @@ const sphalloc = @import("sphalloc");
 
 pub const CircularBuffer = noalloc.CircularBuffer;
 pub const RuntimeBoundedArray = noalloc.RuntimeBoundedArray;
-pub const RuntimeSegmentedListConfigurable = noalloc.RuntimeSegmentedListConfigurable;
-pub const RuntimeSegmentedListLinearAlloc = noalloc.RuntimeSegmentedListLinearAlloc;
+pub const RuntimeSegmentedList = noalloc.RuntimeSegmentedList;
+pub const RuntimeSegmentedListUnmanaged = noalloc.RuntimeSegmentedListUnmanaged;
 pub const hash_map = noalloc.hash_map;
 pub const runtime_segmented_list = noalloc.runtime_segmented_list;
-pub const StringHashMapLinear = noalloc.StringHashMapLinear;
-
-pub const sphalloc_expansion_alloc_info = noalloc.runtime_segmented_list.ExpansionAllocInfo{
-    .min_expansion_size_log2 = sphalloc.tiny_page_log2,
-    .supports_free = true,
-};
-pub fn RuntimeSegmentedListSphalloc(comptime T: type) type {
-    return RuntimeSegmentedListConfigurable(T, sphalloc_expansion_alloc_info);
-}
-
-pub const AutoHashMapLinear = noalloc.AutoHashMapLinear;
-pub fn AutoHashMapSphalloc(comptime K: type, comptime V: type) type {
-    return noalloc.hash_map.AutoHashMapConfigurable(K, V, sphalloc_expansion_alloc_info);
-}
-
-pub const ObjectPoolLinear = noalloc.ObjectPoolLinear;
-pub const ObjectPoolConfigurable = noalloc.ObjectPoolConfigurable;
-pub fn ObjectPoolSphalloc(comptime T: type, comptime Handle: type) type {
-    return noalloc.object_pool.ObjectPoolConfigurable(T, Handle, sphalloc_expansion_alloc_info);
-}
-
+pub const ExpansionAlloc = noalloc.ExpansionAlloc;
+pub const AutoHashMap = noalloc.AutoHashMap;
+pub const ObjectPool = noalloc.ObjectPool;
 pub const IoPipe = noalloc.IoPipe;
 
 test {

@@ -12,7 +12,7 @@ pub const Options = struct {
 
 pub const OsHandle = std.posix.fd_t;
 
-pub fn ConnectionStateMachine(comptime Loop: type, comptime CompletionCtx: type) type {
+pub fn ConnectionStateMachine(comptime CompletionCtx: type) type {
     return struct {
         handlers: []const Loop.Handler,
         handler_idx: usize,
@@ -63,7 +63,7 @@ pub fn ConnectionStateMachine(comptime Loop: type, comptime CompletionCtx: type)
     };
 }
 
-pub fn connectionStateMachine(comptime Loop: type, alloc: std.mem.Allocator, handlers: []const Loop.Handler, completion_ctx: anytype) !Loop.Handler {
+pub fn connectionStateMachine(alloc: std.mem.Allocator, handlers: []const Loop.Handler, completion_ctx: anytype) !Loop.Handler {
     const RetT = ConnectionStateMachine(@TypeOf(completion_ctx));
     const ret = try alloc.create(RetT);
     std.debug.assert(handlers.len > 0);
@@ -80,122 +80,118 @@ pub fn connectionStateMachine(comptime Loop: type, alloc: std.mem.Allocator, han
     };
 }
 
-pub fn SendFile(comptime Loop: type) type {
-    return struct {
-        src: OsHandle,
-        dst: OsHandle,
-        offs: i64 = 0,
-        len: usize,
+pub const SendFile = struct {
+    src: OsHandle,
+    dst: OsHandle,
+    offs: i64 = 0,
+    len: usize,
 
-        const vtable = Loop.Handler.VTable{
-            .poll = poll,
-            .close = close,
-        };
-
-        pub fn init(alloc: std.mem.Allocator, src: OsHandle, dst: OsHandle, len: usize) !*SendFile {
-            switch (builtin.mode) {
-                .Debug, .ReleaseSafe => {
-                    std.debug.assert(try getNonblock(src) == false);
-                    std.debug.assert(try getNonblock(dst) == true);
-                },
-                else => {},
-            }
-
-            const ret = try alloc.create(SendFile);
-            ret.* = .{
-                .src = src,
-                .dst = dst,
-                .len = len,
-            };
-            return ret;
-        }
-
-        pub fn handler(self: *SendFile) Loop.Handler {
-            return .{
-                .ptr = self,
-                .vtable = &vtable,
-                .fd = self.dst,
-            };
-        }
-
-        fn poll(ctx: ?*anyopaque, _: *Loop) Loop.PollResult {
-            const self: *SendFile = @ptrCast(@alignCast(ctx));
-            while (true) {
-                _ = std.os.linux.wrapped.sendfile(self.dst, self.src, &self.offs, self.len) catch |e| {
-                    if (e == error.WouldBlock) return .in_progress;
-
-                    std.log.err("Failed to send file: {s}", .{@errorName(e)});
-                    return .complete;
-                };
-                if (self.offs >= self.len) return .complete;
-            }
-        }
-
-        fn close(_: ?*anyopaque) void {}
+    const vtable = Loop.Handler.VTable{
+        .poll = poll,
+        .close = close,
     };
-}
 
-pub fn FdRefBufsWriter(comptime Loop: type) type {
-    return struct {
-        fd: OsHandle,
-        bufs: []const []const u8,
-        buf_idx: usize = 0,
-        char_idx: usize = 0,
+    pub fn init(alloc: std.mem.Allocator, src: OsHandle, dst: OsHandle, len: usize) !*SendFile {
+        switch (builtin.mode) {
+            .Debug, .ReleaseSafe => {
+                std.debug.assert(try getNonblock(src) == false);
+                std.debug.assert(try getNonblock(dst) == true);
+            },
+            else => {},
+        }
 
-        const vtable = Loop.Handler.VTable{
-            .poll = poll,
-            .close = finish,
+        const ret = try alloc.create(SendFile);
+        ret.* = .{
+            .src = src,
+            .dst = dst,
+            .len = len,
         };
+        return ret;
+    }
 
-        const Self = @This();
+    pub fn handler(self: *SendFile) Loop.Handler {
+        return .{
+            .ptr = self,
+            .vtable = &vtable,
+            .fd = self.dst,
+        };
+    }
 
-        pub fn init(alloc: std.mem.Allocator, fd: OsHandle, bufs: []const []const u8) !Self {
-            return .{
-                .fd = fd,
-                .bufs = try alloc.dupe([]const u8, bufs),
+    fn poll(ctx: ?*anyopaque, _: *Loop) Loop.PollResult {
+        const self: *SendFile = @ptrCast(@alignCast(ctx));
+        while (true) {
+            _ = std.os.linux.wrapped.sendfile(self.dst, self.src, &self.offs, self.len) catch |e| {
+                if (e == error.WouldBlock) return .in_progress;
+
+                std.log.err("Failed to send file: {s}", .{@errorName(e)});
+                return .complete;
             };
+            if (self.offs >= self.len) return .complete;
         }
+    }
 
-        pub fn handler(self: *Self) Loop.Handler {
-            return .{
-                .ptr = self,
-                .vtable = &vtable,
-                .fd = self.fd,
-            };
-        }
+    fn close(_: ?*anyopaque) void {}
+};
 
-        fn poll(ctx: ?*anyopaque, _: *Loop) Loop.PollResult {
-            const self: *Self = @ptrCast(@alignCast(ctx));
+pub const FdRefBufsWriter = struct {
+    fd: OsHandle,
+    bufs: []const []const u8,
+    buf_idx: usize = 0,
+    char_idx: usize = 0,
 
-            while (true) {
-                if (self.buf_idx >= self.bufs.len) return .complete;
+    const vtable = Loop.Handler.VTable{
+        .poll = poll,
+        .close = finish,
+    };
 
-                if (self.char_idx >= self.bufs[self.buf_idx].len) {
-                    self.buf_idx += 1;
-                    self.char_idx = 0;
-                    continue;
+    const Self = @This();
+
+    pub fn init(alloc: std.mem.Allocator, fd: OsHandle, bufs: []const []const u8) !Self {
+        return .{
+            .fd = fd,
+            .bufs = try alloc.dupe([]const u8, bufs),
+        };
+    }
+
+    pub fn handler(self: *Self) Loop.Handler {
+        return .{
+            .ptr = self,
+            .vtable = &vtable,
+            .fd = self.fd,
+        };
+    }
+
+    fn poll(ctx: ?*anyopaque, _: *Loop) Loop.PollResult {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+
+        while (true) {
+            if (self.buf_idx >= self.bufs.len) return .complete;
+
+            if (self.char_idx >= self.bufs[self.buf_idx].len) {
+                self.buf_idx += 1;
+                self.char_idx = 0;
+                continue;
+            }
+
+            // pwritev would be better
+            const amount_written = std.posix.write(
+                self.fd,
+                self.bufs[self.buf_idx][self.char_idx..],
+            ) catch |e| {
+                if (e == error.WouldBlock) {
+                    return .in_progress;
                 }
 
-                // pwritev would be better
-                const amount_written = std.posix.write(
-                    self.fd,
-                    self.bufs[self.buf_idx][self.char_idx..],
-                ) catch |e| {
-                    if (e == error.WouldBlock) {
-                        return .in_progress;
-                    }
+                std.log.err("Failed to write buffer: {s}", .{@errorName(e)});
+                return .complete;
+            };
 
-                    std.log.err("Failed to write buffer: {s}", .{@errorName(e)});
-                    return .complete;
-                };
-
-                self.char_idx += amount_written;
-            }
+            self.char_idx += amount_written;
         }
+    }
 
-        fn finish(_: ?*anyopaque) void {}
-    };
-}
+    fn finish(_: ?*anyopaque) void {}
+};
 
 pub const PollReason = union(enum) {
     init,
@@ -206,211 +202,206 @@ pub const PollReason = union(enum) {
     },
 };
 
-pub const LoopLinear = LoopConfigurable(sphutil.runtime_segmented_list.linear_alloc_info);
-pub const LoopSphalloc = LoopConfigurable(sphutil.sphalloc_expansion_alloc_info);
+pub const Loop = struct {
+    fd: i32,
+    force_poll: sphutil.RuntimeSegmentedList(usize),
+    handler_pool: sphutil.RuntimeSegmentedList(Handler),
 
-pub fn LoopConfigurable(comptime expansion_info: sphutil.runtime_segmented_list.ExpansionAllocInfo) type {
-    return struct {
-        fd: i32,
-        force_poll: sphutil.RuntimeSegmentedListConfigurable(usize, expansion_info),
-        handler_pool: sphutil.RuntimeSegmentedListConfigurable(Handler, expansion_info),
+    const Self = @This();
 
-        const Self = @This();
+    pub const PollResult = union(enum) {
+        in_progress,
+        replace_handler: Handler,
+        complete,
+    };
 
-        pub const PollResult = union(enum) {
-            in_progress,
-            replace_handler: Handler,
-            complete,
+    pub const Handler = struct {
+        ptr: ?*anyopaque,
+        vtable: *const VTable,
+        fd: OsHandle,
+        desired_events: struct {
+            read: bool,
+            write: bool,
+        },
+
+        pub const VTable = struct {
+            poll: *const fn (ctx: ?*anyopaque, loop: *Self, reason: PollReason) PollResult,
+            close: *const fn (ctx: ?*anyopaque) void,
         };
 
-        pub const Handler = struct {
-            ptr: ?*anyopaque,
-            vtable: *const VTable,
-            fd: OsHandle,
-            desired_events: struct {
-                read: bool,
-                write: bool,
-            },
-
-            pub const VTable = struct {
-                poll: *const fn (ctx: ?*anyopaque, loop: *Self, reason: PollReason) PollResult,
-                close: *const fn (ctx: ?*anyopaque) void,
-            };
-
-            pub fn poll(self: Handler, loop: *Self, reason: PollReason) PollResult {
-                return self.vtable.poll(self.ptr, loop, reason);
-            }
-
-            pub fn close(self: Handler) void {
-                self.vtable.close(self.ptr);
-            }
-        };
-
-        pub fn init(prealloc: std.mem.Allocator, expansion_alloc: std.mem.Allocator) !Self {
-            const fd = try std.posix.epoll_create1(0);
-
-            // 1000 connections is a ton, 1 million is insane
-            const typical_size = 1024;
-            const max_size = 1 * 1024 * 1024;
-
-            return .{
-                .fd = fd,
-                .force_poll = try .init(
-                    prealloc,
-                    expansion_alloc,
-                    typical_size,
-                    max_size,
-                ),
-                .handler_pool = try .init(
-                    prealloc,
-                    expansion_alloc,
-                    typical_size,
-                    max_size,
-                ),
-            };
+        pub fn poll(self: Handler, loop: *Self, reason: PollReason) PollResult {
+            return self.vtable.poll(self.ptr, loop, reason);
         }
 
-        pub fn register(self: *Self, handler: Handler) !void {
-            // Make a stable pointer for epoll to call into
-            try self.handler_pool.append(handler);
-            const handler_idx = self.handler_pool.len - 1;
-
-            var event = makeEvent(handler_idx, handler.desired_events.read, handler.desired_events.write);
-            try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_ADD, handler.fd, &event);
-
-            try self.force_poll.append(handler_idx);
-        }
-
-        pub fn shutdown(self: *Self) void {
-            var it = self.handler_pool.iter();
-            while (it.next()) |handler| {
-                handler.close();
-            }
-        }
-
-        pub fn wait(self: *Self, scratch: sphalloc.LinearAllocator) !void {
-            const checkpoint = scratch.checkpoint();
-            defer scratch.restore(checkpoint);
-
-            const num_events = 100;
-            const max_update_size = num_events + self.force_poll.len;
-
-            var to_remove = try sphutil.RuntimeBoundedArray(usize).init(scratch.allocator(), max_update_size);
-            var to_add = try sphutil.RuntimeBoundedArray(Handler).init(scratch.allocator(), max_update_size);
-
-            try self.pollForced(scratch, &to_remove, &to_add);
-
-            var events: [num_events]std.os.linux.epoll_event = undefined;
-
-            var num_fds: usize = 0;
-            if (to_remove.items.len == 0 and to_add.items.len == 0) {
-                num_fds = std.posix.epoll_wait(self.fd, &events, -1);
-            }
-
-            for (events[0..num_fds]) |event| {
-                const reason = PollReason{
-                    .io = .{
-                        .hup = (event.events & std.os.linux.EPOLL.HUP) != 0,
-                        .read = (event.events & std.os.linux.EPOLL.IN) != 0,
-                        .write = (event.events & std.os.linux.EPOLL.OUT) != 0,
-                    },
-                };
-                try self.pollHandler(event.data.ptr, reason, &to_remove, &to_add, null);
-            }
-
-            try self.pollForced(scratch, &to_remove, &to_add);
-
-            // We need to remove in reverse order so that swapRemove is always
-            // looking at the right guy
-            std.mem.sort(usize, to_remove.items, {}, struct {
-                fn f(_: void, a: usize, b: usize) bool {
-                    return a > b;
-                }
-            }.f);
-
-            for (to_remove.items) |handler_idx| {
-                const handler = self.handler_pool.getPtr(handler_idx);
-
-                // Remove from epoll so it doesn't call with an invalid handler
-                try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_DEL, handler.fd, null);
-
-                // Remove and cleanup
-                handler.close();
-                handler.* = undefined;
-                self.handler_pool.swapRemove(handler_idx);
-
-                // After a swap remove the element that used to be on the end is pointing to the wrong handler
-                if (handler_idx < self.handler_pool.len) {
-                    std.debug.assert(self.force_poll.len == 0);
-                    const swapped_handler = self.handler_pool.get(handler_idx);
-                    var new_event = makeEvent(handler_idx, swapped_handler.desired_events.read, swapped_handler.desired_events.write);
-                    try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_MOD, swapped_handler.fd, &new_event);
-                }
-            }
-
-            for (to_add.items) |handler| {
-                try self.register(handler);
-            }
-        }
-
-        fn pollForced(self: *Self, scratch: sphalloc.LinearAllocator, to_remove: *sphutil.RuntimeBoundedArray(usize), to_add: *sphutil.RuntimeBoundedArray(Handler)) !void {
-            while (self.force_poll.len > 0) {
-                const cp = scratch.checkpoint();
-                defer scratch.restore(cp);
-
-                var to_force = try sphutil.RuntimeBoundedArray(usize).init(scratch.allocator(), self.force_poll.len);
-
-                var it = self.force_poll.iter();
-                while (it.next()) |idx| {
-                    try self.pollHandler(idx.*, .init, to_remove, to_add, &to_force);
-                }
-                self.force_poll.clear();
-                try self.force_poll.appendSlice(to_force.items);
-            }
-        }
-
-        fn pollHandler(self: *Self, idx: usize, reason: PollReason, to_remove: *sphutil.RuntimeBoundedArray(usize), to_add: *sphutil.RuntimeBoundedArray(Handler), to_force: ?*sphutil.RuntimeBoundedArray(usize)) !void {
-            const handler = self.handler_pool.getPtr(idx);
-            switch (handler.poll(self, reason)) {
-                .in_progress => {},
-                .replace_handler => |new_handler| {
-                    if (new_handler.fd != handler.fd) {
-                        // Will be polled on addition
-                        try to_add.append(new_handler);
-                        try to_remove.append(idx);
-                    } else {
-                        handler.close();
-                        handler.* = new_handler;
-                        if (to_force) |tf| {
-                            try tf.append(idx);
-                        } else {
-                            try self.force_poll.append(idx);
-                        }
-                    }
-                },
-                .complete => {
-                    try to_remove.append(idx);
-                },
-            }
-        }
-
-        fn makeEvent(
-            handler_idx: usize,
-            wants_read: bool,
-            wants_write: bool,
-        ) std.os.linux.epoll_event {
-            var events = std.os.linux.EPOLL.ET | std.os.linux.EPOLL.HUP;
-            if (wants_read) events |= std.os.linux.EPOLL.IN;
-            if (wants_write) events |= std.os.linux.EPOLL.OUT;
-            return std.os.linux.epoll_event{
-                .events = events,
-                .data = .{ .ptr = handler_idx },
-            };
+        pub fn close(self: Handler) void {
+            self.vtable.close(self.ptr);
         }
     };
-}
 
-pub fn SignalHandler(comptime Loop: type, comptime Ctx: type) type {
+    pub fn init(prealloc: std.mem.Allocator, expansion_alloc: sphutil.ExpansionAlloc) !Self {
+        const fd = try std.posix.epoll_create1(0);
+
+        // 1000 connections is a ton, 1 million is insane
+        const typical_size = 1024;
+        const max_size = 1 * 1024 * 1024;
+
+        return .{
+            .fd = fd,
+            .force_poll = try .init(
+                prealloc,
+                expansion_alloc,
+                typical_size,
+                max_size,
+            ),
+            .handler_pool = try .init(
+                prealloc,
+                expansion_alloc,
+                typical_size,
+                max_size,
+            ),
+        };
+    }
+
+    pub fn register(self: *Self, handler: Handler) !void {
+        // Make a stable pointer for epoll to call into
+        try self.handler_pool.append(handler);
+        const handler_idx = self.handler_pool.len - 1;
+
+        var event = makeEvent(handler_idx, handler.desired_events.read, handler.desired_events.write);
+        try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_ADD, handler.fd, &event);
+
+        try self.force_poll.append(handler_idx);
+    }
+
+    pub fn shutdown(self: *Self) void {
+        var it = self.handler_pool.iter();
+        while (it.next()) |handler| {
+            handler.close();
+        }
+    }
+
+    pub fn wait(self: *Self, scratch: sphalloc.LinearAllocator) !void {
+        const checkpoint = scratch.checkpoint();
+        defer scratch.restore(checkpoint);
+
+        const num_events = 100;
+        const max_update_size = num_events + self.force_poll.len;
+
+        var to_remove = try sphutil.RuntimeBoundedArray(usize).init(scratch.allocator(), max_update_size);
+        var to_add = try sphutil.RuntimeBoundedArray(Handler).init(scratch.allocator(), max_update_size);
+
+        try self.pollForced(scratch, &to_remove, &to_add);
+
+        var events: [num_events]std.os.linux.epoll_event = undefined;
+
+        var num_fds: usize = 0;
+        if (to_remove.items.len == 0 and to_add.items.len == 0) {
+            num_fds = std.posix.epoll_wait(self.fd, &events, -1);
+        }
+
+        for (events[0..num_fds]) |event| {
+            const reason = PollReason{
+                .io = .{
+                    .hup = (event.events & std.os.linux.EPOLL.HUP) != 0,
+                    .read = (event.events & std.os.linux.EPOLL.IN) != 0,
+                    .write = (event.events & std.os.linux.EPOLL.OUT) != 0,
+                },
+            };
+            try self.pollHandler(event.data.ptr, reason, &to_remove, &to_add, null);
+        }
+
+        try self.pollForced(scratch, &to_remove, &to_add);
+
+        // We need to remove in reverse order so that swapRemove is always
+        // looking at the right guy
+        std.mem.sort(usize, to_remove.items, {}, struct {
+            fn f(_: void, a: usize, b: usize) bool {
+                return a > b;
+            }
+        }.f);
+
+        for (to_remove.items) |handler_idx| {
+            const handler = self.handler_pool.getPtr(handler_idx);
+
+            // Remove from epoll so it doesn't call with an invalid handler
+            try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_DEL, handler.fd, null);
+
+            // Remove and cleanup
+            handler.close();
+            handler.* = undefined;
+            self.handler_pool.swapRemove(handler_idx);
+
+            // After a swap remove the element that used to be on the end is pointing to the wrong handler
+            if (handler_idx < self.handler_pool.len) {
+                std.debug.assert(self.force_poll.len == 0);
+                const swapped_handler = self.handler_pool.get(handler_idx);
+                var new_event = makeEvent(handler_idx, swapped_handler.desired_events.read, swapped_handler.desired_events.write);
+                try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_MOD, swapped_handler.fd, &new_event);
+            }
+        }
+
+        for (to_add.items) |handler| {
+            try self.register(handler);
+        }
+    }
+
+    fn pollForced(self: *Self, scratch: sphalloc.LinearAllocator, to_remove: *sphutil.RuntimeBoundedArray(usize), to_add: *sphutil.RuntimeBoundedArray(Handler)) !void {
+        while (self.force_poll.len > 0) {
+            const cp = scratch.checkpoint();
+            defer scratch.restore(cp);
+
+            var to_force = try sphutil.RuntimeBoundedArray(usize).init(scratch.allocator(), self.force_poll.len);
+
+            var it = self.force_poll.iter();
+            while (it.next()) |idx| {
+                try self.pollHandler(idx.*, .init, to_remove, to_add, &to_force);
+            }
+            self.force_poll.clear();
+            try self.force_poll.appendSlice(to_force.items);
+        }
+    }
+
+    fn pollHandler(self: *Self, idx: usize, reason: PollReason, to_remove: *sphutil.RuntimeBoundedArray(usize), to_add: *sphutil.RuntimeBoundedArray(Handler), to_force: ?*sphutil.RuntimeBoundedArray(usize)) !void {
+        const handler = self.handler_pool.getPtr(idx);
+        switch (handler.poll(self, reason)) {
+            .in_progress => {},
+            .replace_handler => |new_handler| {
+                if (new_handler.fd != handler.fd) {
+                    // Will be polled on addition
+                    try to_add.append(new_handler);
+                    try to_remove.append(idx);
+                } else {
+                    handler.close();
+                    handler.* = new_handler;
+                    if (to_force) |tf| {
+                        try tf.append(idx);
+                    } else {
+                        try self.force_poll.append(idx);
+                    }
+                }
+            },
+            .complete => {
+                try to_remove.append(idx);
+            },
+        }
+    }
+
+    fn makeEvent(
+        handler_idx: usize,
+        wants_read: bool,
+        wants_write: bool,
+    ) std.os.linux.epoll_event {
+        var events = std.os.linux.EPOLL.ET | std.os.linux.EPOLL.HUP;
+        if (wants_read) events |= std.os.linux.EPOLL.IN;
+        if (wants_write) events |= std.os.linux.EPOLL.OUT;
+        return std.os.linux.epoll_event{
+            .events = events,
+            .data = .{ .ptr = handler_idx },
+        };
+    }
+};
+
+pub fn SignalHandler(comptime Ctx: type) type {
     return struct {
         fd: OsHandle,
         ctx: Ctx,
@@ -477,7 +468,7 @@ pub fn signalHandler(comptime signals: []const comptime_int, ctx: anytype) !Sign
 }
 
 pub const net = struct {
-    pub fn Server(comptime Loop: type, comptime Ctx: type) type {
+    pub fn Server(comptime Ctx: type) type {
         return struct {
             inner: std.net.Server,
             ctx: Ctx,
@@ -549,7 +540,7 @@ pub const net = struct {
         };
     }
 
-    pub fn server(comptime Loop: type, s: std.net.Server, ctx: anytype) !Server(Loop, @TypeOf(ctx)) {
+    pub fn server(s: std.net.Server, ctx: anytype) !Server(@TypeOf(ctx)) {
         try setNonblock(s.stream.handle);
         return .{
             .inner = s,
@@ -557,7 +548,7 @@ pub const net = struct {
         };
     }
 
-    pub fn HttpConnection(comptime Loop: type, comptime Ctx: type) type {
+    pub fn HttpConnection(comptime Ctx: type) type {
         return struct {
             alloc: *sphalloc.Sphalloc, // owned
             scratch: *sphalloc.ScratchAlloc,
@@ -678,7 +669,6 @@ pub const net = struct {
     }
 
     pub fn httpConnection(
-        comptime Loop: type,
         parent_alloc: *sphalloc.Sphalloc,
         scratch: *sphalloc.ScratchAlloc,
         inner: std.net.Stream,
@@ -729,12 +719,12 @@ const TestConnection = struct {
         }
     };
 
-    const vtable = LoopLinear.Handler.VTable{
+    const vtable = Loop.Handler.VTable{
         .poll = poll,
         .close = close,
     };
 
-    fn handler(self: *TestConnection) LoopLinear.Handler {
+    fn handler(self: *TestConnection) Loop.Handler {
         return .{
             .ptr = self,
             .desired_events = .{
@@ -746,7 +736,7 @@ const TestConnection = struct {
         };
     }
 
-    fn poll(ctx: ?*anyopaque, _: *LoopLinear, _: PollReason) LoopLinear.PollResult {
+    fn poll(ctx: ?*anyopaque, _: *Loop, _: PollReason) Loop.PollResult {
         const self: *TestConnection = @ptrCast(@alignCast(ctx));
         self.state.received_len += self.inner.stream.read(self.state.received_data[self.state.received_len..]) catch |e| {
             if (e == error.WouldBlock) {
@@ -768,7 +758,7 @@ const TestConnectionGenerator = struct {
     state: *TestConnection.State,
     is_closed: bool = false,
 
-    pub fn generate(self: *TestConnectionGenerator, conn: std.net.Server.Connection) !LoopLinear.Handler {
+    pub fn generate(self: *TestConnectionGenerator, conn: std.net.Server.Connection) !Loop.Handler {
         const ret = try self.state.alloc.create(TestConnection);
         ret.* = .{
             .state = self.state,
@@ -799,7 +789,7 @@ test "TCP loopback" {
     };
 
     var connection_gen = TestConnectionGenerator{ .state = &state };
-    var async_server = try net.server(LoopLinear, std_server, &connection_gen);
+    var async_server = try net.server(std_server, &connection_gen);
 
     const thread_handle = try std.Thread.spawn(.{}, struct {
         fn f(conn_addy: std.net.Address) !void {
@@ -810,7 +800,7 @@ test "TCP loopback" {
     }.f, .{addy});
     thread_handle.detach();
 
-    var loop = try LoopLinear.init(alloc.allocator(), alloc.allocator());
+    var loop = try Loop.init(alloc.allocator(), alloc.expansion());
     try loop.register(async_server.handler());
 
     while (state.received_len == 0) {

@@ -5,7 +5,7 @@ const gui = @import("gui.zig");
 const sphtext = @import("sphtext");
 const sphrender = @import("sphrender");
 const sphutil = @import("sphutil");
-const RuntimeSegmentedList = sphutil.RuntimeSegmentedListSphalloc;
+const RuntimeSegmentedList = sphutil.RuntimeSegmentedList;
 const PixelSize = gui.PixelSize;
 const TextRenderer = sphtext.TextRenderer;
 const sphalloc = @import("sphalloc");
@@ -30,14 +30,14 @@ pub fn guiText(alloc: gui.GuiAlloc, shared: *const SharedState, text_retriever_c
 
     const text = try RuntimeSegmentedList(u8).init(
         alloc.heap.general(),
-        alloc.heap.block_alloc.allocator(),
+        alloc.heap.expansion(),
         typical_max_glyphs,
         max_glyph_capacity,
     );
 
     const glyph_locations = try RuntimeSegmentedList(TextRenderer.TextLayout.GlyphLoc).init(
         alloc.heap.general(),
-        alloc.heap.block_alloc.allocator(),
+        alloc.heap.expansion(),
         typical_max_glyphs,
         max_glyph_capacity,
     );

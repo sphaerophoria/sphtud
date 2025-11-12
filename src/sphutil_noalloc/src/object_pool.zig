@@ -1,5 +1,7 @@
 const std = @import("std");
 const rsl = @import("runtime_segmented_list.zig");
+const sphutil = @import("sphutil_noalloc.zig");
+const ExpansionAlloc = sphutil.ExpansionAlloc;
 const bit_set = @import("bit_set.zig");
 
 fn handleFromIdx(comptime Handle: type, idx: usize) Handle {
@@ -18,17 +20,13 @@ fn idxFromHandle(handle: anytype) usize {
     }
 }
 
-pub fn ObjectPoolLinear(comptime T: type, comptime Handle: type) type {
-    return ObjectPoolConfigurable(T, Handle, rsl.linear_alloc_info);
-}
-
-pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime expansion_alloc_info: rsl.ExpansionAllocInfo) type {
+pub fn ObjectPool(comptime T: type, comptime Handle: type) type {
     return struct {
         objects: Objects,
-        tombstones: bit_set.BitSet(expansion_alloc_info), // True on dead
-        free_list: rsl.RuntimeSegmentedListConfigurableUnmanaged(usize, expansion_alloc_info),
+        tombstones: bit_set.BitSet, // True on dead
+        free_list: rsl.RuntimeSegmentedListUnmanaged(usize),
 
-        const Objects = rsl.RuntimeSegmentedListConfigurableUnmanaged(T, expansion_alloc_info);
+        const Objects = rsl.RuntimeSegmentedListUnmanaged(T);
         const Self = @This();
 
         const WithHandle = struct {
@@ -38,17 +36,18 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
 
         pub fn init(
             prealloc_alloc: std.mem.Allocator,
+            expansion_alloc: ExpansionAlloc,
             prealloc_size: usize,
             max_size: usize,
         ) !Self {
             return .{
-                .objects = try .init(prealloc_alloc, prealloc_size, max_size),
-                .tombstones = try .init(prealloc_alloc, prealloc_size, max_size),
-                .free_list = try .init(prealloc_alloc, prealloc_size, max_size),
+                .objects = try .init(prealloc_alloc, expansion_alloc, prealloc_size, max_size),
+                .tombstones = try .init(prealloc_alloc, expansion_alloc, prealloc_size, max_size),
+                .free_list = try .init(prealloc_alloc, expansion_alloc, prealloc_size, max_size),
             };
         }
 
-        pub fn acquire(self: *Self, expansion_alloc: std.mem.Allocator) !WithHandle {
+        pub fn acquire(self: *Self, expansion_alloc: sphutil.ExpansionAlloc) !WithHandle {
             if (self.free_list.pop(expansion_alloc)) |idx| {
                 const handle = handleFromIdx(Handle, idx);
                 std.debug.assert(self.tombstones.get(idx));
@@ -74,7 +73,7 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             };
         }
 
-        pub fn release(self: *Self, expansion_alloc: std.mem.Allocator, handle: Handle) void {
+        pub fn release(self: *Self, expansion_alloc: sphutil.ExpansionAlloc, handle: Handle) void {
             const idx = idxFromHandle(handle);
             std.debug.assert(!self.tombstones.get(idx));
 
@@ -94,7 +93,7 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
         pub const Iter = struct {
             idx: usize,
             objects: Objects.Iter,
-            tombs: bit_set.BitSet(expansion_alloc_info).Iter,
+            tombs: bit_set.BitSet.Iter,
 
             pub fn next(self: *Iter) ?WithHandle {
                 while (true) {
@@ -120,7 +119,7 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             };
         }
 
-        pub fn relciamMemory(self: *Self, expansion_alloc: std.mem.Allocator, move_ctx: anytype) void {
+        pub fn relciamMemory(self: *Self, expansion_alloc: sphutil.ExpansionAlloc, move_ctx: anytype) void {
             if (self.needsMemoryReclamation()) {
                 self.defrag(expansion_alloc, move_ctx);
             }
@@ -141,7 +140,7 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             return after_removal_block_start < last_block_start;
         }
 
-        pub fn defragIfDensityLow(self: *Self, expansion_alloc: std.mem.Allocator, density_thresh: f32, move_ctx: anytype) void {
+        pub fn defragIfDensityLow(self: *Self, expansion_alloc: sphutil.ExpansionAlloc, density_thresh: f32, move_ctx: anytype) void {
             if (self.isLowDensity(density_thresh)) {
                 self.defrag(expansion_alloc, move_ctx);
             }
@@ -154,7 +153,7 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             return 1.0 - free_list_len / allocated_objects < thresh;
         }
 
-        pub fn defrag(self: *Self, expansion_alloc: std.mem.Allocator, move_ctx: anytype) void {
+        pub fn defrag(self: *Self, expansion_alloc: sphutil.ExpansionAlloc, move_ctx: anytype) void {
             // Work with indexes for now, despite extra math in RSL to resolve
             // block indexes. Because I'm too stupid :). We can make the
             // argument that defrag is already expensive and should be
@@ -217,7 +216,7 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             return self.objects.getPtr(tail.*);
         }
 
-        pub fn scramble(self: *Self, expansion_alloc: std.mem.Allocator, scratch_alloc: std.mem.Allocator, random: std.Random, move_ctx: anytype) !void {
+        pub fn scramble(self: *Self, expansion_alloc: sphutil.ExpansionAlloc, scratch_alloc: std.mem.Allocator, random: std.Random, move_ctx: anytype) !void {
             var it = self.iter();
 
             var indices = std.ArrayList(usize).initBuffer(try scratch_alloc.alloc(usize, self.objects.len - self.free_list.len));
@@ -269,7 +268,7 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
             std.debug.assert(free_count == self.free_list.len);
         }
 
-        fn getOrMakeHole(self: *Self, expansion_alloc: std.mem.Allocator) !usize {
+        fn getOrMakeHole(self: *Self, expansion_alloc: sphutil.ExpansionAlloc) !usize {
             var head: usize = 0;
             if (self.findNextHole(&head)) |_| {
                 return head;
@@ -286,8 +285,8 @@ pub fn ObjectPoolConfigurable(comptime T: type, comptime Handle: type, comptime 
 }
 
 const TrackedPool = struct {
-    expansion_alloc: std.mem.Allocator,
-    pool: ObjectPoolLinear(usize, Handle),
+    expansion_alloc: sphutil.ExpansionAlloc,
+    pool: ObjectPool(usize, Handle),
     map: std.AutoHashMap(Handle, void),
 
     const Handle = struct {
@@ -319,8 +318,10 @@ const TrackedPool = struct {
     };
 
     pub fn init(alloc: std.mem.Allocator) !TrackedPool {
-        const pool = try ObjectPoolLinear(usize, Handle).init(
+        const expansion_alloc = ExpansionAlloc.linear(alloc);
+        const pool = try ObjectPool(usize, Handle).init(
             alloc,
+            expansion_alloc,
             16,
             1024,
         );
@@ -328,7 +329,7 @@ const TrackedPool = struct {
         const map = std.AutoHashMap(Handle, void).init(alloc);
 
         return .{
-            .expansion_alloc = alloc,
+            .expansion_alloc = expansion_alloc,
             .pool = pool,
             .map = map,
         };
@@ -422,10 +423,11 @@ test "ObjectPool memory reclaimable" {
     var fba = std.heap.FixedBufferAllocator.init(&fba_buf);
     const alloc = fba.allocator();
 
-    var pool = try ObjectPoolConfigurable(u32, u32, rsl.linear_alloc_info).init(alloc, 4, 10);
+    const expansion_alloc = ExpansionAlloc.linear(alloc);
+    var pool = try ObjectPool(u32, u32).init(alloc, expansion_alloc, 4, 10);
 
     for (0..5) |i| {
-        const item = try pool.acquire(alloc);
+        const item = try pool.acquire(expansion_alloc);
         // Note that this is not a test expectation, but if this assertion
         // fails the test itself is broken. We are assuming we know the
         // underlying storage patterns here
@@ -433,7 +435,7 @@ test "ObjectPool memory reclaimable" {
     }
 
     try std.testing.expectEqual(false, pool.needsMemoryReclamation());
-    pool.release(alloc, 3);
+    pool.release(expansion_alloc, 3);
 
     try std.testing.expectEqual(true, pool.needsMemoryReclamation());
 }
@@ -443,18 +445,19 @@ test "ObjectPool low density" {
     var fba = std.heap.FixedBufferAllocator.init(&fba_buf);
     const alloc = fba.allocator();
 
-    var pool = try ObjectPoolConfigurable(u32, u32, rsl.linear_alloc_info).init(alloc, 4, 10);
+    const expansion_alloc = ExpansionAlloc.linear(alloc);
+    var pool = try ObjectPool(u32, u32).init(alloc, expansion_alloc, 4, 10);
 
     for (0..5) |i| {
-        const item = try pool.acquire(alloc);
+        const item = try pool.acquire(expansion_alloc);
         // Note that this is not a test expectation, but if this assertion
         // fails the test itself is broken. We are assuming we know the
         // underlying storage patterns here
         std.debug.assert(i == item.handle);
     }
 
-    pool.release(alloc, 3);
-    pool.release(alloc, 1);
+    pool.release(expansion_alloc, 3);
+    pool.release(expansion_alloc, 1);
 
     try std.testing.expectEqual(true, pool.isLowDensity(1.0));
     try std.testing.expectEqual(true, pool.isLowDensity(0.61));
