@@ -5,7 +5,15 @@ const gl = sphrender.gl;
 const sphwindow = @import("sphwindow");
 const gui = @import("gui.zig");
 
-const GuiAction = union(enum) {};
+const GuiAction = union(enum) {
+    text_edit: gui.textbox.TextboxNotifier,
+
+    pub fn makeTextEdit(notifier: gui.textbox.TextboxNotifier) GuiAction {
+        return .{
+            .text_edit = notifier,
+        };
+    }
+};
 
 fn standardNormalVal(z: f32) f32 {
     return std.math.pow(f32, std.math.e, -z * z / 2) / std.math.sqrt(2 * std.math.pi);
@@ -162,6 +170,12 @@ pub fn main() !void {
     const widget_factory = gui_state.factory(gui_alloc);
     const layout = try widget_factory.makeLayout();
 
+    var input_text_buf: [100]u8 = undefined;
+
+    var input_text = std.ArrayList(u8).initBuffer(&input_text_buf);
+    try layout.pushWidget(try widget_factory.makeLabel("A text box"));
+    try layout.pushWidget(try widget_factory.makeTextbox(&input_text.items, &GuiAction.makeTextEdit));
+
     try layout.pushWidget(try widget_factory.makeLabel("A histogram"));
     try layout.pushWidget(try widget_factory.makeBox(
         try widget_factory.makeHistogram(histogram_retriever),
@@ -206,11 +220,31 @@ pub fn main() !void {
         gl.glClearColor(background_color.r, background_color.g, background_color.b, background_color.a);
         gl.glClear(gl.GL_COLOR_BUFFER_BIT);
 
-        const response = try runner.step(1.0, .{
+        var response = try runner.step(1.0, .{
             .width = @intCast(width),
             .height = @intCast(height),
         }, &window.queue);
-        _ = response;
+
+        if (response.action) |*a| switch (a.*) {
+            .text_edit => |*notifier| {
+                for (notifier.events) |ev| switch (ev.key) {
+                    .ascii => |char| {
+                        try input_text.insertBounded(notifier.priv.insert_idx, char);
+                        try notifier.notify(.insert);
+                    },
+                    .backspace => {
+                        _ = input_text.orderedRemove(notifier.backspaceIdx() orelse continue);
+                        try notifier.notify(.backspace);
+                    },
+                    .delete => {
+                        _ = input_text.orderedRemove(notifier.deleteIdx(input_text.items.len) orelse continue);
+                        try notifier.notify(.delete);
+                    },
+                    else => {},
+                };
+            },
+        };
+
         window.swapBuffers();
     }
 }

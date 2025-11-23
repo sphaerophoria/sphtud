@@ -31,16 +31,57 @@ pub const SharedTextboxState = struct {
     style: TextboxStyle,
 };
 
+const TextboxActionKind = enum {
+    insert,
+    delete,
+    backspace,
+};
+
 const TextboxAction = union(enum) {
     insert_char: usize,
     delete_char: usize,
+
+    fn fromKind(kind: TextboxActionKind, idx: usize) ?TextboxAction {
+        switch (kind) {
+            .insert => return .{ .insert_char = idx },
+            .delete => return .{ .delete_char = idx },
+            .backspace => {
+                if (idx == 0) return null;
+                return .{ .delete_char = idx - 1 };
+            },
+        }
+    }
 };
 
 pub const TextboxNotifier = struct {
-    channel: *std.ArrayList(TextboxAction),
+    priv: struct {
+        insert_idx: usize,
+        channel: *std.ArrayList(TextboxAction),
+    },
+    events: []const gui.KeyEvent,
 
-    pub fn notify(self: TextboxNotifier, action: TextboxAction) !void {
-        try self.channel.appendBounded(action);
+    pub fn insertIdx(self: TextboxNotifier, string_len: usize) usize {
+        return @max(string_len, self.priv.insert_idx);
+    }
+
+    pub fn deleteIdx(self: TextboxNotifier, string_len: usize) ?usize {
+        if (self.priv.insert_idx >= string_len) return null;
+        return self.priv.insert_idx;
+    }
+
+    pub fn backspaceIdx(self: TextboxNotifier) ?usize {
+        if (self.priv.insert_idx == 0) return null;
+        return self.priv.insert_idx - 1;
+    }
+
+    pub fn notify(self: *TextboxNotifier, kind: TextboxActionKind) !void {
+        const action = TextboxAction.fromKind(kind, self.priv.insert_idx) orelse return;
+        switch (kind) {
+            .insert => self.priv.insert_idx += 1,
+            .backspace => self.priv.insert_idx -|= 1,
+            .delete => {},
+        }
+        try self.priv.channel.appendBounded(action);
     }
 };
 
@@ -156,7 +197,7 @@ fn Textbox(comptime Action: type, comptime TextRetriever: type, comptime TextAct
         }
 
         fn processExternalActions(self: *Self) void {
-            for (self.executed_actions.slice()) |action| {
+            for (self.executed_actions.items) |action| {
                 switch (action) {
                     .insert_char => |idx| {
                         if (idx <= self.cursor_pos_text_idx) {
@@ -170,7 +211,7 @@ fn Textbox(comptime Action: type, comptime TextRetriever: type, comptime TextAct
                     },
                 }
             }
-            self.executed_actions.resize(0) catch unreachable;
+            self.executed_actions.shrinkRetainingCapacity(0);
         }
 
         fn updateTextPosition(self: *Self) void {
@@ -236,7 +277,7 @@ fn Textbox(comptime Action: type, comptime TextRetriever: type, comptime TextAct
                         else => {},
                     }
                 }
-                action = generateAction(Action, &self.text_action, self.makeNotifier(), self.cursor_pos_text_idx, frame_keys);
+                action = generateAction(Action, &self.text_action, self.makeNotifier(frame_keys));
             }
 
             return .{
@@ -245,9 +286,13 @@ fn Textbox(comptime Action: type, comptime TextRetriever: type, comptime TextAct
             };
         }
 
-        fn makeNotifier(self: *Self) TextboxNotifier {
+        fn makeNotifier(self: *Self, events: []const gui.KeyEvent) TextboxNotifier {
             return .{
-                .channel = &self.executed_actions,
+                .priv = .{
+                    .insert_idx = self.cursor_pos_text_idx,
+                    .channel = &self.executed_actions,
+                },
+                .events = events,
             };
         }
     };
@@ -279,40 +324,21 @@ pub fn makeTextbox(comptime Action: type, alloc: gui.GuiAlloc, text_retreiver: a
 pub fn executeTextEditOnArrayList(
     alloc: Allocator,
     text_input: *std.ArrayListUnmanaged(u8),
-    insert_idx: usize,
-    notifier: gui.textbox.TextboxNotifier,
-    events: []const gui.KeyEvent,
+    notifier: *gui.textbox.TextboxNotifier,
 ) !void {
-    var num_inserted: isize = 0;
-
-    for (events) |ev| {
-        const fixed_insert_idx: usize =
-            // FIXME: Cast hell
-            @intCast(std.math.clamp(@as(isize, @intCast(insert_idx)) + num_inserted, 0, @as(isize, @intCast(text_input.items.len))));
-
+    for (notifier.events) |ev| {
         switch (ev.key) {
             .ascii => |char| {
-                try text_input.insert(alloc, fixed_insert_idx, char);
-                num_inserted += 1;
-                try notifier.notify(.{ .insert_char = fixed_insert_idx });
+                try text_input.insert(alloc, notifier.priv.insert_idx, char);
+                try notifier.notify(.insert);
             },
             .backspace => {
-                if (fixed_insert_idx > 0) {
-                    const delete_idx = fixed_insert_idx - 1;
-                    if (delete_idx < text_input.items.len) {
-                        _ = text_input.orderedRemove(delete_idx);
-                        num_inserted -= 1;
-                        try notifier.notify(.{ .delete_char = delete_idx });
-                    }
-                }
+                _ = text_input.orderedRemove(notifier.backspaceIdx() orelse continue);
+                try notifier.notify(.backspace);
             },
             .delete => {
-                const delete_idx = fixed_insert_idx;
-                if (delete_idx < text_input.items.len) {
-                    _ = text_input.orderedRemove(delete_idx);
-                    num_inserted -= 1;
-                    try notifier.notify(.{ .delete_char = delete_idx });
-                }
+                _ = text_input.orderedRemove(notifier.deleteIdx(text_input.items.len) orelse continue);
+                try notifier.notify(.delete);
             },
             else => {},
         }
@@ -348,7 +374,7 @@ fn makeLabelBounds(style: TextboxStyle, left_offs: i32, label_size: PixelSize, w
 }
 
 fn getCursorOffsetFromText(
-    glyph_locations: sphutil.RuntimeSegmentedListSphalloc(TextRenderer.TextLayout.GlyphLoc),
+    glyph_locations: sphutil.RuntimeSegmentedList(TextRenderer.TextLayout.GlyphLoc),
     layout_bounds: gui.gui_text.LayoutBounds,
     cursor_pos: usize,
 ) i32 {
@@ -361,20 +387,20 @@ fn getCursorOffsetFromText(
     return cursor_offs;
 }
 
-fn generateAction(comptime Action: type, action_generator: anytype, notifier: TextboxNotifier, pos: usize, items: []const gui.KeyEvent) Action {
+fn generateAction(comptime Action: type, action_generator: anytype, notifier: TextboxNotifier) Action {
     const Ptr = @TypeOf(action_generator);
     const T = @typeInfo(Ptr).pointer.child;
 
     switch (@typeInfo(T)) {
         .@"struct" => {
             if (@hasDecl(T, "generate")) {
-                return action_generator.generate(notifier, pos, items);
+                return action_generator.generate(notifier);
             }
         },
         .pointer => |p| {
             switch (@typeInfo(p.child)) {
                 .@"fn" => {
-                    return action_generator.*(notifier, pos, items);
+                    return action_generator.*(notifier);
                 },
                 else => {},
             }
