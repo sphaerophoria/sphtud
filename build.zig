@@ -26,6 +26,7 @@ pub fn build(b: *std.Build) !void {
     const sphevent = b.dependency("sphevent", .{}).module("sphevent");
     const sphttp = b.dependency("sphttp", .{}).module("sphttp");
     const sphxml = b.dependency("sphxml", .{}).module("sphxml");
+    const sphimage = b.dependency("sphimage", .{}).module("sphimage");
 
     const sphtud = b.addModule("sphtud", .{
         .root_source_file = b.path("src/sphtud.zig"),
@@ -36,6 +37,7 @@ pub fn build(b: *std.Build) !void {
     sphtud.addImport("sphevent", sphevent);
     sphtud.addImport("sphttp", sphttp);
     sphtud.addImport("sphxml", sphxml);
+    sphtud.addImport("sphimage", sphimage);
     sphtud.addOptions("config", options);
 
     options.addOption(bool, "export_sphrender", with_gl);
