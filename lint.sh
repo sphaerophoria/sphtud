@@ -41,4 +41,9 @@ pushd src/sphxml/
 zig build test
 popd
 
+pushd src/sphimage/
+zig build
+./zig-out/bin/image_tests
+popd
+
 zig build

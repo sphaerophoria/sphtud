@@ -25,6 +25,7 @@ pub const Window = struct {
         glfwb.glfwWindowHint(glfwb.GLFW_OPENGL_PROFILE, glfwb.GLFW_OPENGL_CORE_PROFILE);
         glfwb.glfwWindowHint(glfwb.GLFW_OPENGL_DEBUG_CONTEXT, 1);
         glfwb.glfwWindowHint(glfwb.GLFW_SAMPLES, 4);
+        glfwb.glfwWindowHint(glfwb.GLFW_SRGB_CAPABLE, glfwb.GLFW_TRUE);
 
         const window = glfwb.glfwCreateWindow(window_width, window_height, name, null, null);
         if (window == null) {

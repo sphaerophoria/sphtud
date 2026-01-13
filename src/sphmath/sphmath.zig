@@ -19,7 +19,7 @@ pub fn length(in: anytype) f32 {
     return @sqrt(length2(in));
 }
 
-pub fn dot(a: anytype, b: anytype) f32 {
+pub fn dot(a: anytype, b: anytype) @TypeOf(a[0]) {
     return @reduce(.Add, a * b);
 }
 
@@ -33,7 +33,7 @@ pub fn normalize(in: anytype) @TypeOf(in) {
     return in / l;
 }
 
-pub fn cross(a: Vec3, b: Vec3) Vec3 {
+pub fn cross(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
     return .{
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
@@ -52,129 +52,143 @@ pub fn cross2(a: Vec2, b: Vec2) f32 {
     return a[0] * b[1] - a[1] * b[0];
 }
 
-pub const Mat3x3 = struct {
-    data: [9]f32 = .{
-        1.0, 0.0, 0.0,
-        0.0, 1.0, 0.0,
-        0.0, 0.0, 1.0,
-    },
+pub const Mat3x3 = Mat3x3T(f32);
 
-    pub fn mul(self: Mat3x3, vec: Vec3) Vec3 {
-        const x = self.data[0..3].* * vec;
-        const y = self.data[3..6].* * vec;
-        const z = self.data[6..9].* * vec;
+pub fn Mat3x3T(comptime T: type) type {
+    return struct {
+        data: [9]T = .{
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0,
+        },
 
-        return .{
-            @reduce(.Add, x),
-            @reduce(.Add, y),
-            @reduce(.Add, z),
-        };
-    }
+        const Self = @This();
 
-    pub fn matmul(a: Mat3x3, b: Mat3x3) Mat3x3 {
-        var ret: [9]f32 = undefined;
-
-        for (0..9) |i| {
-            const row = i / 3;
-            const col = i % 3;
-
-            const a_row = a.data[row * 3 .. (row + 1) * 3];
-            const b_col = [3]f32{
-                b.data[col],
-                b.data[3 + col],
-                b.data[6 + col],
-            };
-
-            ret[i] =
-                a_row[0] * b_col[0] +
-                a_row[1] * b_col[1] +
-                a_row[2] * b_col[2];
+        pub fn withT(self: Self, comptime T2: type) Mat3x3T(T2) {
+            var ret: Mat3x3T(T2) = undefined;
+            for (&ret.data, &self.data) |*out, in| {
+                out.* = @floatCast(in);
+            }
+            return ret;
         }
 
-        return .{
-            .data = ret,
-        };
-    }
+        pub fn mul(self: Self, vec: @Vector(3, T)) @Vector(3, T) {
+            const x = self.data[0..3].* * vec;
+            const y = self.data[3..6].* * vec;
+            const z = self.data[6..9].* * vec;
 
-    pub fn invert(self: Mat3x3) Mat3x3 {
-        const x0 = Vec3{ self.data[0], self.data[3], self.data[6] };
-        const x1 = Vec3{ self.data[1], self.data[4], self.data[7] };
-        const x2 = Vec3{ self.data[2], self.data[5], self.data[8] };
+            return .{
+                @reduce(.Add, x),
+                @reduce(.Add, y),
+                @reduce(.Add, z),
+            };
+        }
 
-        const c12 = cross(x1, x2);
-        const c20 = cross(x2, x0);
-        const c01 = cross(x0, x1);
+        pub fn matmul(a: Self, b: Self) Self {
+            var ret: [9]T = undefined;
 
-        const det = dot(x0, c12);
-        const det_splat: Vec3 = @splat(det);
+            for (0..9) |i| {
+                const row = i / 3;
+                const col = i % 3;
 
-        var ret: Mat3x3 = undefined;
+                const a_row = a.data[row * 3 .. (row + 1) * 3];
+                const b_col = [3]T{
+                    b.data[col],
+                    b.data[3 + col],
+                    b.data[6 + col],
+                };
 
-        ret.data[0..3].* = c12 / det_splat;
-        ret.data[3..6].* = c20 / det_splat;
-        ret.data[6..9].* = c01 / det_splat;
+                ret[i] =
+                    a_row[0] * b_col[0] +
+                    a_row[1] * b_col[1] +
+                    a_row[2] * b_col[2];
+            }
 
-        return ret;
-    }
+            return .{
+                .data = ret,
+            };
+        }
 
-    test "sanity invert" {
-        const m1 = Mat3x3{ .data = .{
-            40, 50,  123,
-            92, -12, -25,
-            0,  0,   1,
-        } };
+        pub fn invert(self: Self) Self {
+            const x0 = @Vector(3, T){ self.data[0], self.data[3], self.data[6] };
+            const x1 = @Vector(3, T){ self.data[1], self.data[4], self.data[7] };
+            const x2 = @Vector(3, T){ self.data[2], self.data[5], self.data[8] };
 
-        const inverse = m1.invert();
+            const c12 = cross(x1, x2);
+            const c20 = cross(x2, x0);
+            const c01 = cross(x0, x1);
 
-        const identity = inverse.matmul(m1);
-        for (0..9) |idx| {
-            const row = idx / 3;
-            const col = idx % 3;
-            const is_diag = row == col;
-            if (is_diag) {
-                try std.testing.expectApproxEqAbs(1.0, identity.data[idx], 0.001);
-            } else {
-                try std.testing.expectApproxEqAbs(0.0, identity.data[idx], 0.001);
+            const det = dot(x0, c12);
+            const det_splat: @Vector(3, T) = @splat(det);
+
+            var ret: Self = undefined;
+
+            ret.data[0..3].* = c12 / det_splat;
+            ret.data[3..6].* = c20 / det_splat;
+            ret.data[6..9].* = c01 / det_splat;
+
+            return ret;
+        }
+
+        test "sanity invert" {
+            const m1 = Self{ .data = .{
+                40, 50,  123,
+                92, -12, -25,
+                0,  0,   1,
+            } };
+
+            const inverse = m1.invert();
+
+            const identity = inverse.matmul(m1);
+            for (0..9) |idx| {
+                const row = idx / 3;
+                const col = idx % 3;
+                const is_diag = row == col;
+                if (is_diag) {
+                    try std.testing.expectApproxEqAbs(1.0, identity.data[idx], 0.001);
+                } else {
+                    try std.testing.expectApproxEqAbs(0.0, identity.data[idx], 0.001);
+                }
             }
         }
-    }
 
-    pub fn transpose(self: Mat3x3) Mat3x3 {
-        var ret = self;
+        pub fn transpose(self: Self) Self {
+            var ret = self;
 
-        const pairs: [3][2]usize = .{
-            .{ 1, 3 },
-            .{ 2, 6 },
-            .{ 5, 7 },
-        };
+            const pairs: [3][2]usize = .{
+                .{ 1, 3 },
+                .{ 2, 6 },
+                .{ 5, 7 },
+            };
 
-        for (pairs) |pair| {
-            std.mem.swap(f32, &ret.data[pair[0]], &ret.data[pair[1]]);
+            for (pairs) |pair| {
+                std.mem.swap(f32, &ret.data[pair[0]], &ret.data[pair[1]]);
+            }
+
+            return ret;
         }
 
-        return ret;
-    }
+        test "sanity transpose" {
+            const m1 = Self{ .data = .{
+                40, 50,  123,
+                92, -12, -25,
+                0,  45,  1,
+            } };
 
-    test "sanity transpose" {
-        const m1 = Mat3x3{ .data = .{
-            40, 50,  123,
-            92, -12, -25,
-            0,  45,  1,
-        } };
+            const transposed = m1.transpose();
 
-        const transposed = m1.transpose();
-
-        try std.testing.expectApproxEqAbs(40, transposed.data[0], 1e-7);
-        try std.testing.expectApproxEqAbs(92, transposed.data[1], 1e-7);
-        try std.testing.expectApproxEqAbs(0, transposed.data[2], 1e-7);
-        try std.testing.expectApproxEqAbs(50, transposed.data[3], 1e-7);
-        try std.testing.expectApproxEqAbs(-12, transposed.data[4], 1e-7);
-        try std.testing.expectApproxEqAbs(45, transposed.data[5], 1e-7);
-        try std.testing.expectApproxEqAbs(123, transposed.data[6], 1e-7);
-        try std.testing.expectApproxEqAbs(-25, transposed.data[7], 1e-7);
-        try std.testing.expectApproxEqAbs(1, transposed.data[8], 1e-7);
-    }
-};
+            try std.testing.expectApproxEqAbs(40, transposed.data[0], 1e-7);
+            try std.testing.expectApproxEqAbs(92, transposed.data[1], 1e-7);
+            try std.testing.expectApproxEqAbs(0, transposed.data[2], 1e-7);
+            try std.testing.expectApproxEqAbs(50, transposed.data[3], 1e-7);
+            try std.testing.expectApproxEqAbs(-12, transposed.data[4], 1e-7);
+            try std.testing.expectApproxEqAbs(45, transposed.data[5], 1e-7);
+            try std.testing.expectApproxEqAbs(123, transposed.data[6], 1e-7);
+            try std.testing.expectApproxEqAbs(-25, transposed.data[7], 1e-7);
+            try std.testing.expectApproxEqAbs(1, transposed.data[8], 1e-7);
+        }
+    };
+}
 
 pub const Mat4x4 = struct {
     data: [16]f32 = .{

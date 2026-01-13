@@ -33,6 +33,9 @@
         .sphxml = .{
             .path = "src/sphxml",
         },
+        .sphimage = .{
+            .path = "src/sphimage",
+        },
     },
     .paths = .{
         "src",
