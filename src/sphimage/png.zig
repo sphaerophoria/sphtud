@@ -682,25 +682,42 @@ fn genFullReadCombos() []const img.ImageLoadOptions {
 }
 
 test "full read" {
-    const png = @embedFile("png/res/smile.png");
-    const ppm = @embedFile("png/res/smile.ppm");
-    const ppm_flipped = @embedFile("png/res/smile_flipped.ppm");
+    const Sample = struct {
+        source: []const u8,
+        ppm: []const u8,
+        ppm_flipped: []const u8,
+    };
+
+    const samples: []const Sample = &.{
+        .{
+            .source = @embedFile("png/res/smile.png"),
+            .ppm = @embedFile("png/res/smile.ppm"),
+            .ppm_flipped = @embedFile("png/res/smile_flipped.ppm"),
+        },
+        .{
+            .source = @embedFile("png/res/ffmpeg_from_obs.png"),
+            .ppm = @embedFile("png/res/ffmpeg_from_obs.ppm"),
+            .ppm_flipped = @embedFile("png/res/ffmpeg_from_obs_flipped.ppm"),
+        },
+    };
 
     var scratch_buf: [1 * 1024 * 1024]u8 = undefined;
     const combos = genFullReadCombos();
     for (combos) |options| {
-        var scratch = std.heap.FixedBufferAllocator.init(&scratch_buf);
+        for (samples) |sample| {
+            var scratch = std.heap.FixedBufferAllocator.init(&scratch_buf);
 
-        var r = std.Io.Reader.fixed(png);
+            var r = std.Io.Reader.fixed(sample.source);
 
-        const image = try read(scratch.allocator(), scratch.allocator(), &r, options);
+            const image = try read(scratch.allocator(), scratch.allocator(), &r, options);
 
-        var ppm_data = std.Io.Writer.Allocating.init(std.testing.allocator);
-        defer ppm_data.deinit();
+            var ppm_data = std.Io.Writer.Allocating.init(std.testing.allocator);
+            defer ppm_data.deinit();
 
-        try img.ppm.write(image, &ppm_data.writer);
-        const expected = if (options.vflip) ppm_flipped else ppm;
+            try img.ppm.write(image, &ppm_data.writer);
+            const expected = if (options.vflip) sample.ppm_flipped else sample.ppm;
 
-        try std.testing.expectEqualSlices(u8, expected, ppm_data.written());
+            try std.testing.expectEqualSlices(u8, expected, ppm_data.written());
+        }
     }
 }
