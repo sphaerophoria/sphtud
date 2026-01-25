@@ -5,6 +5,8 @@ pub const Parser = struct {
     buffered_exit_event: ?Item,
     next_discard: usize = 0,
 
+    stream_pos: usize,
+
     // Reader buffer needs to be long enough to hold the largest xml element.
     // Element content is not used here, but comments are included.
     //
@@ -14,6 +16,7 @@ pub const Parser = struct {
         return Parser{
             .reader = reader,
             .next_discard = 0,
+            .stream_pos = 0,
             .buffered_exit_event = null,
         };
     }
@@ -24,12 +27,16 @@ pub const Parser = struct {
             return e;
         }
         self.reader.toss(self.next_discard);
+        self.stream_pos += self.next_discard;
         self.next_discard = 0;
 
         const streamed_bytes = try self.reader.streamDelimiterEnding(content_writer, '<');
         if (streamed_bytes > 0) {
+            defer self.stream_pos += streamed_bytes;
             return .{
                 .type = .element_content,
+                .stream_start = self.stream_pos,
+                .stream_end = self.stream_pos + streamed_bytes,
                 .name = &.{},
                 .attributes = &.{},
             };
@@ -84,6 +91,8 @@ pub const Parser = struct {
             element_end_tag_len += 1;
             self.buffered_exit_event = .{
                 .type = .element_end,
+                .stream_start = self.stream_pos,
+                .stream_end = self.stream_pos + self.next_discard,
                 .name = tag_content[name_start..name_end],
                 .attributes = &.{},
             };
@@ -96,6 +105,8 @@ pub const Parser = struct {
 
         return .{
             .type = prefix.type,
+            .stream_start = self.stream_pos,
+            .stream_end = self.stream_pos + self.next_discard,
             .name = tag_content[name_start..name_end],
             .attributes = attributes_slice,
         };
@@ -111,6 +122,9 @@ pub const Item = struct {
     type: ItemType,
     name: []const u8,
     attributes: []const u8,
+
+    stream_start: usize,
+    stream_end: usize,
 
     pub fn attributeIt(self: Item) AttributeIt {
         return .{
