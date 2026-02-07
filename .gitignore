@@ -1,4 +1,3 @@
-/zig-out
-/src/sphimage/zig-out
+zig-out
 .zig-cache
 /cimgui

@@ -30,6 +30,7 @@ zig build test
 popd
 
 pushd src/sphttp/
+zig build
 zig build test
 popd
 
