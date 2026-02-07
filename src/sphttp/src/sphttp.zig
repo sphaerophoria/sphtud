@@ -3,22 +3,105 @@ const sphutil = @import("sphutil");
 const sphalloc = @import("sphalloc");
 pub const url = @import("url.zig");
 
-pub const Range = struct {
-    start: usize,
-    end: usize,
-};
+pub const HttpResponseReader = HttpReaderGeneric(HttpResponseHeader);
+pub const HttpRequestReader = HttpReaderGeneric(HttpRequestHeader);
 
-pub const HttpHeader = struct {
+fn HttpReaderGeneric(comptime Header: type) type {
+    return struct {
+        input: *std.Io.Reader,
+        body_reader: HttpBodyReader,
+
+        pub const Result = struct {
+            header: Header,
+            body_reader: *std.Io.Reader,
+        };
+
+        const Self = @This();
+
+        pub fn init(r: *std.Io.Reader) Self {
+            return .{
+                .input = r,
+                .body_reader = .none,
+            };
+        }
+
+        pub fn poll(self: *Self, alloc: std.mem.Allocator, body_buf: []u8) !Result {
+            try self.body_reader.discardAll();
+
+            while (true) {
+                const tmp_header = try Header.parse(self.input.buffered()) orelse {
+                    try safeFillMore(self.input);
+                    continue;
+                };
+
+                std.debug.assert(self.body_reader == .none);
+
+                try self.body_reader.feedHeader(tmp_header, self.input, body_buf);
+
+                self.input.toss(tmp_header.body_start);
+
+                // Returned reader will invalidate buffer referenced by tmp_header
+                const header = try tmp_header.dupe(alloc);
+
+                return .{
+                    .header = header,
+                    .body_reader = self.body_reader.reader().?,
+                };
+            }
+        }
+    };
+}
+
+test "HttpReader sanity" {
+    const test_message_content =
+        "GET /some_url HTTP/1.1\r\n" ++
+        "Content-Length: 11\r\n" ++
+        "Connection: close\r\n" ++
+        "Content-Type: text\r\n" ++
+        "X-Custom-Header: custom\r\n" ++
+        "\r\n" ++
+        "Hello world";
+
+    var scratch_buf: [4096]u8 = undefined;
+    var scratch = sphalloc.ScratchAlloc.init(&scratch_buf);
+
+    var reader = std.Io.Reader.fixed(test_message_content);
+
+    var httpr = HttpRequestReader.init(&reader);
+
+    var body_buf: [4096]u8 = undefined;
+
+    reader.end = 10;
+    try std.testing.expectError(error.EndOfStream, httpr.poll(scratch.allocator(), &body_buf));
+
+    reader.end = test_message_content.len - 12;
+    try std.testing.expectError(error.EndOfStream, httpr.poll(scratch.allocator(), &body_buf));
+
+    // Now we should have the whole header, but the body won't be ready
+    reader.end = test_message_content.len - 11;
+    const res = try httpr.poll(scratch.allocator(), &body_buf);
+
+    try std.testing.expectError(error.EndOfStream, res.body_reader.take(11));
+
+    reader.end = test_message_content.len - 5;
+    try std.testing.expectError(error.EndOfStream, res.body_reader.take(11));
+
+    reader.end = test_message_content.len;
+    try std.testing.expectEqualStrings("Hello world", try res.body_reader.take(11));
+
+    // Non-thorough checks, just make sure that that the header is valid
+    try std.testing.expectEqual(.GET, res.header.method);
+}
+
+pub const HttpRequestHeader = struct {
     method: std.http.Method,
-    target: Range,
+    target: []const u8,
     version: std.http.Version,
-    fields: Range,
+    fields: []const u8,
+    body_start: usize,
 
-    // NOTE: While the http reader prefers to store data dis-contiguously. In
-    // reality if our HTTP header is long enough that we cannot cheaply keep it
-    // contiguous, we should just reject it. No one should be sending us a 3M
-    // header :)
-    pub fn init(content: []const u8) !HttpHeader {
+    pub fn parse(content: []const u8) !?HttpRequestHeader {
+        const end_of_header = std.mem.indexOf(u8, content, "\r\n\r\n") orelse return null;
         // GET /test/hello HTTP/1.1
         const line_end = std.mem.indexOf(u8, content, "\r\n") orelse unreachable;
         var it = std.mem.splitScalar(u8, content[0..line_end], ' ');
@@ -26,65 +109,99 @@ pub const HttpHeader = struct {
         const target = it.next() orelse return error.NoTarget;
         const version = it.next() orelse return error.NoVersion;
 
-        const target_start = target.ptr - content.ptr;
-        return HttpHeader{
+        return HttpRequestHeader{
             .method = std.meta.stringToEnum(std.http.Method, method) orelse return error.InvalidHttpMethod,
-            .target = .{
-                .start = target_start,
-                .end = target.len + target_start,
-            },
+            .target = target,
             .version = std.meta.stringToEnum(std.http.Version, version) orelse return error.InvalidVersion,
-            .fields = .{
-                .start = line_end + 2,
-                .end = content.len,
-            },
+            .fields = content[line_end + 2 .. end_of_header],
+            .body_start = end_of_header + 4,
         };
     }
 
-    pub fn findContentLength(self: HttpHeader, content: []const u8) !usize {
-        var field_it = self.fieldIter(content);
-        while (try field_it.next()) |field| {
-            // FIXME: Lowercase?
-            if (std.mem.eql(u8, field.key, "Content-Length")) {
-                const content_len = std.fmt.parseInt(usize, field.value, 0) catch return 0;
-                return content_len;
-            }
-        }
-        return 0;
-    }
-
-    pub fn fieldIter(self: HttpHeader, content: []const u8) FieldIter {
+    pub fn dupe(self: HttpRequestHeader, alloc: std.mem.Allocator) !HttpRequestHeader {
         return .{
-            .line_it = std.mem.splitSequence(u8, content[self.fields.start..self.fields.end], "\r\n"),
+            .method = self.method,
+            .target = try alloc.dupe(u8, self.target),
+            .version = self.version,
+            .fields = try alloc.dupe(u8, self.fields),
+            .body_start = self.body_start,
         };
     }
 
-    pub const FieldIter = struct {
-        line_it: std.mem.SplitIterator(u8, .sequence),
+    pub fn fieldIter(self: HttpRequestHeader) FieldIter {
+        return .init(self.fields);
+    }
+};
 
-        const Output = struct {
-            key: []const u8,
-            value: []const u8,
+pub const HttpResponseHeader = struct {
+    version: std.http.Version,
+    status: std.http.Status,
+    fields: []const u8,
+    body_start: usize,
+
+    pub fn parse(content: []const u8) !?HttpResponseHeader {
+        const end_of_header = std.mem.indexOf(u8, content, "\r\n\r\n") orelse return null;
+
+        // HTTP/1.1 200 OK
+        const line_end = std.mem.indexOf(u8, content, "\r\n") orelse unreachable;
+        var it = std.mem.splitScalar(u8, content[0..line_end], ' ');
+        const version = it.next() orelse return error.NoMethod;
+        const status = it.next() orelse return error.NoStatus;
+        const status_int = try std.fmt.parseInt(u10, status, 10);
+
+        return .{
+            .version = std.meta.stringToEnum(std.http.Version, version) orelse return error.InvalidVersion,
+            .status = @enumFromInt(status_int),
+            .fields = content[line_end + 2 .. end_of_header],
+            .body_start = end_of_header + 4,
         };
+    }
 
-        pub fn next(self: *FieldIter) !?Output {
-            const line = self.line_it.next() orelse return null;
+    pub fn dupe(self: HttpResponseHeader, alloc: std.mem.Allocator) !HttpResponseHeader {
+        return .{
+            .version = self.version,
+            .status = self.status,
+            .fields = try alloc.dupe(u8, self.fields),
+            .body_start = self.body_start,
+        };
+    }
 
-            const key_end = std.mem.indexOfScalar(u8, line, ':') orelse return error.NoKeyEnd;
-            const key = std.mem.trim(u8, line[0..key_end], &std.ascii.whitespace);
+    pub fn fieldIter(self: HttpResponseHeader) FieldIter {
+        return .init(self.fields);
+    }
+};
 
-            const value =
-                if (key_end + 1 > line.len)
-                    ""
-                else
-                    std.mem.trim(u8, line[key_end + 1 ..], &std.ascii.whitespace);
+pub const FieldIter = struct {
+    line_it: std.mem.SplitIterator(u8, .sequence),
 
-            return .{
-                .key = key,
-                .value = value,
-            };
-        }
+    const Output = struct {
+        key: []const u8,
+        value: []const u8,
     };
+
+    pub fn init(buf: []const u8) FieldIter {
+        return .{
+            .line_it = std.mem.splitSequence(u8, buf, "\r\n"),
+        };
+    }
+
+    pub fn next(self: *FieldIter) !?Output {
+        const line = self.line_it.next() orelse return null;
+
+        const key_end = std.mem.indexOfScalar(u8, line, ':') orelse return error.NoKeyEnd;
+        const key = std.mem.trim(u8, line[0..key_end], &std.ascii.whitespace);
+
+        const value =
+            if (key_end + 1 > line.len)
+                ""
+            else
+                std.mem.trim(u8, line[key_end + 1 ..], &std.ascii.whitespace);
+
+        return .{
+            .key = key,
+            .value = value,
+        };
+    }
 };
 
 test "HttpHeader sanity" {
@@ -92,10 +209,11 @@ test "HttpHeader sanity" {
         "GET /some_url HTTP/1.1\r\n" ++
         "X-Some-Header: Hello\r\n" ++
         "Content-Length: 50\r\n" ++
-        "Content-Type: text/html\r\n";
+        "Content-Type: text/html\r\n" ++
+        "\r\n";
 
-    const header = try HttpHeader.init(header_content);
-    var it = header.fieldIter(header_content);
+    const header = try HttpRequestHeader.parse(header_content) orelse return error.InvalidHeader;
+    var it = header.fieldIter();
 
     {
         const field = try it.next() orelse return error.MissingField;
@@ -114,148 +232,168 @@ test "HttpHeader sanity" {
         try std.testing.expectEqualStrings("Content-Type", field.key);
         try std.testing.expectEqualStrings("text/html", field.value);
     }
-
-    try std.testing.expectEqual(50, try header.findContentLength(header_content));
 }
 
-pub const HttpReader = struct {
-    state: State = .reading_header,
-    buf: sphutil.RuntimeSegmentedList(u8),
-    header: ?HttpHeader = null,
-    body_start: usize = 0,
-    body_len: usize = 0,
+fn safeFillMore(r: *std.Io.Reader) !void {
+    if (r.end == r.buffer.len and r.seek == 0) {
+        return error.ReadFailed;
+    }
 
-    const State = enum {
-        reading_header,
-        header_complete,
-        body_complete,
-    };
+    try r.fillMore();
+}
 
-    pub fn init(alloc: *sphalloc.Sphalloc) !HttpReader {
-        return .{
-            .buf = try .init(alloc.arena(), alloc.expansion(), 256, 1 * 1024 * 1024),
+fn findHttpLineEnd(r: *std.Io.Reader) !usize {
+    while (true) {
+        const buf = r.buffered();
+        return std.mem.indexOf(u8, buf, "\r\n") orelse {
+            try safeFillMore(r);
+            continue;
         };
     }
+}
 
-    pub fn getTarget(self: *HttpReader, alloc: std.mem.Allocator) !?[]const u8 {
-        const header = self.header orelse return null;
-        return try self.buf.asContiguousSlice(alloc, header.target.start, header.target.end);
+const HttpBodyReader = union(enum) {
+    chunked: ChunkedReader,
+    limited: std.Io.Reader.Limited,
+    remaining: *std.Io.Reader,
+    none,
+
+    fn init() HttpBodyReader {
+        return .none;
     }
 
-    pub fn getBody(self: *HttpReader) sphutil.RuntimeSegmentedList(u8).Slice {
-        if (self.body_start >= self.buf.len) return self.buf.slice(0, 0);
-
-        return self.buf.slice(self.body_start, self.buf.len);
-    }
-
-    pub fn getWritableArea(self: *HttpReader) ![]u8 {
-        return self.buf.getWritableArea();
-    }
-
-    pub fn grow(self: *HttpReader, scratch: *sphalloc.ScratchAlloc, amount: usize) !void {
-        std.debug.assert(amount <= (try self.buf.getWritableArea()).len);
-        const old_len = self.buf.len;
-        self.buf.grow(amount);
-
-        switch (self.state) {
-            .reading_header => {
-                const needle = "\r\n\r\n";
-
-                const search_start = old_len -| needle.len + 1;
-                var it = self.buf.iterFrom(search_start);
-
-                var old_offs: usize = 0;
-                outer: while (true) {
-                    // Copy iterator state to do what is effectively a double
-                    // pointer search
-                    var it2 = it;
-                    for (needle) |a| {
-                        const b = it2.next() orelse break :outer;
-                        if (a != b.*) {
-                            old_offs += 1;
-                            _ = it.next();
-                            continue :outer;
-                        }
-                    }
-                    try self.finishHeader(scratch, search_start + old_offs);
-                    break :outer;
-                }
+    // Header can be a request or response, or anything really, but it needs the fieldIter() fn
+    fn feedHeader(self: *HttpBodyReader, header: anytype, r: *std.Io.Reader, body_buf: []u8) !void {
+        const transfer_encoding = try extractTransferEncoding(header);
+        switch (transfer_encoding) {
+            .chunked => {
+                self.* = .{ .chunked = ChunkedReader.init(r, body_buf) };
             },
-            .header_complete => {
-                if (self.buf.len >= self.body_len + self.body_start) {
-                    self.state = .body_complete;
-                }
+            .length => |content_len| {
+                self.* = .{ .limited = .init(r, .limited(content_len), body_buf) };
             },
-            .body_complete => {},
+            .remaining => {
+                self.* = .{ .remaining = r };
+            },
         }
     }
 
-    fn finishHeader(self: *HttpReader, scratch: *sphalloc.ScratchAlloc, header_end: usize) anyerror!void {
-        const checkpoint = scratch.checkpoint();
-        defer scratch.restore(checkpoint);
+    fn discardAll(self: *HttpBodyReader) !void {
+        switch (self.*) {
+            inline .chunked, .limited => |*r| {
+                _ = try r.interface.discardRemaining();
+                self.* = .none;
+            },
+            // Internally we never want this, we give the body to callers and
+            // if the entire stream is body, we can short circuit actually
+            // reading and just call it a day :)
+            .remaining => return error.EndOfStream,
+            .none => {},
+        }
+    }
 
-        const header_content = try self.buf.asContiguousSlice(scratch.allocator(), 0, header_end);
-        self.header = try HttpHeader.init(header_content);
+    fn reader(self: *HttpBodyReader) ?*std.Io.Reader {
+        switch (self.*) {
+            inline .chunked, .limited => |*r| return &r.interface,
+            .remaining => |r| return r,
+            .none => return null,
+        }
+    }
 
-        self.body_start = header_end + 4;
-        self.body_len = try self.header.?.findContentLength(header_content);
-        self.state = .header_complete;
+    const TransferEncoding = union(enum) {
+        chunked,
+        remaining,
+        length: usize,
+    };
 
-        // Trigger initial body check
-        try self.grow(scratch, 0);
+    fn extractTransferEncoding(header: anytype) !TransferEncoding {
+        var it = header.fieldIter();
+        var lower_buf: [4096]u8 = undefined;
+
+        const RelevantHeader = enum {
+            @"content-length",
+            @"transfer-encoding",
+        };
+
+        while (try it.next()) |field| {
+            const lower_key = std.ascii.lowerString(&lower_buf, field.key);
+            const rh = std.meta.stringToEnum(RelevantHeader, lower_key) orelse continue;
+            switch (rh) {
+                .@"content-length" => {
+                    return .{
+                        .length = try std.fmt.parseInt(usize, field.value, 10),
+                    };
+                },
+                .@"transfer-encoding" => {
+                    const lower_val = std.ascii.lowerString(&lower_buf, field.value);
+                    if (!std.mem.eql(u8, lower_val, "chunked")) {
+                        return error.UnsupportedTransferEncoding;
+                    }
+
+                    return .chunked;
+                },
+            }
+        }
+
+        return .remaining;
     }
 };
 
-test "HttpReader sanity" {
-    const test_message_content =
-        "GET /some_url HTTP/1.1\r\n" ++
-        "Content-Length: 11\r\n" ++
-        "Connection: close\r\n" ++
-        "Content-Type: text\r\n" ++
-        "X-Custom-Header: custom\r\n" ++
-        "\r\n" ++
-        "Hello world";
+// Reader implementing transfer-type: chunked body
+const ChunkedReader = struct {
+    input: *std.Io.Reader,
+    interface: std.Io.Reader,
+    chunk_remaining: usize,
 
-    var tpa: sphalloc.TinyPageAllocator = undefined;
-    try tpa.initPinned();
+    const read_chunk_len_flag = std.math.maxInt(usize);
 
-    var root_alloc: sphalloc.Sphalloc = undefined;
-    try root_alloc.initPinned(tpa.allocator(), "root");
-    defer root_alloc.deinit();
-
-    var scratch = sphalloc.ScratchAlloc.init(try root_alloc.arena().alloc(u8, 4096));
-
-    var reader = try HttpReader.init(&root_alloc);
-
-    @memcpy((try reader.getWritableArea())[0..10], test_message_content[0..10]);
-    try reader.grow(&scratch, 10);
-
-    @memcpy((try reader.getWritableArea())[0..10], test_message_content[10..20]);
-    try reader.grow(&scratch, 10);
-
-    try std.testing.expectEqual(.reading_header, reader.state);
-
-    const remaining = test_message_content.len - 20;
-    @memcpy((try reader.getWritableArea())[0..remaining], test_message_content[20..]);
-    try reader.grow(&scratch, remaining);
-
-    try std.testing.expectEqual(.body_complete, reader.state);
-    try std.testing.expectEqual(11, reader.body_len);
-    {
-        const body = reader.getBody();
-        var reader_buf: [4096]u8 = undefined;
-        var body_reader = body.reader(&reader_buf);
-        var buf: [4096]u8 = undefined;
-
-        const bytes_read = body_reader.interface.readSliceShort(&buf);
-
-        try std.testing.expectEqual(11, bytes_read);
-        try std.testing.expectEqualStrings("Hello world", buf[0..11]);
+    pub fn init(r: *std.Io.Reader, body_buf: []u8) ChunkedReader {
+        return .{
+            .input = r,
+            .interface = .{
+                .buffer = body_buf,
+                .vtable = &.{
+                    .stream = stream,
+                },
+                .seek = 0,
+                .end = 0,
+            },
+            .chunk_remaining = read_chunk_len_flag,
+        };
     }
 
-    // Non-thorough checks, just make sure that that the header is valid
-    try std.testing.expectEqual(.GET, reader.header.?.method);
-}
+    fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const self: *ChunkedReader = @fieldParentPtr("interface", r);
+
+        if (self.chunk_remaining == 0) {
+            // Discard streams and could have partial application, for
+            // non-blocking reads we want to make sure that we have idempotent
+            // state, so we peek and toss to confirm
+            _ = try self.input.peek(2);
+            self.chunk_remaining = read_chunk_len_flag;
+            self.input.toss(2);
+        }
+
+        if (self.chunk_remaining == read_chunk_len_flag) {
+            const line_end = try findHttpLineEnd(self.input);
+            self.chunk_remaining = std.fmt.parseInt(usize, self.input.buffered()[0..line_end], 16) catch return error.ReadFailed;
+            self.input.toss(line_end + 2);
+        }
+
+        // If it's still 0 here, it means we got a 0 from the previous if
+        // statement which means we're done
+        if (self.chunk_remaining == 0) {
+            return error.EndOfStream;
+        }
+
+        const actual_limit = limit.min(.limited(self.chunk_remaining));
+
+        const read_bytes = try self.input.stream(w, actual_limit);
+        self.chunk_remaining -= read_bytes;
+
+        return read_bytes;
+    }
+};
 
 pub const HttpHeaderParams = struct {
     status: std.http.Status,
@@ -292,9 +430,9 @@ pub fn httpHeaderLen(params: HttpHeaderParams) !usize {
 }
 
 pub fn makeHttpHeaderWriter(params: HttpHeaderParams, writer: *std.Io.Writer) !void {
-    var http_writer = httpWriter(writer);
+    var http_writer = HttpWriter.init(writer);
 
-    try http_writer.start(.{
+    try http_writer.startResponse(.{
         .status = params.status,
         .content_length = params.content_length,
         .content_type = params.content_type,
@@ -313,13 +451,34 @@ pub const HttpWriter = struct {
 
     const Self = @This();
 
-    pub const HttpWriterParams = struct {
+    pub fn init(w: *std.Io.Writer) HttpWriter {
+        return .{
+            .writer = w,
+        };
+    }
+
+    pub const RequestParams = struct {
+        method: std.http.Method,
+        target: []const u8,
+        content_length: usize,
+        content_type: ?[]const u8 = null,
+    };
+
+    pub fn startRequest(self: *Self, params: RequestParams) !void {
+        try self.writer.print("{t} {s} HTTP/1.1\r\n" ++
+            "Content-Length: {d}\r\n", .{ params.method, params.target, params.content_length });
+        if (params.content_type) |t| {
+            try self.appendHeader("Content-Type", t);
+        }
+    }
+
+    pub const ResponseParams = struct {
         status: std.http.Status,
         content_length: usize,
         content_type: ?[]const u8 = null,
     };
 
-    pub fn start(self: *Self, params: HttpWriterParams) !void {
+    pub fn startResponse(self: *Self, params: ResponseParams) !void {
         try self.writer.print("HTTP/1.1 {d} {s}\r\n" ++
             "Content-Length: {d}\r\n" ++
             "Connection: close\r\n", .{ @intFromEnum(params.status), params.status.phrase() orelse "", params.content_length });
@@ -342,19 +501,13 @@ pub const HttpWriter = struct {
     }
 };
 
-pub fn httpWriter(writer: *std.Io.Writer) HttpWriter {
-    return .{
-        .writer = writer,
-    };
-}
-
-test "HttpWriter sanity" {
+test "HttpWriter response sanity" {
     var allocating = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer allocating.deinit();
 
-    var writer = httpWriter(&allocating.writer);
+    var writer = HttpWriter.init(&allocating.writer);
 
-    try writer.start(.{
+    try writer.startResponse(.{
         .status = .ok,
         .content_length = 0,
     });
@@ -366,7 +519,7 @@ test "HttpWriter sanity" {
 
     allocating.clearRetainingCapacity();
 
-    try writer.start(.{
+    try writer.startResponse(.{
         .status = .internal_server_error,
         .content_length = 11,
         .content_type = "text",

@@ -87,3 +87,95 @@ test "UriIter" {
         try std.testing.expectEqual(UriIter.Res(i64){ .match = 5 }, it.next(i64));
     }
 }
+
+pub const QueryParamIter = struct {
+    inner: std.mem.SplitIterator(u8, .scalar),
+
+    pub const Item = struct {
+        key: []const u8,
+        val: []const u8,
+    };
+
+    pub fn init(target: []const u8) QueryParamIter {
+        var empty = QueryParamIter{ .inner = std.mem.splitScalar(u8, &.{}, '&') };
+        _ = empty.next();
+
+        const query_start = std.mem.indexOfScalar(u8, target, '?') orelse return empty;
+        if (query_start + 1 >= target.len) return empty;
+
+        return .{
+            .inner = std.mem.splitScalar(u8, target[query_start + 1 ..], '&'),
+        };
+    }
+
+    pub fn next(self: *QueryParamIter) ?Item {
+        const kv = self.inner.next() orelse return null;
+        const split_idx = std.mem.indexOfScalar(u8, kv, '=');
+        const key = extractKey(kv, split_idx);
+        const value = extractValue(kv, split_idx);
+        return .{
+            .key = key,
+            .val = value,
+        };
+    }
+
+    fn extractKey(kv: []const u8, split_idx_opt: ?usize) []const u8 {
+        const split_idx = split_idx_opt orelse return kv;
+        return kv[0..split_idx];
+    }
+
+    fn extractValue(kv: []const u8, split_idx_opt: ?usize) []const u8 {
+        const split_idx = split_idx_opt orelse return "";
+        if (split_idx + 1 >= kv.len) return "";
+
+        return kv[split_idx + 1 ..];
+    }
+};
+
+test "QueryParamIter" {
+    {
+        var it = QueryParamIter.init("/hello");
+        try std.testing.expectEqual(null, it.next());
+    }
+
+    {
+        var it = QueryParamIter.init("/?");
+        try std.testing.expectEqual(null, it.next());
+    }
+
+    {
+        var it = QueryParamIter.init("/?q");
+        const kv = it.next() orelse return error.NoItem;
+        try std.testing.expectEqualStrings("q", kv.key);
+        try std.testing.expectEqualStrings("", kv.val);
+    }
+
+    {
+        var it = QueryParamIter.init("/?q=");
+        const kv = it.next() orelse return error.NoItem;
+        try std.testing.expectEqualStrings("q", kv.key);
+        try std.testing.expectEqualStrings("", kv.val);
+    }
+
+    {
+        var it = QueryParamIter.init("/?q=hello");
+        const kv = it.next() orelse return error.NoItem;
+        try std.testing.expectEqualStrings("q", kv.key);
+        try std.testing.expectEqualStrings("hello", kv.val);
+    }
+
+    {
+        var it = QueryParamIter.init("/?q=hello&r=goodbye");
+        {
+            const kv = it.next() orelse return error.NoItem;
+            try std.testing.expectEqualStrings("q", kv.key);
+            try std.testing.expectEqualStrings("hello", kv.val);
+        }
+
+        {
+            const kv = it.next() orelse return error.NoItem;
+            try std.testing.expectEqualStrings("r", kv.key);
+            try std.testing.expectEqualStrings("goodbye", kv.val);
+        }
+    }
+}
