@@ -401,6 +401,63 @@ pub const Loop = struct {
     }
 };
 
+pub const Loop2 = struct {
+    fd: i32,
+    num_events: usize = 0,
+    event_cursor: usize = 0,
+    buffered_events: [100]std.os.linux.epoll_event = undefined,
+
+    const Self = @This();
+
+    pub fn init() !Self {
+        const fd = try std.posix.epoll_create1(0);
+        return .{
+            .fd = fd,
+        };
+    }
+
+    const Registration = struct {
+        handle: OsHandle,
+        id: usize,
+        read: bool,
+        write: bool,
+    };
+
+    pub fn register(self: *Self, reg: Registration) !void {
+        var event = makeEvent(reg.id, reg.read, reg.write);
+        try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_ADD, reg.handle, &event);
+    }
+
+    pub fn unregister(self: *Self, handle: OsHandle) !void {
+        try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_DEL, handle, null);
+    }
+
+    pub fn poll(self: *Self) !usize {
+        while (self.event_cursor >= self.num_events) {
+            self.num_events = std.posix.epoll_wait(self.fd, &self.buffered_events, -1);
+            self.event_cursor = 0;
+        }
+
+        const event = self.buffered_events[self.event_cursor];
+        self.event_cursor += 1;
+        return event.data.ptr;
+    }
+
+    fn makeEvent(
+        handler_idx: usize,
+        wants_read: bool,
+        wants_write: bool,
+    ) std.os.linux.epoll_event {
+        var events = std.os.linux.EPOLL.ET | std.os.linux.EPOLL.HUP;
+        if (wants_read) events |= std.os.linux.EPOLL.IN;
+        if (wants_write) events |= std.os.linux.EPOLL.OUT;
+        return std.os.linux.epoll_event{
+            .events = events,
+            .data = .{ .ptr = handler_idx },
+        };
+    }
+};
+
 pub fn SignalHandler(comptime Ctx: type) type {
     return struct {
         fd: OsHandle,

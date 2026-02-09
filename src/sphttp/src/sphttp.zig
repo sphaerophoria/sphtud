@@ -11,7 +11,7 @@ fn HttpReaderGeneric(comptime Header: type) type {
         input: *std.Io.Reader,
         body_reader: HttpBodyReader,
 
-        const Result = struct {
+        pub const Result = struct {
             header: Header,
             body_reader: *std.Io.Reader,
         };
