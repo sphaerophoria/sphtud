@@ -29,7 +29,7 @@ pub fn ObjectPool(comptime T: type, comptime Handle: type) type {
         const Objects = rsl.RuntimeSegmentedListUnmanaged(T);
         const Self = @This();
 
-        const WithHandle = struct {
+        pub const WithHandle = struct {
             handle: Handle,
             val: *T,
         };

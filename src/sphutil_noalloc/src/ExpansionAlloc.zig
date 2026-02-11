@@ -15,6 +15,22 @@ pub const Info = struct {
 info: *const Info,
 alloc: std.mem.Allocator,
 
+pub const invalid = ExpansionAlloc{
+    .info = &.{
+        .min_expansion_size_log2 = 0,
+        .supports_free = false,
+    },
+    .alloc = .{
+        .ptr = undefined,
+        .vtable = &.{
+            .alloc = undefined,
+            .resize = undefined,
+            .remap = undefined,
+            .free = undefined,
+        },
+    },
+};
+
 pub fn linear(alloc: std.mem.Allocator) ExpansionAlloc {
     return .{
         .info = .linear,
