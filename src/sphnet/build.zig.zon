@@ -1,0 +1,8 @@
+.{
+    .name = .sphnet,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.15.0",
+    .paths = .{
+        "sphnet.zig",
+    },
+}
