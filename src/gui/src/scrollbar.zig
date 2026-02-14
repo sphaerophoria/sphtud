@@ -23,8 +23,9 @@ pub const Scrollbar = struct {
     // Feel free to modify these
     // How tall the handle is relative to the size of entire scrollbar
     handle_ratio: f32 = 1.0,
-    // Where the top of the handle is, relative to the size of the scrollbar
-    top_offs_ratio: f32 = 0.0,
+    // How far we are scrolled. 1.0 indicates bottom of entire space, 0.0
+    // indicates top
+    scroll_ratio: f32 = 0.0,
 
     // Internal state
     shared: *const Shared,
@@ -45,11 +46,11 @@ pub const Scrollbar = struct {
                 const scrollbar_height: f32 = @floatFromInt(bounds.calcHeight());
 
                 const mouse_movement_px = input_state.mouse_pos.y - input_state.mouse_down_location.?.y;
-                const mouse_movement_ratio = mouse_movement_px / scrollbar_height;
+                const mouse_movement_ratio = mouse_movement_px / scrollbar_height / (1.0 - self.handle_ratio);
                 const ret = std.math.clamp(
                     mouse_movement_ratio + start_offs,
                     0.0,
-                    1.0 - self.handle_ratio,
+                    1.0,
                 );
                 return ret;
             },
@@ -86,7 +87,7 @@ pub const Scrollbar = struct {
     fn calcHandleBounds(self: Scrollbar, scrollbar_bounds: PixelBBox) PixelBBox {
         const scrollbar_height: f32 = @floatFromInt(scrollbar_bounds.calcHeight());
         const handle_height_px = scrollbar_height * self.handle_ratio;
-        const offs_px = self.top_offs_ratio * scrollbar_height;
+        const offs_px = self.scroll_ratio * (scrollbar_height - handle_height_px);
         const top_px = @as(f32, @floatFromInt(scrollbar_bounds.top)) + offs_px;
         return .{
             .left = scrollbar_bounds.left,
@@ -104,7 +105,7 @@ pub const Scrollbar = struct {
         if (already_dragging) return;
 
         if (bounds.containsOptMousePos(input_state.mouse_down_location)) {
-            self.scroll_input_state = .{ .dragging = self.top_offs_ratio };
+            self.scroll_input_state = .{ .dragging = self.scroll_ratio };
         } else if (bounds.containsMousePos(input_state.mouse_pos)) {
             self.scroll_input_state = .hovered;
         } else {

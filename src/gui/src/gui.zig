@@ -35,6 +35,7 @@ pub const drag_layer = @import("drag_layer.zig");
 pub const one_of = @import("one_of.zig");
 pub const histogram = @import("histogram.zig");
 pub const multi_line_graph = @import("multi_line_graph.zig");
+pub const scroll_list = @import("scroll_list.zig");
 
 test {
     std.testing.refAllDeclsRecursive(@This());

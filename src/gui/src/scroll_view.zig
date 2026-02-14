@@ -94,9 +94,14 @@ pub fn ScrollView(comptime Action: type) type {
                 @as(f32, @floatFromInt(available_size.height)) /
                 @as(f32, @floatFromInt(self.contentHeight()));
 
-            self.scrollbar.top_offs_ratio =
-                @as(f32, @floatFromInt(self.scroll_offs)) /
-                @as(f32, @floatFromInt(self.contentHeight()));
+            const max_scroll = self.contentHeight() -| available_size.height;
+            if (max_scroll > 0) {
+                self.scrollbar.scroll_ratio =
+                    @as(f32, @floatFromInt(self.scroll_offs)) /
+                    @as(f32, @floatFromInt(max_scroll));
+            } else {
+                self.scrollbar.scroll_ratio = 0;
+            }
         }
 
         fn setInputState(ctx: ?*anyopaque, bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) gui.InputResponse(Action) {
@@ -116,8 +121,8 @@ pub fn ScrollView(comptime Action: type) type {
                 );
 
                 if (new_scroll_ratio) |scroll_loc| {
-                    const content_height: f32 = @floatFromInt(self.contentHeight());
-                    self.scroll_offs = @intFromFloat(content_height * scroll_loc);
+                    const scroll_height: f32 = @floatFromInt(self.contentHeight() - bounds.calcHeight());
+                    self.scroll_offs = @intFromFloat(scroll_height * scroll_loc);
                 }
 
                 if (input_bounds.containsMousePos(input_state.mouse_pos)) {

@@ -4,6 +4,7 @@ const sphrender = @import("sphrender");
 const gl = sphrender.gl;
 const sphwindow = @import("sphwindow");
 const gui = @import("gui.zig");
+const sphutil = @import("sphutil");
 
 const GuiAction = union(enum) {
     text_edit: gui.textbox.TextboxNotifier,
@@ -139,6 +140,34 @@ const MultiLineGraphRetriever = struct {
     }
 };
 
+const ScrollLabelFactory = struct {
+    alloc: gui.GuiAlloc,
+    state: *gui.widget_factory.WidgetState(GuiAction),
+    arenas: sphutil.AutoHashMap(usize, gui.GuiAlloc),
+
+    pub fn createWidget(self: *ScrollLabelFactory, idx: usize) !gui.Widget(GuiAction) {
+        const gop = try self.arenas.getOrPut(idx);
+        if (!gop.found_existing) {
+            gop.val.* = try self.alloc.makeSubAlloc("list label");
+        }
+
+        const text = try std.fmt.allocPrint(gop.val.heap.arena(), "hello, i am widget {d}", .{idx});
+        const factory = self.state.factory(gop.val.*);
+        return try factory.makeLabel(text);
+    }
+
+    pub fn destroyWidget(self: *ScrollLabelFactory, idx: usize, widget: gui.Widget(GuiAction)) void {
+        _ = widget;
+        const arena = self.arenas.remove(idx) orelse unreachable;
+        arena.deinit();
+    }
+
+    pub fn numItems(self: *const ScrollLabelFactory) usize {
+        _ = self;
+        return 10000;
+    }
+};
+
 pub fn main() !void {
     var allocators: sphrender.AppAllocators = undefined;
     try allocators.initPinned(10 * 1024 * 1024);
@@ -205,6 +234,23 @@ pub fn main() !void {
         try widget_factory.makeMultiLineGraph(multiline_retrievers),
         .{ .width = 300, .height = 200 },
         .fill_none,
+    ));
+
+    var label_factory_alloc = try allocators.root_render.makeSubAlloc("label factory");
+    var scroll_labels = ScrollLabelFactory{
+        .alloc = label_factory_alloc,
+        .state = gui_state,
+        .arenas = try .init(
+            label_factory_alloc.heap.arena(),
+            label_factory_alloc.heap.expansion(),
+            10,
+            10000,
+        ),
+    };
+    try layout.pushWidget(try widget_factory.makeBox(
+        try widget_factory.makeScrollList(&scroll_labels),
+        .{ .width = 300, .height = 300 },
+        .fill_width,
     ));
 
     var runner = try widget_factory.makeRunner(try widget_factory.makeScrollView(layout.asWidget()));

@@ -223,6 +223,13 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
         &ret.guitext_state,
     );
 
+    ret.scratch = scratch_alloc;
+
+    ret.scroll_list_shared = gui.scroll_list.Shared{
+        .layout_pad = ret.layout_pad,
+        .scroll_shared = &ret.scroll_shared,
+    };
+
     return ret;
 }
 
@@ -282,6 +289,8 @@ pub fn WidgetState(comptime Action: type) type {
         histogram_shared: gui.histogram.Shared,
         solid_color_renderer: sphrender.xyt_program.SolidColorProgram,
         multi_line_graph_shared: gui.multi_line_graph.Shared,
+        scratch: *sphalloc.ScratchAlloc,
+        scroll_list_shared: gui.scroll_list.Shared,
 
         const Self = @This();
 
@@ -448,6 +457,16 @@ pub fn WidgetFactory(comptime Action: type) type {
 
         pub fn makeScrollView(self: *const Self, inner: gui.Widget(Action)) !gui.Widget(Action) {
             return gui.scroll_view.ScrollView(Action).init(self.alloc.heap.arena(), inner, &self.state.scroll_shared);
+        }
+
+        pub fn makeScrollList(self: *const Self, factory: anytype) !gui.Widget(Action) {
+            return gui.scroll_list.scrollList(
+                Action,
+                self.alloc,
+                self.state.scratch.linear(),
+                factory,
+                &self.state.scroll_list_shared,
+            );
         }
 
         pub fn makeEvenVertLayout(self: *const Self, max_size: comptime_int) !*gui.even_vert_layout.EvenVertLayout(Action, max_size) {
