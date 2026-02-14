@@ -6,6 +6,10 @@ const Color = gui.Color;
 const InputState = gui.InputState;
 const PixelBBox = gui.PixelBBox;
 
+pub const Shared = struct {
+    renderer: *const SquirqleRenderer,
+    style: Style,
+};
 pub const Style = struct {
     gutter_color: Color,
     default_color: Color,
@@ -23,8 +27,7 @@ pub const Scrollbar = struct {
     top_offs_ratio: f32 = 0.0,
 
     // Internal state
-    renderer: *const SquirqleRenderer,
-    style: *const Style,
+    shared: *const Shared,
     scroll_input_state: ScrollState = .none,
 
     const ScrollState = union(enum) {
@@ -58,8 +61,8 @@ pub const Scrollbar = struct {
 
     pub fn render(self: Scrollbar, bounds: PixelBBox, window: PixelBBox) void {
         const transform = util.widgetToClipTransform(bounds, window);
-        self.renderer.render(
-            self.style.gutter_color,
+        self.shared.renderer.render(
+            self.shared.style.gutter_color,
             0.0, // Intentional, keeps edges crisp and avoids leaking background
             bounds,
             transform,
@@ -67,14 +70,14 @@ pub const Scrollbar = struct {
 
         const bar_transform = util.widgetToClipTransform(self.calcHandleBounds(bounds), window);
         const bar_color = switch (self.scroll_input_state) {
-            .dragging => self.style.active_color,
-            .hovered => self.style.hover_color,
-            .none => self.style.default_color,
+            .dragging => self.shared.style.active_color,
+            .hovered => self.shared.style.hover_color,
+            .none => self.shared.style.default_color,
         };
 
-        self.renderer.render(
+        self.shared.renderer.render(
             bar_color,
-            self.style.corner_radius,
+            self.shared.style.corner_radius,
             bounds,
             bar_transform,
         );

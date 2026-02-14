@@ -207,7 +207,7 @@ pub fn main() !void {
         .fill_none,
     ));
 
-    var runner = try widget_factory.makeRunner(layout.asWidget());
+    var runner = try widget_factory.makeRunner(try widget_factory.makeScrollView(layout.asWidget()));
 
     while (!window.closed()) {
         allocators.resetScratch();

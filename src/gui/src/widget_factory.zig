@@ -71,13 +71,16 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
         .squircle_renderer = &ret.squircle_renderer,
     };
 
-    ret.scroll_style = gui.scrollbar.Style{
-        .default_color = StyleColors.default_color,
-        .hover_color = StyleColors.hover_color,
-        .active_color = StyleColors.active_color,
-        .gutter_color = StyleColors.background_color2,
-        .corner_radius = corner_radius,
-        .width = @intFromFloat(unit * 0.75),
+    ret.scroll_shared = gui.scrollbar.Shared{
+        .renderer = &ret.squircle_renderer,
+        .style = .{
+            .default_color = StyleColors.default_color,
+            .hover_color = StyleColors.hover_color,
+            .active_color = StyleColors.active_color,
+            .gutter_color = StyleColors.background_color2,
+            .corner_radius = corner_radius,
+            .width = @intFromFloat(unit * 0.75),
+        },
     };
 
     ret.shared_color = try gui.color_picker.SharedColorPickerState.init(
@@ -152,7 +155,7 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
                 .layout_pad = layout_pad,
             },
             .guitext_state = &ret.guitext_state,
-            .scroll_style = &ret.scroll_style,
+            .scroll_shared = &ret.scroll_shared,
             .squircle_renderer = &ret.squircle_renderer,
             .selectable = &ret.shared_selecatble_list_state,
             .frame = &ret.frame_shared,
@@ -179,8 +182,7 @@ pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc
         widget_width,
         layout_pad,
         &ret.guitext_state,
-        &ret.scroll_style,
-        &ret.squircle_renderer,
+        &ret.scroll_shared,
     );
 
     ret.thumbnail_shared = .{
@@ -265,7 +267,7 @@ pub fn WidgetState(comptime Action: type) type {
         shared_button_state: gui.button.SharedButtonState,
         squircle_renderer: gui.SquircleRenderer,
         image_renderer: sphrender.xyuvt_program.ImageRenderer,
-        scroll_style: gui.scrollbar.Style,
+        scroll_shared: gui.scrollbar.Shared,
         shared_color: gui.color_picker.SharedColorPickerState,
         shared_textbox_state: gui.textbox.SharedTextboxState,
         shared_selecatble_list_state: gui.selectable_list.SharedState,
@@ -445,7 +447,7 @@ pub fn WidgetFactory(comptime Action: type) type {
         }
 
         pub fn makeScrollView(self: *const Self, inner: gui.Widget(Action)) !gui.Widget(Action) {
-            return gui.scroll_view.ScrollView(Action).init(self.alloc.heap.arena(), inner, &self.state.scroll_style, &self.state.squircle_renderer);
+            return gui.scroll_view.ScrollView(Action).init(self.alloc.heap.arena(), inner, &self.state.scroll_shared);
         }
 
         pub fn makeEvenVertLayout(self: *const Self, max_size: comptime_int) !*gui.even_vert_layout.EvenVertLayout(Action, max_size) {

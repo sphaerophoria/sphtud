@@ -44,7 +44,7 @@ pub fn Shared(comptime Action: type) type {
         guitext_state: *const gui.gui_text.SharedState,
         squircle_renderer: *const SquircleRenderer,
         selectable: *const gui.selectable_list.SharedState,
-        scroll_style: *const gui.scrollbar.Style,
+        scroll_shared: *const gui.scrollbar.Shared,
         frame: *const gui.frame.Shared,
         popup_layer: *PopupLayer(Action),
 
@@ -54,7 +54,7 @@ pub fn Shared(comptime Action: type) type {
             guitext_state: *const gui.gui_text.SharedState,
             squircle_renderer: *const SquircleRenderer,
             selectable: *const gui.selectable_list.SharedState,
-            scroll_style: *const gui.scrollbar.Style,
+            scroll_shared: *const gui.scrollbar.Shared,
             frame: *const gui.frame.Shared,
             popup_layer: *PopupLayer(Action),
         };
@@ -85,7 +85,7 @@ pub fn Shared(comptime Action: type) type {
                 .guitext_state = options.guitext_state,
                 .squircle_renderer = options.squircle_renderer,
                 .selectable = options.selectable,
-                .scroll_style = options.scroll_style,
+                .scroll_shared = options.scroll_shared,
                 .frame = options.frame,
                 .popup_layer = options.popup_layer,
             };

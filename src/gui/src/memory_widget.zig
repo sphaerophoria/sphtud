@@ -13,8 +13,7 @@ const GlAlloc = sphrender.GlAlloc;
 pub const Shared = struct {
     scratch: *sphalloc.ScratchAlloc,
     guitext_shared: *const gui.gui_text.SharedState,
-    scrollbar_style: *const gui.scrollbar.Style,
-    squircle_renderer: *const gui.SquircleRenderer,
+    scroll_shared: *const gui.scrollbar.Shared,
     program: Program(Uniform),
     label_width: u31,
     item_pad: u31,
@@ -25,15 +24,13 @@ pub const Shared = struct {
         label_width: u31,
         item_pad: u31,
         guitext_shared: *const gui.gui_text.SharedState,
-        scrollbar_style: *const gui.scrollbar.Style,
-        squircle_renderer: *const gui.SquircleRenderer,
+        scroll_shared: *const gui.scrollbar.Shared,
     ) !Shared {
         const program = try Program(Uniform).init(alloc, vertex_shader, fragment_shader);
         return .{
             .scratch = scratch,
             .guitext_shared = guitext_shared,
-            .scrollbar_style = scrollbar_style,
-            .squircle_renderer = squircle_renderer,
+            .scroll_shared = scroll_shared,
             .program = program,
             .label_width = label_width,
             .item_pad = item_pad,
@@ -69,8 +66,7 @@ pub fn makeMemoryWidget(
     const scroll = try gui.scroll_view.ScrollView(Action).init(
         alloc.heap.arena(),
         grid.asWidget(),
-        shared.scrollbar_style,
-        shared.squircle_renderer,
+        shared.scroll_shared,
     );
 
     const item_alloc = try alloc.makeSubAlloc("memory_widget_items");

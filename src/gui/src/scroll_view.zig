@@ -32,16 +32,14 @@ pub fn ScrollView(comptime Action: type) type {
         pub fn init(
             alloc: Allocator,
             inner: Widget(Action),
-            scrollbar_style: *const gui.scrollbar.Style,
-            squircle_renderer: *const SquircleRenderer,
+            scroll_shared: *const gui.scrollbar.Shared,
         ) !Widget(Action) {
             const view = try alloc.create(Self);
 
             view.* = .{
                 .inner = inner,
                 .scrollbar = .{
-                    .renderer = squircle_renderer,
-                    .style = scrollbar_style,
+                    .shared = scroll_shared,
                 },
                 .size = inner.getSize(),
             };
@@ -192,7 +190,7 @@ pub fn ScrollView(comptime Action: type) type {
 
         fn scrollbarWidth(self: Self) u31 {
             if (self.scrollbar_present) {
-                return self.scrollbar.style.width;
+                return self.scrollbar.shared.style.width;
             } else {
                 return 0;
             }
@@ -210,7 +208,7 @@ pub fn ScrollView(comptime Action: type) type {
 
 fn scrollAreaBounds(scrollbar: Scrollbar, bounds: PixelBBox) PixelBBox {
     return .{
-        .left = bounds.right - scrollbar.style.width,
+        .left = bounds.right - scrollbar.shared.style.width,
         .right = bounds.right,
         .top = bounds.top,
         .bottom = bounds.bottom,
