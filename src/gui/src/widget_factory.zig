@@ -7,20 +7,23 @@ const sphalloc = @import("sphalloc");
 const ScratchAlloc = sphalloc.ScratchAlloc;
 const GlAlloc = sphrender.GlAlloc;
 
-pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc) !*WidgetState(Action) {
+pub const WidgetStateOptions = struct {
+    font_size: f32 = 11.0,
+};
+
+pub fn widgetState(comptime Action: type, gui_alloc: gui.GuiAlloc, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc, options: WidgetStateOptions) !*WidgetState(Action) {
     const arena = gui_alloc.heap.arena();
     const gpa = gui_alloc.heap.general();
     const ret = try arena.create(WidgetState(Action));
 
-    const font_size = 11.0;
-    ret.text_renderer = try sphtext.TextRenderer.init(gpa, gui_alloc.gl, font_size);
+    ret.text_renderer = try sphtext.TextRenderer.init(gpa, gui_alloc.gl, options.font_size);
 
     ret.distance_field_renderer = try sphrender.DistanceFieldGenerator.init(gui_alloc.gl);
 
     const font_data = @embedFile("res/Hack-Regular.ttf");
     ret.ttf = try sphtext.ttf.Ttf.init(gpa, font_data);
 
-    const unit: f32 = @floatFromInt(sphtext.ttf.lineHeightPx(ret.ttf, font_size));
+    const unit: f32 = @floatFromInt(sphtext.ttf.lineHeightPx(ret.ttf, options.font_size));
 
     const layout_pad: u31 = @intFromFloat(unit / 3);
     ret.layout_pad = layout_pad;

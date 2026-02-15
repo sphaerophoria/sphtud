@@ -188,6 +188,7 @@ pub fn main() !void {
         gui_alloc,
         &allocators.scratch,
         &allocators.scratch_gl,
+        .{},
     );
 
     var std_dist: [25]f32 = undefined;
