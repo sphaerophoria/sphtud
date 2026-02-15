@@ -21,7 +21,8 @@ pub fn scrollList(comptime Action: type, alloc: gui.GuiAlloc, scratch: sphalloc.
         .first_widget_idx = 0,
         .scroll_anchor = .{
             .screen_ratio = 0.0,
-            .item_ratio = 0.0,
+            .item_idx = 0,
+            .item_offs = 0,
         },
         .active_widgets = try .init(
             arena,
@@ -115,7 +116,7 @@ pub fn ScrollList(comptime Action: type, comptime Factory: type) type {
             );
             try layout_helper.layout();
 
-            self.selectNewAnchor(layout_helper.num_items);
+            self.selectNewAnchor();
 
             self.scrollbar.scroll_ratio = calcScrollbarPosition(
                 Action,
@@ -146,9 +147,16 @@ pub fn ScrollList(comptime Action: type, comptime Factory: type) type {
                 input_state,
                 input_bounds.calcIntersection(scrollAreaBounds(self.scrollbar, widget_bounds)),
             )) |pos| {
+                var item_offs: f64 = pos;
+                item_offs *= @floatFromInt(self.factory.numItems());
+
+                const item_idx: usize = @intFromFloat(item_offs);
+                item_offs = @mod(item_offs, 1.0);
+
                 self.scroll_anchor = .{
-                    .item_ratio = pos,
+                    .item_idx = item_idx,
                     .screen_ratio = pos,
+                    .item_offs = @floatCast(item_offs),
                 };
             }
 
@@ -170,7 +178,7 @@ pub fn ScrollList(comptime Action: type, comptime Factory: type) type {
             };
         }
 
-        fn selectNewAnchor(self: *ScrollListSelf, num_elems: usize) void {
+        fn selectNewAnchor(self: *ScrollListSelf) void {
             const content_size = self.getContentSize();
             var it = self.active_widgets.iter();
             var i: usize = 0;
@@ -179,14 +187,12 @@ pub fn ScrollList(comptime Action: type, comptime Factory: type) type {
 
                 if (elem.bounds.top < 0) continue;
 
-                var widget_ratio: f64 = @floatFromInt(self.first_widget_idx + i);
-                widget_ratio /= @floatFromInt(num_elems);
-
                 var screen_ratio: f32 = @floatFromInt(elem.bounds.top);
                 screen_ratio /= @floatFromInt(content_size.height);
 
                 self.scroll_anchor = .{
-                    .item_ratio = widget_ratio,
+                    .item_idx = self.first_widget_idx + i,
+                    .item_offs = 0,
                     .screen_ratio = screen_ratio,
                 };
 
@@ -217,11 +223,11 @@ pub fn ScrollList(comptime Action: type, comptime Factory: type) type {
                 parent: *ScrollListSelf,
             ) !LayoutHelper {
                 const num_items = parent.factory.numItems();
-                const num_items_f: f32 = @floatFromInt(num_items);
                 const content_size = parent.getContentSize();
                 const container_height_f: f32 = @floatFromInt(content_size.height);
 
-                const anchor_item_point = parent.scroll_anchor.item_ratio * num_items_f;
+                var anchor_item_point: f64 = @floatFromInt(parent.scroll_anchor.item_idx);
+                anchor_item_point += @floatCast(parent.scroll_anchor.item_offs);
 
                 var anchor_item_id: usize = @intFromFloat(anchor_item_point);
                 var anchor_item_offs = @mod(anchor_item_point, 1.0);
@@ -532,9 +538,12 @@ fn ActiveWidgetsUnmanaged(comptime Action: type) type {
 }
 
 const ScrollAnchor = struct {
+    // Where on the screen we want to anchor to
     screen_ratio: f32,
-    // This needs to be an f64 to accurately track large lists of items
-    item_ratio: f64,
+    // Which item we are anchoring
+    item_idx: usize,
+    // Where in the item we are anchoring (in item space)
+    item_offs: f32,
 };
 
 fn asf32(v: anytype) f32 {
