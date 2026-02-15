@@ -432,10 +432,11 @@ pub const Loop2 = struct {
         try std.posix.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_DEL, handle, null);
     }
 
-    pub fn poll(self: *Self) !usize {
-        while (self.event_cursor >= self.num_events) {
-            self.num_events = std.posix.epoll_wait(self.fd, &self.buffered_events, -1);
+    pub fn poll(self: *Self, timeout: i32) !?usize {
+        if (self.event_cursor >= self.num_events) {
+            self.num_events = std.posix.epoll_wait(self.fd, &self.buffered_events, timeout);
             self.event_cursor = 0;
+            if (self.num_events == 0) return null;
         }
 
         const event = self.buffered_events[self.event_cursor];
