@@ -310,7 +310,25 @@ pub fn WidgetFactory(comptime Action: type) type {
         alloc: gui.GuiAlloc,
         state: *WidgetState(Action),
 
+        pub fn makeGuiTextShared(self: *const Self, ttf: *const sphtext.ttf.Ttf, font_size: f32) !gui.gui_text.SharedState {
+            const text_renderer = try self.alloc.heap.arena().create(sphtext.TextRenderer);
+            text_renderer.* = try sphtext.TextRenderer.init(
+                self.alloc.heap.general(),
+                self.alloc.gl,
+                font_size,
+            );
+
+            return .{
+                .scratch_alloc = self.state.guitext_state.scratch_alloc,
+                .scratch_gl = self.state.guitext_state.scratch_gl,
+                .text_renderer = text_renderer,
+                .ttf = ttf,
+                .distance_field_generator = &self.state.distance_field_renderer,
+            };
+        }
+
         pub const LabelOptions = struct {
+            shared_override: ?*gui.gui_text.SharedState = null,
             color: gui.Color = .white,
         };
 
@@ -320,7 +338,7 @@ pub fn WidgetFactory(comptime Action: type) type {
                 self.alloc,
                 text_retriever,
                 options.color,
-                &self.state.guitext_state,
+                options.shared_override orelse &self.state.guitext_state,
             );
         }
 
