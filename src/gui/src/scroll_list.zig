@@ -116,7 +116,7 @@ pub fn ScrollList(comptime Action: type, comptime Factory: type) type {
             );
             try layout_helper.layout();
 
-            self.selectNewAnchor();
+            self.selectNewAnchor(layout_helper.num_items);
 
             self.scrollbar.scroll_ratio = calcScrollbarPosition(
                 Action,
@@ -178,8 +178,18 @@ pub fn ScrollList(comptime Action: type, comptime Factory: type) type {
             };
         }
 
-        fn selectNewAnchor(self: *ScrollListSelf) void {
+        fn selectNewAnchor(self: *ScrollListSelf, num_items: usize) void {
             const content_size = self.getContentSize();
+
+            if (self.isAtBottom(content_size.height, num_items)) {
+                self.scroll_anchor = .{
+                    .screen_ratio = 1.0,
+                    .item_idx = std.math.maxInt(usize),
+                    .item_offs = 1.0,
+                };
+                return;
+            }
+
             var it = self.active_widgets.iter();
             var i: usize = 0;
             while (it.next()) |elem| {
@@ -198,6 +208,14 @@ pub fn ScrollList(comptime Action: type, comptime Factory: type) type {
 
                 break;
             }
+        }
+
+        fn isAtBottom(self: *ScrollListSelf, content_height: u31, num_items: usize) bool {
+            if (self.active_widgets.len == 0) return false;
+            if (self.first_widget_idx + self.active_widgets.len != num_items) return false;
+
+            const last_elem = self.active_widgets.get(self.active_widgets.len - 1);
+            return last_elem.bounds.bottom == content_height;
         }
 
         const LayoutHelper = struct {
@@ -229,7 +247,7 @@ pub fn ScrollList(comptime Action: type, comptime Factory: type) type {
                 var anchor_item_point: f64 = @floatFromInt(parent.scroll_anchor.item_idx);
                 anchor_item_point += @floatCast(parent.scroll_anchor.item_offs);
 
-                var anchor_item_id: usize = @intFromFloat(anchor_item_point);
+                var anchor_item_id = parent.scroll_anchor.item_idx;
                 var anchor_item_offs = @mod(anchor_item_point, 1.0);
 
                 // If we are trying to snap the bottom of the last item to the
