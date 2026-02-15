@@ -7,11 +7,11 @@ const PixelSize = gui.PixelSize;
 const PixelBBox = gui.PixelBBox;
 const Widget = gui.Widget;
 
-pub fn makeLabel(comptime Action: type, alloc: gui.GuiAlloc, text_retriever: anytype, shared: *const gui_text.SharedState) !Widget(Action) {
+pub fn makeLabel(comptime Action: type, alloc: gui.GuiAlloc, text_retriever: anytype, color: gui.Color, shared: *const gui_text.SharedState) !gui.Widget(Action) {
     const T = Label(@TypeOf(text_retriever));
 
     const ctx = try alloc.heap.arena().create(T);
-    const text = try gui_text.guiText(alloc, shared, text_retriever);
+    const text = try gui_text.guiText(alloc, shared, color, text_retriever);
 
     ctx.* = .{
         .text = text,

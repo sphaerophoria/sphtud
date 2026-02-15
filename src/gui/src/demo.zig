@@ -153,7 +153,7 @@ const ScrollLabelFactory = struct {
 
         const text = try std.fmt.allocPrint(gop.val.heap.arena(), "hello, i am widget {d}", .{idx});
         const factory = self.state.factory(gop.val.*);
-        return try factory.makeLabel(text);
+        return try factory.makeLabel(text, .{});
     }
 
     pub fn destroyWidget(self: *ScrollLabelFactory, idx: usize, widget: gui.Widget(GuiAction)) void {
@@ -199,13 +199,18 @@ pub fn main() !void {
     const widget_factory = gui_state.factory(gui_alloc);
     const layout = try widget_factory.makeLayout();
 
+    try layout.pushWidget(try widget_factory.makeLabel("A label", .{}));
+    try layout.pushWidget(try widget_factory.makeLabel("A red label", .{
+        .color = .{ .r = 1.0, .g = 0.0, .b = 0.0, .a = 1.0 },
+    }));
+
     var input_text_buf: [100]u8 = undefined;
 
     var input_text = std.ArrayList(u8).initBuffer(&input_text_buf);
-    try layout.pushWidget(try widget_factory.makeLabel("A text box"));
+    try layout.pushWidget(try widget_factory.makeLabel("A text box", .{}));
     try layout.pushWidget(try widget_factory.makeTextbox(&input_text.items, &GuiAction.makeTextEdit));
 
-    try layout.pushWidget(try widget_factory.makeLabel("A histogram"));
+    try layout.pushWidget(try widget_factory.makeLabel("A histogram", .{}));
     try layout.pushWidget(try widget_factory.makeBox(
         try widget_factory.makeHistogram(histogram_retriever),
         .{ .width = 300, .height = 200 },
@@ -229,7 +234,7 @@ pub fn main() !void {
         .color = .{ .r = 1, .g = 0.73, .b = 0.35, .a = 1 },
     };
 
-    try layout.pushWidget(try widget_factory.makeLabel("A multi graph"));
+    try layout.pushWidget(try widget_factory.makeLabel("A multi graph", .{}));
     try layout.pushWidget(try widget_factory.makeBox(
         try widget_factory.makeMultiLineGraph(multiline_retrievers),
         .{ .width = 300, .height = 200 },

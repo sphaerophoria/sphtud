@@ -20,7 +20,7 @@ pub const SharedState = struct {
     distance_field_generator: *const sphrender.DistanceFieldGenerator,
 };
 
-pub fn guiText(alloc: gui.GuiAlloc, shared: *const SharedState, text_retriever_const: anytype) !GuiText(@TypeOf(text_retriever_const)) {
+pub fn guiText(alloc: gui.GuiAlloc, shared: *const SharedState, color: gui.Color, text_retriever_const: anytype) !GuiText(@TypeOf(text_retriever_const)) {
     const text_buffer = try sphrender.xyuvt_program.makeFullScreenPlane(alloc.gl);
     var text_render_source = try sphrender.xyuvt_program.RenderSource.init(alloc.gl);
     text_render_source.bindData(shared.text_renderer.program.handle(), text_buffer);
@@ -49,6 +49,7 @@ pub fn guiText(alloc: gui.GuiAlloc, shared: *const SharedState, text_retriever_c
         .buffer = text_buffer,
         .render_source = text_render_source,
         .shared = shared,
+        .color = color,
         .text_retriever = text_retriever_const,
     };
 }
@@ -78,6 +79,7 @@ pub fn GuiText(comptime TextRetriever: type) type {
         text: RuntimeSegmentedList(u8),
         wrap_width: u31 = 0,
         shared: *const SharedState,
+        color: gui.Color,
 
         text_retriever: TextRetriever,
 
@@ -109,7 +111,7 @@ pub fn GuiText(comptime TextRetriever: type) type {
             // consistent layout, then find the baseline relative to that area
             //
             // Baseline location can use the max ascent/descent metrics
-            self.shared.text_renderer.render(self.render_source, transform);
+            self.shared.text_renderer.render(self.render_source, .{ self.color.r, self.color.g, self.color.b }, transform);
         }
 
         pub fn getNextText(self: *Self) []const u8 {

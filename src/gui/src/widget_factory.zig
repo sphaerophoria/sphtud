@@ -310,11 +310,16 @@ pub fn WidgetFactory(comptime Action: type) type {
         alloc: gui.GuiAlloc,
         state: *WidgetState(Action),
 
-        pub fn makeLabel(self: *const Self, text_retriever: anytype) !gui.Widget(Action) {
+        pub const LabelOptions = struct {
+            color: gui.Color = .white,
+        };
+
+        pub fn makeLabel(self: *const Self, text_retriever: anytype, options: LabelOptions) !gui.Widget(Action) {
             return gui.label.makeLabel(
                 Action,
                 self.alloc,
                 text_retriever,
+                options.color,
                 &self.state.guitext_state,
             );
         }

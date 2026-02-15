@@ -364,11 +364,12 @@ pub fn updateTextBuffer(self: *TextRenderer, scratch_alloc: *ScratchAlloc, scrat
     buffer.updateBuffer(new_buffer_data);
 }
 
-pub fn render(self: TextRenderer, render_source: RenderSource, transform: sphmath.Transform) void {
+pub fn render(self: TextRenderer, render_source: RenderSource, color: sphmath.Vec3, transform: sphmath.Transform) void {
     self.program.render(render_source, .{
         .input_df = self.glyph_atlas.texture,
         .multiplier = self.point_size * self.multiplier,
         .transform = transform.inner,
+        .color = color,
     });
 }
 
@@ -376,6 +377,7 @@ pub const TextUniforms = struct {
     input_df: sphrender.Texture,
     multiplier: f32,
     transform: sphmath.Mat3x3,
+    color: sphmath.Vec3,
 };
 
 fn pixToClip(val: u32, max: u32) f32 {
@@ -391,11 +393,12 @@ pub const text_fragment_shader =
     \\out vec4 fragment;
     \\uniform sampler2D input_df;
     \\uniform float multiplier = 100.0;
+    \\uniform vec3 color;
     \\void main()
     \\{
     \\    float distance = texture(input_df, uv).r;
     \\    float N = 1.0 / multiplier;
     \\    float alpha = smoothstep(-N, N, distance);
-    \\    fragment = vec4(1.0, 1.0, 1.0, alpha);
+    \\    fragment = vec4(color, alpha);
     \\}
 ;

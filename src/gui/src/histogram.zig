@@ -62,7 +62,7 @@ pub fn histogram(
             // NOTE: GuiText object that shows current text lives for lifetime of
             // widget. Note that the text itself will change and get re-allocated
             // from the curnent_hovered_text_alloc, but the widget will not
-            .x_axis_gui_text = try gui.gui_text.guiText(alloc, shared.guitext_shared, &ctx.axis_text.x_axis_text),
+            .x_axis_gui_text = try gui.gui_text.guiText(alloc, shared.guitext_shared, .white, &ctx.axis_text.x_axis_text),
         },
     };
 

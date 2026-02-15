@@ -29,7 +29,7 @@ pub fn multiLineGraph(comptime Action: type, alloc: sphrender.RenderAlloc, share
     );
 
     for (texts, graph_states) |*text, *graph_state| {
-        text.* = try gui.gui_text.guiText(alloc, shared.guitext_shared, graph_state);
+        text.* = try gui.gui_text.guiText(alloc, shared.guitext_shared, .white, graph_state);
     }
 
     ret.* = .{

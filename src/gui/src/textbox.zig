@@ -302,7 +302,7 @@ pub fn makeTextbox(comptime Action: type, alloc: gui.GuiAlloc, text_retreiver: a
     const TB = Textbox(Action, @TypeOf(text_retreiver), @TypeOf(text_action));
     const box = try alloc.heap.arena().create(TB);
 
-    const new_buffer = try gui_text.guiText(alloc, shared.guitext_shared, text_retreiver);
+    const new_buffer = try gui_text.guiText(alloc, shared.guitext_shared, .white, text_retreiver);
 
     box.* = .{
         .gui_text = new_buffer,
