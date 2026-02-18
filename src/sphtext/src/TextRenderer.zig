@@ -30,7 +30,7 @@ pub const TextLayout = struct {
     };
 
     pub const GlyphLoc = struct {
-        char: u8,
+        char: u32,
         pixel_x1: i32,
         pixel_x2: i32,
         pixel_y1: i32,
@@ -96,6 +96,48 @@ const LayoutBox = struct {
     }
 };
 
+fn isWhitespace(c: u32) bool {
+    // https://en.wikipedia.org/wiki/Whitespace_character
+    const whitespace_chars = &.{
+        0x0009,
+        0x000A,
+        0x000B,
+        0x000C,
+        0x000D,
+        0x0020,
+        0x0085,
+        0x00A0,
+        0x1680,
+        0x2000,
+        0x2001,
+        0x2002,
+        0x2003,
+        0x2004,
+        0x2005,
+        0x2006,
+        0x2007,
+        0x2008,
+        0x2009,
+        0x200A,
+        0x2028,
+        0x2029,
+        0x202F,
+        0x205F,
+        0x3000,
+    };
+
+    inline for (whitespace_chars) |w| {
+        if (c == w) return true;
+    }
+
+    return false;
+}
+
+const replacement_char_codepoint = 0xfffd;
+fn u16Codepoint(in: u32) u16 {
+    return std.math.cast(u16, in) orelse replacement_char_codepoint;
+}
+
 const LayoutHelper = struct {
     line_height: i16,
     text: []const u8,
@@ -140,14 +182,39 @@ const LayoutHelper = struct {
         };
     }
 
-    fn nextChar(self: *LayoutHelper) ?u8 {
+    fn nextChar(self: *LayoutHelper) !?u32 {
         if (self.text_idx >= self.text.len) return null;
-        defer self.text_idx += 1;
-        return self.text[self.text_idx];
+
+        const first_byte = self.text[self.text_idx];
+
+        const len = std.unicode.utf8ByteSequenceLength(first_byte) catch |e| {
+            // This seems wrong, but also what else are we supposed to do :)
+            self.text_idx += 1;
+            return e;
+        };
+        defer self.text_idx += len;
+
+        if (self.text_idx + len > self.text.len) return error.InvalidUnicode;
+
+        switch (len) {
+            1 => {
+                return first_byte;
+            },
+            2 => {
+                return try std.unicode.utf8Decode2(self.text[self.text_idx..][0..2].*);
+            },
+            3 => {
+                return try std.unicode.utf8Decode3(self.text[self.text_idx..][0..3].*);
+            },
+            4 => {
+                return try std.unicode.utf8Decode4(self.text[self.text_idx..][0..4].*);
+            },
+            else => return error.InvalidUnicode,
+        }
     }
 
     fn step(self: *LayoutHelper) !bool {
-        const c = self.nextChar() orelse return false;
+        const c = (self.nextChar() catch replacement_char_codepoint) orelse return false;
 
         self.updateRollbackData(c);
 
@@ -156,9 +223,10 @@ const LayoutHelper = struct {
             return true;
         }
 
-        const metrics = ttf_mod.metricsForChar(self.ttf.*, c);
+        const c_u16 = u16Codepoint(c);
+        const metrics = ttf_mod.metricsForChar(self.ttf.*, c_u16);
 
-        const glyph_bounds = self.calcCharBounds(metrics.left_side_bearing, c) orelse {
+        const glyph_bounds = self.calcCharBounds(metrics.left_side_bearing, c_u16) orelse {
             self.advanceNoGlyphChar(metrics.advance_width);
             return true;
         };
@@ -195,8 +263,8 @@ const LayoutHelper = struct {
         self.rollback_data.start_x = 0;
     }
 
-    fn updateRollbackData(self: *LayoutHelper, c: u8) void {
-        if (std.ascii.isWhitespace(c)) {
+    fn updateRollbackData(self: *LayoutHelper, c: u32) void {
+        if (isWhitespace(c)) {
             self.layout_state = .between_word;
             return;
         } else if (self.layout_state == .in_word) {
@@ -235,7 +303,7 @@ const LayoutHelper = struct {
         self.advanceLine();
     }
 
-    fn calcCharBounds(self: *LayoutHelper, left_side_bearing: i16, c: u8) ?LayoutBox {
+    fn calcCharBounds(self: *LayoutHelper, left_side_bearing: i16, c: u16) ?LayoutBox {
         const header = ttf_mod.glyphHeaderForChar(self.ttf.*, c) orelse {
             return null;
         };
@@ -322,7 +390,7 @@ pub fn updateTextBuffer(self: *TextRenderer, scratch_alloc: *ScratchAlloc, scrat
         scratch_alloc.restore(loop_checkpoint);
         defer buffer_idx += num_points_per_plane;
 
-        const uv_loc = try self.glyph_atlas.getGlyphLocation(scratch_alloc, scratch_gl, glyph.char, self.point_size, ttf, distance_field_generator);
+        const uv_loc = try self.glyph_atlas.getGlyphLocation(scratch_alloc, scratch_gl, u16Codepoint(glyph.char), self.point_size, ttf, distance_field_generator);
 
         // [0, width] -> [-1, 1]
         const clip_x_start = pixToClip(@intCast(glyph.pixel_x1 - text.min_x), text.width());

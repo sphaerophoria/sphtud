@@ -20,7 +20,7 @@ texture: Texture,
 tex_width: u31,
 tex_height: u31,
 //FIXME: Utf8 codepoints
-glyph_locations: std.AutoHashMap(u8, UVBBox),
+glyph_locations: std.AutoHashMap(u16, UVBBox),
 x_cursor_px: u16 = 0,
 y_cursor_px: u16 = 0,
 row_max_height: u16 = 0,
@@ -75,7 +75,7 @@ pub fn init(gpa: Allocator, gl_alloc: *GlAlloc) !GlyphAtlas {
 
     return .{
         .program = program,
-        .glyph_locations = std.AutoHashMap(u8, UVBBox).init(gpa),
+        .glyph_locations = std.AutoHashMap(u16, UVBBox).init(gpa),
         .glyph_render_source = render_source,
         .texture = texture,
         .tex_width = tex_width,
@@ -92,7 +92,7 @@ pub fn getGlyphLocation(
     self: *GlyphAtlas,
     scratch_alloc: *ScratchAlloc,
     scratch_gl: *GlAlloc,
-    char: u8,
+    char: u16,
     point_size: f32,
     ttf: ttf_mod.Ttf,
     distance_field_renderer: sphrender.DistanceFieldGenerator,
@@ -111,7 +111,7 @@ pub fn getGlyphLocation(
     return gop.value_ptr.*;
 }
 
-fn addCharToAtlas(self: *GlyphAtlas, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc, char: u8, point_size: f32, ttf: ttf_mod.Ttf, distance_field_renderer: sphrender.DistanceFieldGenerator) !UVBBox {
+fn addCharToAtlas(self: *GlyphAtlas, scratch_alloc: *ScratchAlloc, scratch_gl: *GlAlloc, char: u16, point_size: f32, ttf: ttf_mod.Ttf, distance_field_renderer: sphrender.DistanceFieldGenerator) !UVBBox {
     const gl_checkpoint = scratch_gl.checkpoint();
     defer scratch_gl.restore(gl_checkpoint);
 
@@ -294,7 +294,7 @@ fn makeDistanceField(
     scratch_alloc: *ScratchAlloc,
     gl_alloc: *GlAlloc,
     ttf: ttf_mod.Ttf,
-    c: u8,
+    c: u16,
     width: usize,
     height: usize,
     mask_texture: sphrender.Texture,
