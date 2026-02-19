@@ -109,14 +109,14 @@ pub const Rgba8888Pixel = packed struct {
                 .r = f32ToU8Px(px.r),
                 .g = f32ToU8Px(px.g),
                 .b = f32ToU8Px(px.b),
-                .a = 255,
+                .a = if (@hasField(@TypeOf(px), "a")) f32ToU8Px(px.a) else 255,
             };
         } else {
             return .{
                 .r = px.r,
                 .g = px.g,
                 .b = px.b,
-                .a = 255,
+                .a = if (@hasField(@TypeOf(px), "a")) px.a else 255,
             };
         }
     }
