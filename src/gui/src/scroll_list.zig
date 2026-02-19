@@ -166,7 +166,28 @@ pub fn ScrollList(comptime Action: type, comptime Factory: type) type {
                 input_state.consumeScroll();
             }
 
-            return .{};
+            var ret = gui.InputResponse(Action){};
+
+            {
+                var it = self.active_widgets.iter();
+                while (it.next()) |active_widget| {
+                    // FIXME: Duped with render
+                    const render_bounds = active_widget.bounds.offset(
+                        widget_bounds.left + self.shared.layout_pad,
+                        widget_bounds.top + self.shared.layout_pad,
+                    );
+
+                    const clamped = input_bounds.calcIntersection(render_bounds);
+                    const widget_response = active_widget.widget.setInputState(render_bounds, clamped, input_state);
+
+                    if (widget_response.action) |a| ret.action = a;
+                    // FIXME: Implement set focus
+                    if (widget_response.wants_focus) ret.wants_focus = true;
+                    if (widget_response.cursor_style) |c| ret.cursor_style = c;
+                }
+            }
+
+            return ret;
         }
 
         fn scrollAreaBounds(scrollbar: gui.scrollbar.Scrollbar, bounds: gui.PixelBBox) gui.PixelBBox {
