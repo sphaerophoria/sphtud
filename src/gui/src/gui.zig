@@ -277,6 +277,55 @@ pub fn Widget(comptime Action: type) type {
         name: []const u8,
         ctx: ?*anyopaque,
 
+        pub fn fromConcrete(val: anytype, comptime name: []const u8) Widget(Action) {
+            const T = @TypeOf(val.*);
+
+            const wrappers = struct {
+                fn render(ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void {
+                    const self: *T = @ptrCast(@alignCast(ctx));
+                    self.render(widget_bounds, window_bounds);
+                }
+
+                fn getSize(ctx: ?*anyopaque) PixelSize {
+                    const self: *T = @ptrCast(@alignCast(ctx));
+                    return self.getSize();
+                }
+
+                fn update(ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) anyerror!void {
+                    const self: *T = @ptrCast(@alignCast(ctx));
+                    return self.update(available_size, delta_s);
+                }
+
+                fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
+                    const self: *T = @ptrCast(@alignCast(ctx));
+                    return self.setInputState(widget_bounds, input_bounds, input_state);
+                }
+
+                fn setFocused(ctx: ?*anyopaque, focused: bool) void {
+                    const self: *T = @ptrCast(@alignCast(ctx));
+                    self.setFocused(focused);
+                }
+
+                fn reset(ctx: ?*anyopaque) void {
+                    const self: *T = @ptrCast(@alignCast(ctx));
+                    self.reset();
+                }
+            };
+
+            return .{
+                .ctx = val,
+                .vtable = &.{
+                    .render = wrappers.render,
+                    .getSize = wrappers.getSize,
+                    .update = if (@hasDecl(T, "update")) wrappers.update else null,
+                    .setInputState = if (@hasDecl(T, "setInputState")) wrappers.setInputState else null,
+                    .setFocused = if (@hasDecl(T, "setFocused")) wrappers.setFocused else null,
+                    .reset = if (@hasDecl(T, "reset")) wrappers.reset else null,
+                },
+                .name = name,
+            };
+        }
+
         pub fn getSize(self: Self) PixelSize {
             return self.vtable.getSize(self.ctx);
         }

@@ -5,6 +5,7 @@ const gl = sphrender.gl;
 const sphwindow = @import("sphwindow");
 const gui = @import("gui.zig");
 const sphutil = @import("sphutil");
+const sphmath = @import("sphmath");
 
 const GuiAction = union(enum) {
     text_edit: gui.textbox.TextboxNotifier,
@@ -168,6 +169,68 @@ const ScrollLabelFactory = struct {
     }
 };
 
+pub const CustomWidget = struct {
+    render_source: sphrender.xyuvt_program.RenderSource,
+    program: sphrender.xyuvt_program.Program(Uniforms),
+    hover_state: enum {
+        default,
+        hovered,
+    } = .default,
+
+    const Uniforms = struct {
+        transform: sphmath.Mat3x3,
+        max_color: sphmath.Vec3,
+    };
+
+    pub const frag =
+        \\#version 330
+        \\in vec2 uv;
+        \\out vec4 fragment;
+        \\uniform vec3 max_color;
+        \\void main()
+        \\{
+        \\    vec3 black = vec3(0.0, 0.0, 0.0);
+        \\    fragment = vec4(mix(black, max_color, uv.x), 1.0);
+        \\}
+    ;
+
+    pub fn init(alloc: sphrender.RenderAlloc) !CustomWidget {
+        const program = try sphrender.xyuvt_program.Program(Uniforms).init(alloc.gl, frag);
+        var render_source = try sphrender.xyuvt_program.RenderSource.init(alloc.gl);
+        render_source.bindData(program.handle(), try sphrender.xyuvt_program.makeFullScreenPlane(alloc.gl));
+
+        return .{
+            .program = program,
+            .render_source = render_source,
+        };
+    }
+
+    pub fn render(self: CustomWidget, widget_bounds: gui.PixelBBox, window_bounds: gui.PixelBBox) void {
+        const max_color: sphmath.Vec3 = switch (self.hover_state) {
+            .default => .{ 1.0, 0.0, 0.0 },
+            .hovered => .{ 0.0, 1.0, 0.0 },
+        };
+
+        const transform = gui.util.widgetToClipTransform(widget_bounds, window_bounds);
+        self.program.render(self.render_source, .{
+            .transform = transform.inner,
+            .max_color = max_color,
+        });
+    }
+
+    pub fn getSize(_: CustomWidget) gui.PixelSize {
+        return .{ .width = 300, .height = 300 };
+    }
+
+    fn setInputState(self: CustomWidget, _: gui.PixelBBox, input_bounds: gui.PixelBBox, input_state: *gui.InputState) gui.InputResponse(GuiAction) {
+        if (input_bounds.containsMousePos(input_state.mouse_pos)) {
+            self.hover_state = .hovered;
+        } else {
+            self.hover_state = .default;
+        }
+    }
+};
+
 pub fn main() !void {
     var allocators: sphrender.AppAllocators = undefined;
     try allocators.initPinned(10 * 1024 * 1024);
@@ -239,6 +302,14 @@ pub fn main() !void {
     try layout.pushWidget(try widget_factory.makeBox(
         try widget_factory.makeMultiLineGraph(multiline_retrievers),
         .{ .width = 300, .height = 200 },
+        .fill_none,
+    ));
+
+    try layout.pushWidget(try widget_factory.makeLabel("A custom widget", .{}));
+    var custom_widget = try CustomWidget.init(gui_alloc);
+    try layout.pushWidget(try widget_factory.makeBox(
+        gui.Widget(GuiAction).fromConcrete(&custom_widget, "custom"),
+        .{ .width = 300, .height = 300 },
         .fill_none,
     ));
 
