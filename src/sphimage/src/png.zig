@@ -7,6 +7,8 @@ const IDatMerger = @import("png/IDatMerger.zig");
 const DataReader = @import("png/DataReader.zig");
 const common = @import("png/common.zig");
 
+pub const magic = &.{ 137, 80, 78, 71, 13, 10, 26, 10 };
+
 pub fn read(alloc: std.mem.Allocator, scratch: std.mem.Allocator, r: *std.Io.Reader, options: img.ImageLoadOptions) !img.Image {
     const image = try readImageData(alloc, scratch, r, options.force_pixel_format, options.vflip);
 
@@ -14,9 +16,9 @@ pub fn read(alloc: std.mem.Allocator, scratch: std.mem.Allocator, r: *std.Io.Rea
         return image;
     }
 
-    const color_transform = makeColorTransform(image.colorspace, options.force_color_space);
+    const color_transform = color.makeColorTransform(image.colorspace, options.force_color_space);
 
-    var converter = ImageConverter{
+    var converter = color.Converter{
         .data = image.data,
         .color_transform = color_transform,
     };
@@ -62,8 +64,7 @@ pub const Reader = struct {
 
     pub fn init(r: *std.Io.Reader) !Reader {
         const sig = try r.take(8);
-        const expected_sig = &.{ 137, 80, 78, 71, 13, 10, 26, 10 };
-        if (!std.mem.eql(u8, sig, expected_sig)) return error.UnexpectedSignature;
+        if (!std.mem.eql(u8, sig, magic)) return error.UnexpectedSignature;
 
         const header = try common.Header.read(r);
 
@@ -342,105 +343,6 @@ fn readImageData(alloc: std.mem.Allocator, scratch: std.mem.Allocator, r: *std.I
         },
     }
 }
-
-fn makeColorTransform(in_colorspace: img.Colorspace, desired_color_space_opt: ?img.Colorspace) sphmath.Mat3x3 {
-    const desired_color_space = desired_color_space_opt orelse return .{};
-    return color.genColorTransform(in_colorspace.asRgbToXyz(), desired_color_space.asRgbToXyz());
-}
-
-const ImageConverter = struct {
-    data: img.PixelData,
-    color_transform: sphmath.Mat3x3,
-
-    const GammaAdjustment = struct {
-        source_gamma: f32,
-        dest_gamma: f32,
-
-        pub fn apply(self: GammaAdjustment, val: f32) f32 {
-            return std.math.pow(f32, val, self.dest_gamma / self.source_gamma);
-        }
-    };
-
-    const Identity = struct {
-        pub fn apply(val: f32) f32 {
-            return val;
-        }
-    };
-
-    const SrgbToLinear = struct {
-        pub fn apply(val: f32) f32 {
-            return color.srgbToLinear(val);
-        }
-    };
-
-    const LinearToSrgb = struct {
-        pub fn apply(val: f32) f32 {
-            return color.linearToSrgb(val);
-        }
-    };
-
-    fn convert(self: *ImageConverter, source_transfer: img.TransferFn, dest_transfer: img.TransferFn) void {
-        switch (source_transfer) {
-            .gamma => |g| {
-                self.convertImageDataToLinearConcrete(GammaAdjustment{ .source_gamma = g, .dest_gamma = 1.0 }, dest_transfer);
-            },
-            .srgb => {
-                self.convertImageDataToLinearConcrete(SrgbToLinear, dest_transfer);
-            },
-            .linear => {
-                self.convertImageDataToLinearConcrete(Identity, dest_transfer);
-            },
-        }
-    }
-
-    fn convertImageDataToLinearConcrete(self: *ImageConverter, to_linear: anytype, dest_transfer: img.TransferFn) void {
-        switch (dest_transfer) {
-            .gamma => |g| {
-                self.convertImageDataFromLinearConcrete(
-                    to_linear,
-                    GammaAdjustment{ .source_gamma = 1.0, .dest_gamma = g },
-                );
-            },
-            .srgb => {
-                self.convertImageDataFromLinearConcrete(
-                    to_linear,
-                    LinearToSrgb,
-                );
-            },
-            .linear => {
-                self.convertImageDataFromLinearConcrete(
-                    to_linear,
-                    Identity,
-                );
-            },
-        }
-    }
-
-    fn convertImageDataFromLinearConcrete(self: *ImageConverter, to_linear: anytype, dest_transfer: anytype) void {
-        switch (self.data) {
-            inline else => |d| {
-                var it = d.iter();
-                while (it.next()) |px| {
-                    var px_f = px.tof32();
-
-                    const linear = sphmath.Vec3{
-                        to_linear.apply(px_f.r),
-                        to_linear.apply(px_f.g),
-                        to_linear.apply(px_f.b),
-                    };
-
-                    const transformed = std.math.clamp(self.color_transform.mul(linear), @as(sphmath.Vec3, @splat(0.0)), @as(sphmath.Vec3, @splat(1.0)));
-
-                    px_f.r = dest_transfer.apply(transformed[0]);
-                    px_f.g = dest_transfer.apply(transformed[1]);
-                    px_f.b = dest_transfer.apply(transformed[2]);
-
-                    it.write(@TypeOf(px).from(px_f));
-                }
-            },
-        }
-    }
-};
 
 const TransferFnBuilder = struct {
     inner: img.TransferFn,

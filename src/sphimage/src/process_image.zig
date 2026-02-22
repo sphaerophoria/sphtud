@@ -5,6 +5,8 @@ const sphmath = @import("sphmath");
 const Args = struct {
     in_path: []const u8,
     out_path: []const u8,
+    force_linear: bool,
+    flip_rg: bool,
     vflip: bool,
 
     fn parse() Args {
@@ -16,12 +18,16 @@ const Args = struct {
         const Switch = enum {
             @"--in-path",
             @"--out-path",
+            @"--force-linear",
+            @"--flip-rg",
             @"--vflip",
         };
 
         var in_path: ?[]const u8 = null;
         var out_path: ?[]const u8 = null;
         var vflip: bool = false;
+        var flip_rg: bool = false;
+        var force_linear: bool = false;
 
         while (args.next()) |s| {
             const parsed_switch = std.meta.stringToEnum(Switch, s) orelse {
@@ -42,12 +48,20 @@ const Args = struct {
                 .@"--vflip" => {
                     vflip = true;
                 },
+                .@"--force-linear" => {
+                    force_linear = true;
+                },
+                .@"--flip-rg" => {
+                    flip_rg = true;
+                },
             }
         }
 
         return .{
             .in_path = in_path orelse help("--in-path not provided", .{}),
             .out_path = out_path orelse help("--out-path not provided", .{}),
+            .flip_rg = flip_rg,
+            .force_linear = force_linear,
             .vflip = vflip,
         };
     }
@@ -69,6 +83,8 @@ const Args = struct {
             \\
             \\Optional args:
             \\--vflip: Image will be flipped if true
+            \\--flip-rg: Flip the red and green channels
+            \\--force-linear: Do color space conversion from srgb -> linear
             \\
         , .{}) catch {};
         std.process.exit(1);
@@ -84,12 +100,27 @@ pub fn main() !void {
     var reader_buf: [4096]u8 = undefined;
     var reader = f.reader(&reader_buf);
 
-    var alloc_buf: [1 * 1024 * 1024]u8 = undefined;
+    var alloc_buf: [4 * 1024 * 1024]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&alloc_buf);
 
-    const image = try img.png.read(fba.allocator(), fba.allocator(), &reader.interface, .{
+    var options: img.ImageLoadOptions = .{
         .vflip = args.vflip,
-    });
+    };
+
+    if (args.force_linear) {
+        options.force_transfer_fn = .linear;
+    }
+
+    if (args.flip_rg) {
+        options.force_color_space = .{ .chroma = .{
+            .data = .{
+                0.0, 1.0, 0.0,
+                1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0,
+            },
+        } };
+    }
+    const image = try img.read(fba.allocator(), fba.allocator(), &reader.interface, options);
 
     const ppm_f = try std.fs.cwd().createFile(args.out_path, .{});
     defer ppm_f.close();
