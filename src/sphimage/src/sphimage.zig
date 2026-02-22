@@ -2,7 +2,45 @@ const std = @import("std");
 pub const png = @import("png.zig");
 pub const color = @import("color.zig");
 pub const ppm = @import("ppm.zig");
+pub const gif = @import("gif.zig");
 const sphmath = @import("sphmath");
+
+pub fn read(alloc: std.mem.Allocator, scratch: std.mem.Allocator, r: *std.Io.Reader, options: ImageLoadOptions) !Image {
+    switch (try detectType(r)) {
+        .gif => {
+            const seq = try gif.read(alloc, r, options);
+            return seq.asImage(0);
+        },
+        .png => {
+            return png.read(alloc, scratch, r, options);
+        },
+        .unknown => return error.UnknownImage,
+    }
+}
+
+const ImageType = enum {
+    gif,
+    png,
+    unknown,
+};
+
+fn detectType(r: *std.Io.Reader) !ImageType {
+    // CAREFUL, detection is sorted by sequence length. Maybe we should
+    // automatically sort if this gets out of hand. Likely this doesn't
+    // actually matter, but imagine the case where a 4 byte file with a 2 byte
+    // signature is a valid image, reading more than that would fail before we
+    // detected
+
+    if (std.mem.eql(u8, try r.peek(gif.magic.len), gif.magic)) {
+        return .gif;
+    }
+
+    if (std.mem.eql(u8, try r.peek(png.magic.len), png.magic)) {
+        return .png;
+    }
+
+    return .unknown;
+}
 
 pub const PixelFormat = enum(u8) {
     rgb_888_packed,
@@ -143,7 +181,7 @@ pub fn PackedData(comptime PxType: type) type {
 
         pub fn get(self: Self, idx: usize) PxType {
             var ret: PxType = undefined;
-            const in_slice = self.getSlice(idx);
+            const in_slice = self.getByteSlice(idx, 1);
             @memcpy(std.mem.asBytes(&ret)[0..short_len], in_slice);
             return ret;
         }
@@ -153,8 +191,14 @@ pub fn PackedData(comptime PxType: type) type {
             @memcpy(self.data[idx * short_len ..][0..short_len], val_short);
         }
 
-        fn getSlice(self: Self, idx: usize) []u8 {
-            return self.data[idx * short_len ..][0..short_len];
+        pub fn getByteSlice(self: Self, idx: usize, num_pixels: usize) []u8 {
+            return self.data[idx * short_len ..][0 .. short_len * num_pixels];
+        }
+
+        pub fn slice(self: Self, idx: usize, num_pixels: usize) Self {
+            return .{
+                .data = self.getByteSlice(idx, num_pixels),
+            };
         }
 
         pub fn len(self: Self) usize {
@@ -192,6 +236,14 @@ pub const PixelData = union(PixelFormat) {
         switch (format) {
             inline else => |t| {
                 return @unionInit(PixelData, @tagName(t), PackedData(PixelType(t)){ .data = data });
+            },
+        }
+    }
+
+    pub fn slice(self: PixelData, start_idx: usize, num_pixels: usize) PixelData {
+        switch (self) {
+            inline else => |data, tag| {
+                return @unionInit(PixelData, @tagName(tag), data.slice(start_idx, num_pixels));
             },
         }
     }
@@ -249,6 +301,30 @@ pub const Image = struct {
 
     pub fn calcHeight(image: Image) usize {
         return image.data.len() / image.width;
+    }
+};
+
+pub const ImageSequence = struct {
+    width: u32,
+    height: u32,
+    data: PixelData,
+    colorspace: Colorspace,
+    transfer_fn: TransferFn,
+
+    loop_count: u16,
+    timesteps_ms: []u32,
+
+    pub fn numImages(self: ImageSequence) usize {
+        return self.timesteps_ms.len;
+    }
+
+    pub fn asImage(self: ImageSequence, frame_idx: usize) Image {
+        return .{
+            .width = self.width,
+            .data = self.data.slice(frame_idx * self.width * self.height, self.width * self.height),
+            .colorspace = self.colorspace,
+            .transfer_fn = self.transfer_fn,
+        };
     }
 };
 

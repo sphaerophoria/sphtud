@@ -1,4 +1,5 @@
 const std = @import("std");
+const img = @import("sphimage.zig");
 const sphmath = @import("sphmath");
 
 pub const XYY = struct {
@@ -143,5 +144,136 @@ pub fn linearToSrgb(val: f32) f32 {
         return 12.92 * val;
     } else {
         return std.math.pow(f32, val, 1.0 / 2.4) * 1.055 - 0.055;
+    }
+}
+
+pub fn makeColorTransform(in_colorspace: img.Colorspace, desired_color_space_opt: ?img.Colorspace) sphmath.Mat3x3 {
+    const desired_color_space = desired_color_space_opt orelse return .{};
+    return genColorTransform(in_colorspace.asRgbToXyz(), desired_color_space.asRgbToXyz());
+}
+
+pub const Converter = struct {
+    data: img.PixelData,
+    color_transform: sphmath.Mat3x3,
+
+    const GammaAdjustment = struct {
+        source_gamma: f32,
+        dest_gamma: f32,
+
+        pub fn apply(self: GammaAdjustment, val: f32) f32 {
+            return std.math.pow(f32, val, self.dest_gamma / self.source_gamma);
+        }
+    };
+
+    const Identity = struct {
+        pub fn apply(val: f32) f32 {
+            return val;
+        }
+    };
+
+    const SrgbToLinear = struct {
+        pub fn apply(val: f32) f32 {
+            return srgbToLinear(val);
+        }
+    };
+
+    const LinearToSrgb = struct {
+        pub fn apply(val: f32) f32 {
+            return linearToSrgb(val);
+        }
+    };
+
+    pub fn convert(self: *Converter, source_transfer: img.TransferFn, dest_transfer: img.TransferFn) void {
+        switch (source_transfer) {
+            .gamma => |g| {
+                self.convertImageDataToLinearConcrete(GammaAdjustment{ .source_gamma = g, .dest_gamma = 1.0 }, dest_transfer);
+            },
+            .srgb => {
+                self.convertImageDataToLinearConcrete(SrgbToLinear, dest_transfer);
+            },
+            .linear => {
+                self.convertImageDataToLinearConcrete(Identity, dest_transfer);
+            },
+        }
+    }
+
+    fn convertImageDataToLinearConcrete(self: *Converter, to_linear: anytype, dest_transfer: img.TransferFn) void {
+        switch (dest_transfer) {
+            .gamma => |g| {
+                self.convertImageDataFromLinearConcrete(
+                    to_linear,
+                    GammaAdjustment{ .source_gamma = 1.0, .dest_gamma = g },
+                );
+            },
+            .srgb => {
+                self.convertImageDataFromLinearConcrete(
+                    to_linear,
+                    LinearToSrgb,
+                );
+            },
+            .linear => {
+                self.convertImageDataFromLinearConcrete(
+                    to_linear,
+                    Identity,
+                );
+            },
+        }
+    }
+
+    fn convertImageDataFromLinearConcrete(self: *Converter, to_linear: anytype, dest_transfer: anytype) void {
+        switch (self.data) {
+            inline else => |d| {
+                var it = d.iter();
+                while (it.next()) |px| {
+                    var px_f = px.tof32();
+
+                    const linear = sphmath.Vec3{
+                        to_linear.apply(px_f.r),
+                        to_linear.apply(px_f.g),
+                        to_linear.apply(px_f.b),
+                    };
+
+                    const transformed = std.math.clamp(self.color_transform.mul(linear), @as(sphmath.Vec3, @splat(0.0)), @as(sphmath.Vec3, @splat(1.0)));
+
+                    px_f.r = dest_transfer.apply(transformed[0]);
+                    px_f.g = dest_transfer.apply(transformed[1]);
+                    px_f.b = dest_transfer.apply(transformed[2]);
+
+                    it.write(@TypeOf(px).from(px_f));
+                }
+            },
+        }
+    }
+};
+
+test "Color conversion sanity" {
+    var pixel_data_bytes: [9]u8 = .{
+        20,  40,  60,
+        80,  100, 120,
+        140, 160, 180,
+    };
+
+    const pixel_data = img.PixelData.init(.rgb_888_packed, &pixel_data_bytes);
+    var converter = Converter{
+        .color_transform = .{
+            .data = .{
+                0.0, 1.0, 0.0,
+                1.0, 0.0, 0.0,
+                0.0, 0.0, 1.0,
+            },
+        },
+        .data = pixel_data,
+    };
+
+    converter.convert(.linear, .{ .gamma = 2.2 });
+
+    const expected: []const u8 = &.{
+        4,  0,  10,
+        32, 19, 48,
+        91, 68, 118,
+    };
+
+    for (&pixel_data_bytes, expected) |o, e| {
+        try std.testing.expectEqual(e, o);
     }
 }
