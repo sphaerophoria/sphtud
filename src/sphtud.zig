@@ -12,3 +12,4 @@ pub const window = if (config.export_sphwindow) @import("sphwindow") else void;
 pub const event = @import("sphevent");
 pub const xml = @import("sphxml");
 pub const img = @import("sphimage");
+pub const Sphio = @import("Sphio");

@@ -39,6 +39,9 @@
         .sphimage = .{
             .path = "src/sphimage",
         },
+        .sphio = .{
+            .path = "src/sphio",
+        },
     },
     .paths = .{
         "src",

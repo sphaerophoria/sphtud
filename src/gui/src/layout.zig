@@ -1,4 +1,5 @@
 const std = @import("std");
+const sphutil = @import("sphutil");
 const Allocator = std.mem.Allocator;
 const gui = @import("gui.zig");
 const Scrollbar = gui.scrollbar.Scrollbar;
@@ -12,7 +13,7 @@ pub fn Layout(comptime Action: type) type {
     return struct {
         alloc: Allocator,
         cursor: Cursor,
-        items: std.SegmentedList(LayoutItem, 32),
+        items: sphutil.RuntimeSegmentedListUnmanaged(LayoutItem),
         item_pad: u31,
         focused_id: ?usize,
         // If layout is vertical, this is horizontal and vice versa
@@ -39,7 +40,12 @@ pub fn Layout(comptime Action: type) type {
             layout.* = .{
                 .alloc = arena,
                 .cursor = .{},
-                .items = .{},
+                .items = try .init(
+                    arena,
+                    .linear(arena),
+                    32,
+                    1024,
+                ),
                 .item_pad = item_pad,
                 .focused_id = null,
                 .max_perpendicular_length = 0,
@@ -57,7 +63,7 @@ pub fn Layout(comptime Action: type) type {
         pub fn pushWidget(self: *Self, widget: Widget(Action)) !void {
             const size = widget.getSize();
             const bounds = self.cursor.push(size, self.item_pad);
-            try self.items.append(self.alloc, .{ .bounds = bounds, .widget = widget });
+            try self.items.append(.linear(self.alloc), .{ .bounds = bounds, .widget = widget });
             self.updatePerpendicularLength(size);
         }
 
@@ -74,7 +80,7 @@ pub fn Layout(comptime Action: type) type {
             self.cursor.reset();
             self.max_perpendicular_length = 0;
 
-            var item_it = self.items.iterator(0);
+            var item_it = self.items.iter();
             while (item_it.next()) |item| {
                 try item.widget.update(self.availableSize(container_size), delta_s);
                 const widget_size = item.widget.getSize();
@@ -91,7 +97,7 @@ pub fn Layout(comptime Action: type) type {
         }
 
         fn invertWidgetsHorizontally(self: *Self, container_size: PixelSize) void {
-            var item_it = self.items.iterator(0);
+            var item_it = self.items.iter();
             while (item_it.next()) |item| {
                 const new_right = container_size.width - item.bounds.left;
                 const new_left = container_size.width - item.bounds.right;
@@ -114,7 +120,7 @@ pub fn Layout(comptime Action: type) type {
                 .action = null,
             };
 
-            var item_it = self.items.iterator(0);
+            var item_it = self.items.iter();
             var idx: usize = 0;
             while (item_it.next()) |item| {
                 defer idx += 1;
@@ -129,7 +135,7 @@ pub fn Layout(comptime Action: type) type {
                 if (input_response.wants_focus) {
                     if (self.focused_id) |id| {
                         if (id != idx) {
-                            self.items.at(id).widget.setFocused(false);
+                            self.items.get(id).widget.setFocused(false);
                         }
                     }
                     self.focused_id = idx;
@@ -150,7 +156,7 @@ pub fn Layout(comptime Action: type) type {
 
         fn render(ctx: ?*anyopaque, bounds: PixelBBox, window_bounds: PixelBBox) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
-            var item_it = self.items.iterator(0);
+            var item_it = self.items.iter();
             while (item_it.next()) |item| {
                 const child_bounds = childBounds(item.bounds, bounds);
                 item.widget.render(child_bounds, window_bounds);
@@ -178,7 +184,7 @@ pub fn Layout(comptime Action: type) type {
         fn resetWidgets(ctx: ?*anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
 
-            var item_it = self.items.iterator(0);
+            var item_it = self.items.iter();
             while (item_it.next()) |item| {
                 item.widget.reset();
             }
@@ -187,7 +193,7 @@ pub fn Layout(comptime Action: type) type {
         fn setFocused(ctx: ?*anyopaque, focused: bool) void {
             const self: *Self = @ptrCast(@alignCast(ctx));
             if (self.focused_id) |id| {
-                self.items.at(id).widget.setFocused(focused);
+                self.items.get(id).widget.setFocused(focused);
             }
         }
 

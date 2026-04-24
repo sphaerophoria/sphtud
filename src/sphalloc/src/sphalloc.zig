@@ -1243,8 +1243,10 @@ test "Sphalloc sanity" {
     // * Frees some children through the root, some directly
     // * Ensures all memory used is freed
 
+    const io = std.testing.io;
+
     var initial_state_buf: [4096]u8 = undefined;
-    const initial_state = try test_helpers.getMaps(&initial_state_buf);
+    const initial_state = try test_helpers.getMaps(io, &initial_state_buf);
 
     var tiny_page_alloc: TinyPageAllocator = undefined;
     try tiny_page_alloc.initPinned();
@@ -1283,13 +1285,15 @@ test "Sphalloc sanity" {
     sphalloc.deinit();
 
     var end_state_buf: [4096]u8 = undefined;
-    const end_state = try test_helpers.getMaps(&end_state_buf);
+    const end_state = try test_helpers.getMaps(io, &end_state_buf);
     try std.testing.expectEqualStrings(initial_state, end_state);
 }
 
 test "Sphalloc singleChildRemoval" {
+    const io = std.testing.io;
+
     var initial_state_buf: [4096]u8 = undefined;
-    const initial_state = try test_helpers.getMaps(&initial_state_buf);
+    const initial_state = try test_helpers.getMaps(io, &initial_state_buf);
 
     var tiny_page_alloc: TinyPageAllocator = undefined;
     try tiny_page_alloc.initPinned();
@@ -1304,7 +1308,7 @@ test "Sphalloc singleChildRemoval" {
     sphalloc.deinit();
 
     var end_state_buf: [4096]u8 = undefined;
-    const end_state = try test_helpers.getMaps(&end_state_buf);
+    const end_state = try test_helpers.getMaps(io, &end_state_buf);
     try std.testing.expectEqualStrings(initial_state, end_state);
 }
 
@@ -1384,11 +1388,12 @@ const test_helpers = struct {
         }
     }
 
-    pub fn getMaps(buf: []u8) ![]const u8 {
-        const f = try std.fs.openFileAbsolute("/proc/self/maps", .{});
-        defer f.close();
+    pub fn getMaps(io: std.Io, buf: []u8) ![]const u8 {
+        const f = try std.Io.Dir.openFileAbsolute(io, "/proc/self/maps", .{});
+        defer f.close(io);
 
-        const size = try f.readAll(buf);
+        var reader = f.reader(io, &.{});
+        const size = try reader.interface.readSliceShort(buf);
         return buf[0..size];
     }
 };
@@ -1413,5 +1418,5 @@ fn asUsize(p: [*]const u8) usize {
     return @intFromPtr(p);
 }
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }

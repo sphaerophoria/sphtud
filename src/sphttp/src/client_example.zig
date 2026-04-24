@@ -4,14 +4,22 @@ const sphttp = @import("sphttp");
 pub fn main() !void {
     var scratch_buf: [1 * 1024 * 1024]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&scratch_buf);
-    const tcp = try std.net.tcpConnectToHost(fba.allocator(), "www.google.com", 80);
+
+    var io_impl = std.Io.Threaded.init_single_threaded;
+    const io = io_impl.io();
+
+    const host = try std.Io.net.HostName.init("www.google.com");
+    const tcp = try host.connect(io, 80, .{
+        .mode = .stream,
+        .protocol = .tcp,
+    });
 
     // Cannot accept headers larger than this :)
     var read_buf: [8192]u8 = undefined;
-    var reader = tcp.reader(&read_buf);
+    var reader = tcp.reader(io, &read_buf);
 
     var writer_buf: [8192]u8 = undefined;
-    var writer = tcp.writer(&writer_buf);
+    var writer = tcp.writer(io, &writer_buf);
 
     var http_writer = sphttp.HttpWriter.init(&writer.interface);
     try http_writer.startRequest(.{
@@ -22,7 +30,7 @@ pub fn main() !void {
     try http_writer.startBody();
     try writer.interface.flush();
 
-    var http_reader = sphttp.HttpResponseReader.init(reader.interface());
+    var http_reader = sphttp.HttpResponseReader.init(&reader.interface);
     var body_buf: [4096]u8 = undefined;
 
     while (true) {

@@ -329,5 +329,5 @@ pub const ImageSequence = struct {
 };
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }

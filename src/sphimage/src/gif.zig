@@ -19,9 +19,9 @@ pub fn read(alloc: std.mem.Allocator, r: *std.Io.Reader, options: img_mod.ImageL
         .transparent_color_idx = null,
     };
 
-    var atlas_builder = std.ArrayList(u8){};
+    var atlas_builder = std.ArrayList(u8).empty;
 
-    var timesteps = std.ArrayList(u32){};
+    var timesteps = std.ArrayList(u32).empty;
     var timestep_ms: u32 = 0;
 
     while (try gr.next()) |item| {

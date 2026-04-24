@@ -265,10 +265,24 @@ fn fixEndianness(val: anytype) @TypeOf(val) {
         return val;
     }
 
-    switch (@typeInfo(@TypeOf(val))) {
-        .@"struct" => {
+    const T = @TypeOf(val);
+    switch (@typeInfo(T)) {
+        .array => |ai| {
             var ret = val;
-            std.mem.byteSwapAllFields(@TypeOf(val), &ret);
+            inline for (0..ai.len) |i| {
+                ret[i] = fixEndianness(ret[i]);
+            }
+            return ret;
+        },
+        .@"struct" => |si| {
+            var ret = val;
+            if (@TypeOf(val) == HeadTable) {}
+
+            inline for (si.fields) |field| {
+                const field_ptr = &@field(ret, field.name);
+                field_ptr.* = fixEndianness(field_ptr.*);
+            }
+
             return ret;
         },
         .int => {
@@ -460,7 +474,8 @@ pub const Ttf = struct {
 
             switch (tag) {
                 .head => {
-                    head = fixEndianness(std.mem.bytesToValue(HeadTable, tableFromEntry(font_data, entry)));
+                    const entry_data = tableFromEntry(font_data, entry);
+                    head = fixEndianness(std.mem.bytesToValue(HeadTable, entry_data));
                 },
                 .hhea => {
                     hhea = fixEndianness(std.mem.bytesToValue(HheaTable, tableFromEntry(font_data, entry)));
@@ -800,7 +815,7 @@ const RowCurvePoint = struct {
 };
 
 fn sortRemoveDuplicateCurvePoints(alloc: Allocator, points: *std.ArrayList(RowCurvePointInner)) !void {
-    var to_remove = std.ArrayList(usize){};
+    var to_remove = std.ArrayList(usize).empty;
     defer to_remove.deinit(alloc);
 
     for (0..points.items.len) |i| {
@@ -839,7 +854,7 @@ fn sortRemoveDuplicateCurvePoints(alloc: Allocator, points: *std.ArrayList(RowCu
 }
 
 fn findRowCurvePoints(alloc: Allocator, curves: []const GlyphSegmentIter.Output, y: i64) ![]RowCurvePoint {
-    var ret = std.ArrayList(RowCurvePointInner){};
+    var ret = std.ArrayList(RowCurvePointInner).empty;
     defer ret.deinit(alloc);
 
     for (curves) |curve| {
@@ -1306,7 +1321,7 @@ const Canvas = struct {
 pub fn renderGlyphAt1PxPerFunit(alloc: Allocator, glyph: GlyphTable.SimpleGlyph) !struct { Canvas, BBox } {
     var iter = GlyphSegmentIter.init(glyph);
 
-    var curves = std.ArrayList(GlyphSegmentIter.Output){};
+    var curves = std.ArrayList(GlyphSegmentIter.Output).empty;
     defer curves.deinit(alloc);
 
     var total_bbox = BBox{

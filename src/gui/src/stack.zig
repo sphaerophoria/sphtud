@@ -10,7 +10,7 @@ const InputState = gui.InputState;
 pub fn Stack(comptime Action: type, max_elems: comptime_int) type {
     return struct {
         alloc: Allocator,
-        items: std.ArrayList(StackItem) = .{},
+        items: std.ArrayList(StackItem) = .empty,
         total_size: PixelSize = .{ .width = 0, .height = 0 },
         focused_id: ?usize = null,
 

@@ -9,21 +9,18 @@ pub const IncludeIter = struct {
     },
     inner: std.mem.SplitIterator(u8, .scalar),
 
-    pub fn init(alloc: std.mem.Allocator) !IncludeIter {
-        var p = std.process.Child.init(
-            &.{ "cc", "-E", "-Wp,-v", "-xc", "/dev/null" },
-            alloc,
-        );
+    pub fn init(alloc: std.mem.Allocator, io: std.Io) !IncludeIter {
+        var p = try std.process.spawn(io, .{
+            .argv = &.{ "cc", "-E", "-Wp,-v", "-xc", "/dev/null" },
+            .stdout = .ignore,
+            .stdin = .ignore,
+            .stderr = .pipe,
+        });
 
-        p.stdout_behavior = .Ignore;
-        p.stdin_behavior = .Ignore;
-        p.stderr_behavior = .Pipe;
+        var stderr_reader = p.stderr.?.reader(io, &.{});
+        const content = try stderr_reader.interface.allocRemaining(alloc, .limited(1 << 20));
 
-        try p.spawn();
-
-        const content = try p.stderr.?.readToEndAlloc(alloc, 1 << 20);
-
-        _ = try p.wait();
+        _ = try p.wait(io);
 
         const first_segment_string = "#include \"...\" search starts here:\n";
         const second_segment_string = "#include <...> search starts here:\n";
