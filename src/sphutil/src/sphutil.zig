@@ -14,5 +14,5 @@ pub const ObjectPool = noalloc.ObjectPool;
 pub const IoPipe = noalloc.IoPipe;
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }

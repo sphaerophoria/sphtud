@@ -178,7 +178,7 @@ const LayoutHelper = struct {
                 .max_y = max_y,
             },
             .glyphloc_alloc = alloc,
-            .glyphs = std.ArrayList(TextLayout.GlyphLoc){},
+            .glyphs = .empty,
         };
     }
 

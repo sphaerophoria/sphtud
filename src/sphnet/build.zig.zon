@@ -5,4 +5,5 @@
     .paths = .{
         "sphnet.zig",
     },
+    .fingerprint = 0x369f2d02c5a8b145,
 }

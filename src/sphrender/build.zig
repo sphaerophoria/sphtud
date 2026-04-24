@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
     });
-    var include_it = try process_include_paths.IncludeIter.init(b.allocator);
+    var include_it = try process_include_paths.IncludeIter.init(b.allocator, b.graph.io);
     while (include_it.next()) |p| {
         gl_zig.addSystemIncludePath(std.Build.LazyPath{ .cwd_relative = p });
     }

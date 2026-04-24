@@ -273,10 +273,10 @@ const BufferLens = struct {
 };
 
 fn updateBuffers(self: DistanceFieldGenerator, alloc: Allocator, point_it: anytype, aspect_correction: sphmath.Vec2) !BufferLens {
-    var cone_offsets = std.ArrayList(sphmath.Vec2){};
+    var cone_offsets = std.ArrayList(sphmath.Vec2).empty;
     defer cone_offsets.deinit(alloc);
 
-    var tent_transforms = std.ArrayList(InstancedRenderBuffer.TentTransform){};
+    var tent_transforms = std.ArrayList(InstancedRenderBuffer.TentTransform).empty;
     defer tent_transforms.deinit(alloc);
 
     while (point_it.next()) |item| {

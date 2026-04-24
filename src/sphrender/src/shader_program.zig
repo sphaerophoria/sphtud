@@ -376,25 +376,27 @@ pub fn SplitBufferVal(comptime T: type) type {
 pub fn SplitBuffers(comptime T: type) type {
     const fields = std.meta.fields(T);
 
-    var new_fields: [fields.len]std.builtin.Type.StructField = undefined;
-    inline for (fields, &new_fields) |in_field, *out_field| {
-        out_field.* = .{
-            .name = in_field.name,
-            .type = SplitBufferVal(in_field.type),
-            .is_comptime = false,
+    var field_names: [fields.len][]const u8 = undefined;
+    var field_types: [fields.len]type = undefined;
+    var field_attrs: [fields.len]std.builtin.Type.StructField.Attributes = undefined;
+
+    inline for (fields, 0..) |in_field, i| {
+        field_names[i] = in_field.name;
+        field_types[i] = SplitBufferVal(in_field.type);
+        field_attrs[i] = .{
+            .@"comptime" = false,
             .alignment = @alignOf(?*anyopaque),
             .default_value_ptr = null,
         };
     }
 
-    return @Type(.{
-        .@"struct" = .{
-            .layout = .auto,
-            .fields = &new_fields,
-            .decls = &.{},
-            .is_tuple = false,
-        },
-    });
+    return @Struct(
+        .auto,
+        null,
+        &field_names,
+        &field_types,
+        &field_attrs,
+    );
 }
 
 pub fn Buffer(comptime Elem: type) type {

@@ -222,12 +222,13 @@ pub const CustomWidget = struct {
         return .{ .width = 300, .height = 300 };
     }
 
-    fn setInputState(self: CustomWidget, _: gui.PixelBBox, input_bounds: gui.PixelBBox, input_state: *gui.InputState) gui.InputResponse(GuiAction) {
+    pub fn setInputState(self: *CustomWidget, _: gui.PixelBBox, input_bounds: gui.PixelBBox, input_state: *gui.InputState) gui.InputResponse(GuiAction) {
         if (input_bounds.containsMousePos(input_state.mouse_pos)) {
             self.hover_state = .hovered;
         } else {
             self.hover_state = .default;
         }
+        return .{};
     }
 };
 

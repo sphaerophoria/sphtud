@@ -166,12 +166,10 @@ fn OffsetType(comptime T: type) type {
     switch (@typeInfo(T)) {
         .int => |ii| {
             if (ii.signedness == .unsigned) {
-                return @Type(.{
-                    .int = .{
-                        .signedness = .signed,
-                        .bits = ii.bits + 1,
-                    },
-                });
+                return @Int(
+                    .signed,
+                    ii.bits + 1,
+                );
             } else {
                 return T;
             }

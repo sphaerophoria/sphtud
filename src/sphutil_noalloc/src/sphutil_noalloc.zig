@@ -22,5 +22,5 @@ pub const IoPipe = @import("io_pipe.zig").Pipe;
 pub const ExpansionAlloc = @import("ExpansionAlloc.zig");
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }

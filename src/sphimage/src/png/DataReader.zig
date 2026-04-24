@@ -63,8 +63,8 @@ fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Read
 
     try self.reader.rebase(self.scanline_size);
 
-    const current_filter_type = std.meta.intToEnum(FilterType, try self.decompressor.reader.takeByte()) catch |e| {
-        self.err = e;
+    const current_filter_type = std.enums.fromInt(FilterType, try self.decompressor.reader.takeByte()) orelse {
+        self.err = error.InvalidFilterType;
         return error.ReadFailed;
     };
 

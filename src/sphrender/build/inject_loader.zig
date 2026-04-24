@@ -234,31 +234,34 @@ fn findDesiredProtos(alloc: std.mem.Allocator, scratch: sphalloc.LinearAllocator
     return ret.items;
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init.Minimal) !void {
     var alloc_buf: [1 * 1024 * 1024]u8 = undefined;
     var alloc = sphalloc.BufAllocator.init(&alloc_buf);
 
-    const args = try std.process.argsAlloc(alloc.allocator());
+    var io_impl = std.Io.Threaded.init_single_threaded;
+    const io = io_impl.io();
+
+    const args = try init.args.toSlice(alloc.allocator());
 
     const translated_gl_path = args[1];
     const output_path = args[2];
 
-    const output_f = try std.fs.cwd().createFile(output_path, .{});
-    defer output_f.close();
+    const output_f = try std.Io.Dir.cwd().createFile(io, output_path, .{});
+    defer output_f.close(io);
 
     var stdout_buf: [4096]u8 = undefined;
-    var stdout_writer = output_f.writer(&stdout_buf);
+    var stdout_writer = output_f.writer(io, &stdout_buf);
     const stdout = &stdout_writer.interface;
 
     {
-        const input_f = try std.fs.cwd().openFile(translated_gl_path, .{});
-        defer input_f.close();
+        const input_f = try std.Io.Dir.cwd().openFile(io, translated_gl_path, .{});
+        defer input_f.close(io);
 
         const cp = alloc.checkpoint();
         defer alloc.restore(cp);
 
         var input_buf: [4096]u8 = undefined;
-        var f_reader = input_f.reader(&input_buf);
+        var f_reader = input_f.reader(io, &input_buf);
 
         _ = try f_reader.interface.streamRemaining(stdout);
     }

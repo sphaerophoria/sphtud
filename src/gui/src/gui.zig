@@ -38,7 +38,7 @@ pub const multi_line_graph = @import("multi_line_graph.zig");
 pub const scroll_list = @import("scroll_list.zig");
 
 test {
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
 }
 
 pub const Key = sphwindow_events.Key;
@@ -51,14 +51,14 @@ pub const KeyTracker = struct {
 
     gpa: std.mem.Allocator,
     // always lower case
-    held_keys: std.ArrayList(Key) = .{},
+    held_keys: std.ArrayList(Key) = .empty,
     pressed_this_frame: std.ArrayList(KeyEvent),
 
     pub fn init(gpa: Allocator) !KeyTracker {
         return .{
             .gpa = gpa,
             .held_keys = std.ArrayList(Key).initBuffer(try gpa.alloc(Key, max_pressed_keys)),
-            .pressed_this_frame = std.ArrayList(KeyEvent){},
+            .pressed_this_frame = .empty,
         };
     }
 

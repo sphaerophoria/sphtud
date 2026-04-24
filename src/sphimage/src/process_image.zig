@@ -9,11 +9,11 @@ const Args = struct {
     flip_rg: bool,
     vflip: bool,
 
-    fn parse() Args {
-        var args = std.process.args();
+    fn parse(io: std.Io, args: std.process.Args) Args {
+        var iter = args.iterate();
 
         // process name
-        _ = args.next();
+        _ = iter.next();
 
         const Switch = enum {
             @"--in-path",
@@ -29,20 +29,20 @@ const Args = struct {
         var flip_rg: bool = false;
         var force_linear: bool = false;
 
-        while (args.next()) |s| {
+        while (iter.next()) |s| {
             const parsed_switch = std.meta.stringToEnum(Switch, s) orelse {
-                help("invalid switch: {s}", .{s});
+                help(io, "invalid switch: {s}", .{s});
             };
 
             switch (parsed_switch) {
                 .@"--in-path" => {
-                    in_path = args.next() orelse {
-                        help("missing argument to --in-path", .{});
+                    in_path = iter.next() orelse {
+                        help(io, "missing argument to --in-path", .{});
                     };
                 },
                 .@"--out-path" => {
-                    out_path = args.next() orelse {
-                        help("missing argument to --out-path", .{});
+                    out_path = iter.next() orelse {
+                        help(io, "missing argument to --out-path", .{});
                     };
                 },
                 .@"--vflip" => {
@@ -58,17 +58,17 @@ const Args = struct {
         }
 
         return .{
-            .in_path = in_path orelse help("--in-path not provided", .{}),
-            .out_path = out_path orelse help("--out-path not provided", .{}),
+            .in_path = in_path orelse help(io, "--in-path not provided", .{}),
+            .out_path = out_path orelse help(io, "--out-path not provided", .{}),
             .flip_rg = flip_rg,
             .force_linear = force_linear,
             .vflip = vflip,
         };
     }
 
-    fn help(comptime fmt: []const u8, args: anytype) noreturn {
-        const stderr = std.fs.File.stderr();
-        var stderr_w = stderr.writer(&.{});
+    fn help(io: std.Io, comptime fmt: []const u8, args: anytype) noreturn {
+        const stderr = std.Io.File.stderr();
+        var stderr_w = stderr.writer(io, &.{});
         var w = &stderr_w.interface;
 
         w.print(fmt, args) catch {};
@@ -91,14 +91,17 @@ const Args = struct {
     }
 };
 
-pub fn main() !void {
-    const args = Args.parse();
+pub fn main(init: std.process.Init.Minimal) !void {
+    var io_impl = std.Io.Threaded.init_single_threaded;
+    const io = io_impl.io();
 
-    const f = try std.fs.cwd().openFile(args.in_path, .{});
-    defer f.close();
+    const args = Args.parse(io, init.args);
+
+    const f = try std.Io.Dir.cwd().openFile(io, args.in_path, .{});
+    defer f.close(io);
 
     var reader_buf: [4096]u8 = undefined;
-    var reader = f.reader(&reader_buf);
+    var reader = f.reader(io, &reader_buf);
 
     var alloc_buf: [4 * 1024 * 1024]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&alloc_buf);
@@ -122,11 +125,11 @@ pub fn main() !void {
     }
     const image = try img.read(fba.allocator(), fba.allocator(), &reader.interface, options);
 
-    const ppm_f = try std.fs.cwd().createFile(args.out_path, .{});
-    defer ppm_f.close();
+    const ppm_f = try std.Io.Dir.cwd().createFile(io, args.out_path, .{});
+    defer ppm_f.close(io);
 
     var writer_buf: [4096]u8 = undefined;
-    var writer = ppm_f.writer(&writer_buf);
+    var writer = ppm_f.writer(io, &writer_buf);
     const w = &writer.interface;
 
     try img.ppm.write(image, w);
