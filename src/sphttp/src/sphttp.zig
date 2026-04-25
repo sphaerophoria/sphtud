@@ -1,5 +1,4 @@
 const std = @import("std");
-const sphutil = @import("sphutil");
 const sphalloc = @import("sphalloc");
 pub const url = @import("url.zig");
 

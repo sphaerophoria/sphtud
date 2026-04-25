@@ -1,0 +1,14 @@
+.{
+    .name = .sphio,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .sphutil = .{
+            .path = "../sphutil_noalloc",
+        },
+    },
+    .paths = .{
+        "src",
+    },
+    .fingerprint = 0x3c99fb21234d0a8b,
+}
