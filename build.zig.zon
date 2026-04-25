@@ -27,9 +27,6 @@
         .sphutil = .{
             .path = "src/sphutil",
         },
-        .sphevent = .{
-            .path = "src/sphevent",
-        },
         .sphttp = .{
             .path = "src/sphttp",
         },
@@ -38,6 +35,9 @@
         },
         .sphimage = .{
             .path = "src/sphimage",
+        },
+        .sphio = .{
+            .path = "src/sphio",
         },
     },
     .paths = .{

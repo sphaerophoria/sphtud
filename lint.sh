@@ -34,10 +34,6 @@ zig build
 zig build test
 popd
 
-pushd src/sphevent/
-zig build test
-popd
-
 pushd src/sphxml/
 zig build test
 popd
@@ -45,6 +41,11 @@ popd
 pushd src/sphimage/
 zig build
 ./zig-out/bin/image_tests
+popd
+
+pushd src/sphio/
+zig build
+./zig-out/bin/sphio_test
 popd
 
 zig build

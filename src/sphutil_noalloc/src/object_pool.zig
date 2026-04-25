@@ -14,7 +14,7 @@ fn handleFromIdx(comptime Handle: type, idx: usize) Handle {
 
 fn idxFromHandle(handle: anytype) usize {
     switch (@typeInfo(@TypeOf(handle))) {
-        .@"struct" => return handle.inner,
+        .@"struct" => return handle.toIdx(),
         .int => return handle,
         else => comptime unreachable,
     }
@@ -296,6 +296,10 @@ const TrackedPool = struct {
             return .{
                 .inner = val,
             };
+        }
+
+        fn toIdx(self: Handle) usize {
+            return self.inner;
         }
     };
 
