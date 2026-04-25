@@ -34,10 +34,6 @@ zig build
 zig build test
 popd
 
-pushd src/sphevent/
-zig build test
-popd
-
 pushd src/sphxml/
 zig build test
 popd
