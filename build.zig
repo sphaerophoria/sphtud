@@ -6,7 +6,6 @@ const Builder = struct {
     gl_extensions: []const []const u8,
     sphmath: *std.Build.Module,
     sphrender: *std.Build.Module,
-    sphtext: *std.Build.Module,
     sphwindow: *std.Build.Module,
     sphwindow_events: *std.Build.Module,
     sphalloc: *std.Build.Module,
@@ -26,10 +25,6 @@ const Builder = struct {
         const sphrender = b.dependency("sphrender", .{
             .gl_extensions = gl_extensions,
         }).module("sphrender");
-
-        const sphtext = b.dependency("sphtext", .{
-            .gl_extensions = gl_extensions,
-        }).module("sphtext");
 
         const sphwindow = b.dependency("sphwindow", .{}).module("sphwindow");
         const sphwindow_events = b.dependency("sphwindow_events", .{}).module("sphwindow_events");
@@ -53,7 +48,6 @@ const Builder = struct {
             .gl_extensions = gl_extensions,
             .sphmath = sphmath,
             .sphrender = sphrender,
-            .sphtext = sphtext,
             .sphwindow = sphwindow,
             .sphwindow_events = sphwindow_events,
             .sphalloc = sphalloc,
@@ -76,7 +70,6 @@ const Builder = struct {
         mod.addOptions("config", self.options);
 
         if (self.with_gl) {
-            mod.addImport("sphtext", self.sphtext);
             mod.addImport("sphrender", self.sphrender);
         }
 
@@ -95,7 +88,6 @@ const Builder = struct {
         mod.addImport("sphnet", self.sphnet);
         mod.addOptions("config", self.options_all);
 
-        mod.addImport("sphtext", self.sphtext);
         mod.addImport("sphrender", self.sphrender);
         mod.addImport("sphwindow", self.sphwindow);
         mod.addImport("sphwindow_events", self.sphwindow_events);
@@ -125,7 +117,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
         }),
     });
-    builder.addImports(test_exe.root_module);
+    builder.addImportsAll(test_exe.root_module);
 
     b.installArtifact(test_exe);
 
