@@ -1,7 +1,6 @@
 const std = @import("std");
-const img = @import("sphimage.zig");
+const sphtud = @import("../sphtud.zig");
 const color = @import("color.zig");
-const sphmath = @import("sphmath");
 
 const IDatMerger = @import("png/IDatMerger.zig");
 const DataReader = @import("png/DataReader.zig");
@@ -9,7 +8,7 @@ const common = @import("png/common.zig");
 
 pub const magic = &.{ 137, 80, 78, 71, 13, 10, 26, 10 };
 
-pub fn read(alloc: std.mem.Allocator, scratch: std.mem.Allocator, r: *std.Io.Reader, options: img.ImageLoadOptions) !img.Image {
+pub fn read(alloc: std.mem.Allocator, scratch: std.mem.Allocator, r: *std.Io.Reader, options: sphtud.img.ImageLoadOptions) !sphtud.img.Image {
     const image = try readImageData(alloc, scratch, r, options.force_pixel_format, options.vflip);
 
     if (options.force_transfer_fn == null and options.force_color_space == null) {
@@ -47,7 +46,7 @@ pub const Reader = struct {
     const PngSegment = union(enum) {
         data: *std.Io.Reader,
         gamma: f32,
-        chrm: sphmath.Mat3x3,
+        chrm: sphtud.math.Mat3x3,
         cicp: struct {
             color_primaries: u8,
             transfer_function: u8,
@@ -281,7 +280,7 @@ const DataReaderType = enum {
     native_vflip,
 };
 
-fn resolveReaderType(in_px_format: img.PixelFormat, forced_format: ?img.PixelFormat, vflip: bool) DataReaderType {
+fn resolveReaderType(in_px_format: sphtud.img.PixelFormat, forced_format: ?sphtud.img.PixelFormat, vflip: bool) DataReaderType {
     if (forced_format) |f| {
         if (f != in_px_format) {
             return .convert_pixel_format;
@@ -295,7 +294,7 @@ fn resolveReaderType(in_px_format: img.PixelFormat, forced_format: ?img.PixelFor
     return .native;
 }
 
-fn readImageData(alloc: std.mem.Allocator, scratch: std.mem.Allocator, r: *std.Io.Reader, forced_format: ?img.PixelFormat, vflip: bool) !img.Image {
+fn readImageData(alloc: std.mem.Allocator, scratch: std.mem.Allocator, r: *std.Io.Reader, forced_format: ?sphtud.img.PixelFormat, vflip: bool) !sphtud.img.Image {
     var pngr = try Reader.init(r);
 
     const pixel_size = (try pngr.header.color_type.components()) * pngr.header.bit_depth / 8;
@@ -326,7 +325,7 @@ fn readImageData(alloc: std.mem.Allocator, scratch: std.mem.Allocator, r: *std.I
 
             const data = try alloc.alloc(u8, pngr.header.width * pngr.header.height * pixel_size);
             try ir.dr.readSliceAll(data);
-            return try ir.finish(img.PixelData.init(in_pixel_type, data));
+            return try ir.finish(sphtud.img.PixelData.init(in_pixel_type, data));
         },
         .native_vflip => {
             const ir = try ImageReader.init(&pngr, scanline_buf);
@@ -339,13 +338,13 @@ fn readImageData(alloc: std.mem.Allocator, scratch: std.mem.Allocator, r: *std.I
                 try ir.dr.readSliceAll(dst);
             }
 
-            return try ir.finish(img.PixelData.init(in_pixel_type, data));
+            return try ir.finish(sphtud.img.PixelData.init(in_pixel_type, data));
         },
     }
 }
 
 const TransferFnBuilder = struct {
-    inner: img.TransferFn,
+    inner: sphtud.img.TransferFn,
     taken_priority: u8,
 
     fn init() TransferFnBuilder {
@@ -394,7 +393,7 @@ const TransferFnBuilder = struct {
 };
 
 const ColorspaceBuilder = struct {
-    inner: img.Colorspace,
+    inner: sphtud.img.Colorspace,
     taken_priority: u8,
 
     fn init() ColorspaceBuilder {
@@ -433,8 +432,8 @@ const ColorspaceBuilder = struct {
 
 // Different than png.Reader. This is a helper to read the data of an img.Image
 const ImageReader = struct {
-    transfer_fn: img.TransferFn,
-    colorspace: img.Colorspace,
+    transfer_fn: sphtud.img.TransferFn,
+    colorspace: sphtud.img.Colorspace,
     dr: *std.Io.Reader,
     pngr: *Reader,
     scanline_buf: []u8,
@@ -464,7 +463,7 @@ const ImageReader = struct {
         return error.NoData;
     }
 
-    pub fn finish(self: ImageReader, data: img.PixelData) !img.Image {
+    pub fn finish(self: ImageReader, data: sphtud.img.PixelData) !sphtud.img.Image {
         while (try self.pngr.next(self.scanline_buf)) |_| {}
 
         return .{
@@ -487,32 +486,32 @@ fn scanTypeAsType(comptime OutPx: type, comptime InPx: type, header: common.Head
     if (vflip) {
         for (0..header.height) |y| {
             const out_scanline_start = (header.height - (y + 1)) * header.width * out_pixel_size;
-            const out_packed = img.PackedData(OutPx){ .data = out_data[out_scanline_start..] };
+            const out_packed = sphtud.img.PackedData(OutPx){ .data = out_data[out_scanline_start..] };
 
             for (0..header.width) |i| {
                 out_packed.write(i, try convertPx(OutPx, InPx, dr));
             }
         }
     } else {
-        const out_packed = img.PackedData(OutPx){ .data = out_data };
+        const out_packed = sphtud.img.PackedData(OutPx){ .data = out_data };
         for (0..header.height * header.width) |i| {
             out_packed.write(i, try convertPx(OutPx, InPx, dr));
         }
     }
 }
 
-fn scanFormatAsType(comptime OutPx: type, in_format: img.PixelFormat, header: common.Header, dr: *std.Io.Reader, vflip: bool, out_data: []u8) !void {
+fn scanFormatAsType(comptime OutPx: type, in_format: sphtud.img.PixelFormat, header: common.Header, dr: *std.Io.Reader, vflip: bool, out_data: []u8) !void {
     switch (in_format) {
         inline else => |in_tag| {
-            try scanTypeAsType(OutPx, img.PixelType(in_tag), header, dr, vflip, out_data);
+            try scanTypeAsType(OutPx, sphtud.img.PixelType(in_tag), header, dr, vflip, out_data);
         },
     }
 }
 
 fn scanFormatAsFormat(
     alloc: std.mem.Allocator,
-    in_format: img.PixelFormat,
-    out_format: img.PixelFormat,
+    in_format: sphtud.img.PixelFormat,
+    out_format: sphtud.img.PixelFormat,
     header: common.Header,
     dr: *std.Io.Reader,
     vflip: bool,
@@ -522,7 +521,7 @@ fn scanFormatAsFormat(
 
     switch (out_format) {
         inline else => |out_tag| {
-            try scanFormatAsType(img.PixelType(out_tag), in_format, header, dr, vflip, out_data);
+            try scanFormatAsType(sphtud.img.PixelType(out_tag), in_format, header, dr, vflip, out_data);
         },
     }
 
@@ -540,7 +539,7 @@ test "progressive read" {
     var ppm_data = std.Io.Writer.Allocating.init(std.testing.allocator);
     defer ppm_data.deinit();
 
-    var ppm_writer = try img.ppm.Writer.init(pngr.header.width, pngr.header.height, &ppm_data.writer);
+    var ppm_writer = try sphtud.img.ppm.Writer.init(pngr.header.width, pngr.header.height, &ppm_data.writer);
 
     var scanline_buf: [1 * 1024 * 1024]u8 = undefined;
 
@@ -549,7 +548,7 @@ test "progressive read" {
             switch (try pngr.header.pixelFormat()) {
                 inline else => |fmt| {
                     for (0..pngr.header.width * pngr.header.height) |_| {
-                        const px = try img.PixelType(fmt).read(dr);
+                        const px = try sphtud.img.PixelType(fmt).read(dr);
                         try ppm_writer.writePx(px);
                     }
                 },
@@ -561,10 +560,10 @@ test "progressive read" {
     try std.testing.expectEqualSlices(u8, ppm, ppm_data.written());
 }
 
-fn genFullReadCombos() []const img.ImageLoadOptions {
+fn genFullReadCombos() []const sphtud.img.ImageLoadOptions {
     return comptime blk: {
-        const pixel_formats = std.meta.fields(img.PixelFormat);
-        var combos: [(pixel_formats.len + 1) * 2]img.ImageLoadOptions = undefined;
+        const pixel_formats = std.meta.fields(sphtud.img.PixelFormat);
+        var combos: [(pixel_formats.len + 1) * 2]sphtud.img.ImageLoadOptions = undefined;
         combos[0] = .{ .vflip = false };
         combos[1] = .{ .vflip = true };
 
@@ -616,7 +615,7 @@ test "full read" {
             var ppm_data = std.Io.Writer.Allocating.init(std.testing.allocator);
             defer ppm_data.deinit();
 
-            try img.ppm.write(image, &ppm_data.writer);
+            try sphtud.img.ppm.write(image, &ppm_data.writer);
             const expected = if (options.vflip) sample.ppm_flipped else sample.ppm;
 
             try std.testing.expectEqualSlices(u8, expected, ppm_data.written());

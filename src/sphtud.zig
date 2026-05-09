@@ -10,7 +10,7 @@ pub const render = if (config.export_sphrender) @import("sphrender") else void;
 pub const ui = if (config.export_sphrender) @import("sphui") else void;
 pub const window = if (config.export_sphwindow) @import("sphwindow") else void;
 pub const xml = @import("sphxml");
-pub const img = @import("sphimage");
+pub const img = @import("img.zig");
 pub const io = @import("io.zig");
 
 test {
