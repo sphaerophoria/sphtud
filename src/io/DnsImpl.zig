@@ -1,12 +1,10 @@
 /// DNS implementation, io implementation agnostic, unit testable
 const std = @import("std");
-const sphalloc = @import("sphalloc");
-const sphutil = @import("sphutil");
-const sphio = @import("../sphio.zig");
+const sphtud = @import("../sphtud.zig");
 const system = std.posix.system;
 
 request_buf: [dns_query_max]u8,
-dns_alloc: *sphalloc.Sphalloc,
+dns_alloc: *sphtud.alloc.Sphalloc,
 resolv_conf: ResolvConf,
 hosts: Hosts,
 pool: Pool,
@@ -16,10 +14,10 @@ const dns_query_max = 512; // rfc 1035 2.3.4
 const max_retries = 3;
 const retry_timeout = 3;
 
-const Pool = sphutil.ObjectPool(QueryStorage, QueryHandle);
+const Pool = sphtud.util.ObjectPool(QueryStorage, QueryHandle);
 const DnsImpl = @This();
 
-pub fn init(alloc: *sphalloc.Sphalloc, resolv_conf: ResolvConf, hosts: Hosts, max_connections: usize) !DnsImpl {
+pub fn init(alloc: *sphtud.alloc.Sphalloc, resolv_conf: ResolvConf, hosts: Hosts, max_connections: usize) !DnsImpl {
     return .{
         .request_buf = undefined,
         .hosts = hosts,
@@ -316,7 +314,7 @@ pub fn onTimeout(self: *Self, handle: QueryHandle) !TimeoutAction {
 }
 
 pub const QueryStorage = struct {
-    alloc: *sphalloc.Sphalloc,
+    alloc: *sphtud.alloc.Sphalloc,
 
     retry_count: u8,
     err: ?anyerror,
@@ -392,10 +390,10 @@ pub const ResolvConf = struct {
 };
 
 pub const Hosts = struct {
-    lookup: sphutil.hash_map.StringHashMap(std.Io.net.IpAddress),
+    lookup: sphtud.util.hash_map.StringHashMap(std.Io.net.IpAddress),
 
     pub fn parse(arena: std.mem.Allocator, reader: *std.Io.Reader) !Hosts {
-        var lookup = try sphutil.hash_map.StringHashMap(std.Io.net.IpAddress).init(
+        var lookup = try sphtud.util.hash_map.StringHashMap(std.Io.net.IpAddress).init(
             arena,
             .linear(arena),
             8,
@@ -618,8 +616,8 @@ const DnsRR = struct {
 };
 
 const TestFixture = struct {
-    tpa: sphalloc.TinyPageAllocator,
-    root: sphalloc.Sphalloc,
+    tpa: sphtud.alloc.TinyPageAllocator,
+    root: sphtud.alloc.Sphalloc,
     impl: DnsImpl,
 
     pub fn initPinned(self: *TestFixture) !void {

@@ -1,47 +1,45 @@
 const std = @import("std");
-const sphalloc = @import("sphalloc");
-const sphutil = @import("sphutil");
-const sphio = @import("../sphio.zig");
+const sphtud = @import("../sphtud.zig");
 const system = std.posix.system;
 pub const Impl = @import("DnsImpl.zig");
 
-dns_alloc: *sphalloc.Sphalloc,
+dns_alloc: *sphtud.alloc.Sphalloc,
 socket: std.posix.fd_t,
-extradata: sphutil.AutoHashMap(Impl.QueryHandle, ExtraData),
+extradata: sphtud.util.AutoHashMap(Impl.QueryHandle, ExtraData),
 impl: Impl,
-timer: *sphio.TimerService,
+timer: *sphtud.io.TimerService,
 timeout_id_start: usize,
-loop: *sphio.Loop,
+loop: *sphtud.io.Loop,
 
 const ExtraData = struct {
     callback_id: usize,
-    timer_handle: ?sphio.TimerService.TimerHandle,
+    timer_handle: ?sphtud.io.TimerService.TimerHandle,
 };
 
-const Pool = sphutil.ObjectPool(Impl.QueryHandle, usize);
+const Pool = sphtud.util.ObjectPool(Impl.QueryHandle, usize);
 
 const DnsService = @This();
 
-pub fn init(alloc: *sphalloc.Sphalloc, loop: *sphio.Loop, timer: *sphio.TimerService, comptime ids: Ids) !DnsService {
+pub fn init(alloc: *sphtud.alloc.Sphalloc, loop: *sphtud.io.Loop, timer: *sphtud.io.TimerService, comptime ids: Ids) !DnsService {
     var read_buf: [4096]u8 = undefined;
-    const resolv_fd = try sphio.open("/etc/resolv.conf", .{
+    const resolv_fd = try sphtud.io.open("/etc/resolv.conf", .{
         .ACCMODE = .RDONLY,
     }, 0);
-    defer sphio.close(resolv_fd);
+    defer sphtud.io.close(resolv_fd);
 
-    var resolv_reader = sphio.Reader.init(resolv_fd, &read_buf);
+    var resolv_reader = sphtud.io.Reader.init(resolv_fd, &read_buf);
     const resolv_conf = try Impl.ResolvConf.parse(&resolv_reader.interface);
 
-    const hosts_fd = try sphio.open("/etc/hosts", .{
+    const hosts_fd = try sphtud.io.open("/etc/hosts", .{
         .ACCMODE = .RDONLY,
     }, 0);
-    defer sphio.close(hosts_fd);
+    defer sphtud.io.close(hosts_fd);
 
-    var hosts_reader = sphio.Reader.init(hosts_fd, &read_buf);
+    var hosts_reader = sphtud.io.Reader.init(hosts_fd, &read_buf);
     const hosts = try Impl.Hosts.parse(alloc.arena(), &hosts_reader.interface);
 
-    const socket = try sphio.socket(system.AF.INET, system.SOCK.DGRAM, 0);
-    try sphio.bind(socket, .{
+    const socket = try sphtud.io.socket(system.AF.INET, system.SOCK.DGRAM, 0);
+    try sphtud.io.bind(socket, .{
         .ip4 = .{
             .bytes = .{ 0, 0, 0, 0 },
             .port = 0,
@@ -96,7 +94,7 @@ pub fn makeQuery(self: *Self, host: []const u8, on_dns_response: usize) !Impl.Qu
 
 fn sendActionMessages(self: *Self, action: *Impl.QueryResult) !void {
     while (action.next()) |to_send| {
-        const sent = try sphio.sendto(
+        const sent = try sphtud.io.sendto(
             self.socket,
             to_send.data,
             system.MSG.NOSIGNAL,
@@ -158,7 +156,7 @@ fn serviceIncomingPacket(self: *Self) !void {
     while (true) {
         var recv_buf: [4096]u8 = undefined;
 
-        const recv_len = sphio.recvfrom(self.socket, &recv_buf, 0, null, null) catch |e| switch (e) {
+        const recv_len = sphtud.io.recvfrom(self.socket, &recv_buf, 0, null, null) catch |e| switch (e) {
             error.WouldBlock => return,
             else => return e,
         };
@@ -176,10 +174,10 @@ fn serviceIncomingPacket(self: *Self) !void {
 
 pub const Ids = struct {
     dns_packet_received: usize,
-    timeout: sphio.IdAlloc.Range,
-    total: sphio.IdAlloc.Range,
+    timeout: sphtud.io.IdAlloc.Range,
+    total: sphtud.io.IdAlloc.Range,
 
-    pub fn init(alloc: *sphio.IdAlloc, max_connections: usize) Ids {
+    pub fn init(alloc: *sphtud.io.IdAlloc, max_connections: usize) Ids {
         const start = alloc.mark();
         return .{
             .dns_packet_received = alloc.allocOne(),

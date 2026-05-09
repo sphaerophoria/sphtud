@@ -1,5 +1,5 @@
 const std = @import("std");
-const sphttp = @import("sphttp");
+const sphtud = @import("sphtud");
 const TcpProxyImpl = @This();
 
 pub const IoRw = struct {
@@ -19,7 +19,7 @@ pub fn onConnectionCreated(client: *TcpProxyImpl, rw: IoRw) !void {
 
     errdefer client.state = .default;
 
-    var http_w = sphttp.HttpWriter.init(rw.w);
+    var http_w = sphtud.http.HttpWriter.init(rw.w);
     try http_w.startRequest(.{
         .method = .GET,
         .target = "/",

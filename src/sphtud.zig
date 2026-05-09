@@ -11,4 +11,9 @@ pub const ui = if (config.export_sphrender) @import("sphui") else void;
 pub const window = if (config.export_sphwindow) @import("sphwindow") else void;
 pub const xml = @import("sphxml");
 pub const img = @import("sphimage");
-pub const io = @import("sphio");
+pub const io = @import("io.zig");
+
+test {
+    const std = @import("std");
+    std.testing.refAllDecls(@This());
+}

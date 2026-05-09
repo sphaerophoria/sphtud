@@ -43,9 +43,5 @@ zig build
 ./zig-out/bin/image_tests
 popd
 
-pushd src/sphio/
 zig build
-./zig-out/bin/sphio_test
-popd
-
-zig build
+./zig-out/bin/sphtud_test

@@ -1,5 +1,5 @@
 const std = @import("std");
-const sphio = @import("../sphio.zig");
+const sphio = @import("../io.zig");
 
 fd: std.posix.fd_t,
 gpa: std.mem.Allocator,
