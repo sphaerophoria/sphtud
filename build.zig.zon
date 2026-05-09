@@ -15,9 +15,6 @@
         .sphrender = .{
             .path = "src/sphrender",
         },
-        .sphtext = .{
-            .path = "src/sphtext",
-        },
         .sphwindow = .{
             .path = "src/sphwindow",
         },

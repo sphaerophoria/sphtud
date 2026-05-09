@@ -1,6 +1,6 @@
 const std = @import("std");
 const sphtud = @import("sphtud.zig");
-const system = std.posix.system;
+const system = std.os.linux;
 
 pub const DnsService = @import("io/DnsService.zig");
 pub const TcpSpawner = @import("io/TcpSpawner.zig");

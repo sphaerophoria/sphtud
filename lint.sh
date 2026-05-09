@@ -8,10 +8,6 @@ pushd src/sphmath/
 zig build test
 popd
 
-pushd src/sphtext/
-zig build test
-popd
-
 pushd src/sphutil/
 zig build test
 popd
