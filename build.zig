@@ -6,7 +6,6 @@ const Builder = struct {
     gl_extensions: []const []const u8,
     sphmath: *std.Build.Module,
     sphrender: *std.Build.Module,
-    sphwindow: *std.Build.Module,
     sphwindow_events: *std.Build.Module,
     sphalloc: *std.Build.Module,
     sphutil: *std.Build.Module,
@@ -26,7 +25,6 @@ const Builder = struct {
             .gl_extensions = gl_extensions,
         }).module("sphrender");
 
-        const sphwindow = b.dependency("sphwindow", .{}).module("sphwindow");
         const sphwindow_events = b.dependency("sphwindow_events", .{}).module("sphwindow_events");
         const sphalloc = b.dependency("sphalloc", .{}).module("sphalloc");
         const sphutil = b.dependency("sphutil", .{}).module("sphutil");
@@ -48,7 +46,6 @@ const Builder = struct {
             .gl_extensions = gl_extensions,
             .sphmath = sphmath,
             .sphrender = sphrender,
-            .sphwindow = sphwindow,
             .sphwindow_events = sphwindow_events,
             .sphalloc = sphalloc,
             .sphutil = sphutil,
@@ -74,8 +71,10 @@ const Builder = struct {
         }
 
         mod.addImport("sphwindow_events", self.sphwindow_events);
+
         if (self.with_glfw) {
-            mod.addImport("sphwindow", self.sphwindow);
+            mod.linkSystemLibrary("glfw", .{});
+            mod.link_libc = true;
         }
     }
 
@@ -89,26 +88,31 @@ const Builder = struct {
         mod.addOptions("config", self.options_all);
 
         mod.addImport("sphrender", self.sphrender);
-        mod.addImport("sphwindow", self.sphwindow);
         mod.addImport("sphwindow_events", self.sphwindow_events);
+
+        mod.linkSystemLibrary("glfw", .{});
+        mod.link_libc = true;
     }
 };
 
 pub fn build(b: *std.Build) !void {
     const builder = Builder.init(b);
 
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
     const sphtud = b.addModule("sphtud", .{
         .root_source_file = b.path("src/sphtud.zig"),
+        .target = target,
     });
     builder.addImports(sphtud);
 
     const sphtud_all = b.addModule("sphtud", .{
         .root_source_file = b.path("src/sphtud.zig"),
+        .target = target,
     });
     builder.addImportsAll(sphtud_all);
 
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
     const test_exe = b.addTest(.{
         .name = "sphtud_test",
         .root_module = b.createModule(.{
