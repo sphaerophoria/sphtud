@@ -1,7 +1,7 @@
 const std = @import("std");
 const DnsService = @import("DnsService.zig");
 const sphutil = @import("sphutil");
-const sphio = @import("../sphio.zig");
+const sphio = @import("../io.zig");
 const system = std.posix.system;
 
 const TcpSpawner = @This();

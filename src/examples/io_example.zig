@@ -1,20 +1,19 @@
 const std = @import("std");
-const sphalloc = @import("sphalloc");
-const sphio = @import("sphio");
-const TcpProxyService = @import("TcpProxyService.zig");
+const sphtud = @import("sphtud");
+const TcpProxyService = @import("io_example/TcpProxyService.zig");
 
 const max_dns_connections = 1024;
 
 const ids = Ids.init();
 const Ids = struct {
     tcp_proxy_service: TcpProxyService.Ids,
-    dns_service: sphio.DnsService.Ids,
-    tcp_spawner: sphio.TcpSpawner.Ids,
+    dns_service: sphtud.io.DnsService.Ids,
+    tcp_spawner: sphtud.io.TcpSpawner.Ids,
     timer_service: usize,
     counter: usize,
 
     fn init() Ids {
-        var alloc = sphio.IdAlloc{ .idx = 0 };
+        var alloc = sphtud.io.IdAlloc{ .idx = 0 };
         return .{
             .tcp_proxy_service = .init(&alloc),
             .dns_service = .init(&alloc, max_dns_connections),
@@ -26,20 +25,20 @@ const Ids = struct {
 };
 
 pub fn main() !void {
-    var tpa: sphalloc.TinyPageAllocator = undefined;
+    var tpa: sphtud.alloc.TinyPageAllocator = undefined;
     try tpa.initPinned();
 
-    var alloc: sphalloc.Sphalloc = undefined;
+    var alloc: sphtud.alloc.Sphalloc = undefined;
     try alloc.initPinned(tpa.allocator(), "root");
 
     var chain_buf: [256]usize = undefined;
-    var loop = try sphio.Loop.init(&chain_buf);
+    var loop = try sphtud.io.Loop.init(&chain_buf);
 
-    var timer = try sphio.TimerService.init(alloc.general(), &loop, ids.timer_service);
+    var timer = try sphtud.io.TimerService.init(alloc.general(), &loop, ids.timer_service);
     _ = try timer.add(.fromSeconds(1), ids.counter);
 
-    var dns_service = try sphio.DnsService.init(&alloc, &loop, &timer, ids.dns_service);
-    var tcp_spawner = try sphio.TcpSpawner.init(
+    var dns_service = try sphtud.io.DnsService.init(&alloc, &loop, &timer, ids.dns_service);
+    var tcp_spawner = try sphtud.io.TcpSpawner.init(
         alloc.arena(),
         alloc.expansion(),
         &dns_service,

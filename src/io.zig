@@ -1,10 +1,10 @@
 const std = @import("std");
-const sphutil = @import("sphutil");
+const sphtud = @import("sphtud.zig");
 const system = std.posix.system;
 
-pub const DnsService = @import("services/DnsService.zig");
-pub const TcpSpawner = @import("services/TcpSpawner.zig");
-pub const TimerService = @import("services/TimerService.zig");
+pub const DnsService = @import("io/DnsService.zig");
+pub const TcpSpawner = @import("io/TcpSpawner.zig");
+pub const TimerService = @import("io/TimerService.zig");
 
 pub const Reader = struct {
     fd: std.posix.fd_t,
@@ -546,7 +546,7 @@ pub const Loop = struct {
     fd: i32,
     num_events: usize = 0,
     event_cursor: usize = 0,
-    immediate_events: sphutil.CircularBuffer(usize),
+    immediate_events: sphtud.util.CircularBuffer(usize),
     buffered_events: [100]std.os.linux.epoll_event = undefined,
 
     const Self = @This();

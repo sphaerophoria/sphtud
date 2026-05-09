@@ -1,25 +1,24 @@
 const std = @import("std");
-const sphio = @import("sphio");
-const sphutil = @import("sphutil");
+const sphtud = @import("sphtud");
 const Impl = @import("TcpProxyImpl.zig");
 
 const TcpFetchProxyService = @This();
 
 pub const max_clients = 100;
 
-pool: sphutil.ObjectPool(Storage, usize),
-loop: *sphio.Loop,
+pool: sphtud.util.ObjectPool(Storage, usize),
+loop: *sphtud.io.Loop,
 listener: std.posix.fd_t,
-spawner: *sphio.TcpSpawner,
+spawner: *sphtud.io.TcpSpawner,
 
-pub fn init(arena: std.mem.Allocator, loop: *sphio.Loop, spawner: *sphio.TcpSpawner, listen_port: u16, comptime ids: Ids) !TcpFetchProxyService {
-    const listener = try sphio.createTcpListener(.{
+pub fn init(arena: std.mem.Allocator, loop: *sphtud.io.Loop, spawner: *sphtud.io.TcpSpawner, listen_port: u16, comptime ids: Ids) !TcpFetchProxyService {
+    const listener = try sphtud.io.createTcpListener(.{
         .ip4 = .{
             .bytes = .{ 127, 0, 0, 1 },
             .port = listen_port,
         },
     }, 100);
-    errdefer sphio.close(listener);
+    errdefer sphtud.io.close(listener);
 
     try loop.register(.{
         .handle = listener,
@@ -57,12 +56,12 @@ pub fn service(self: *TcpFetchProxyService, service_id: usize, comptime ids: Ids
 
 fn serviceNewConnection(self: *TcpFetchProxyService, comptime ids: Ids) !void {
     while (true) {
-        const new_fd = sphio.accept(self.listener) catch |e| switch (e) {
+        const new_fd = sphtud.io.accept(self.listener) catch |e| switch (e) {
             error.WouldBlock => return,
             else => return e,
         };
 
-        errdefer sphio.close(new_fd);
+        errdefer sphtud.io.close(new_fd);
 
         const elem = try self.pool.acquire(.invalid);
         errdefer self.pool.release(.invalid, elem.handle);
@@ -99,11 +98,11 @@ fn serviceElem(self: *TcpFetchProxyService, elem_id: usize, comptime ids: Ids) !
                 elem.remote = .{ .initializing = try self.spawner.spawn(host, 80, ids.connection_ready.start + elem_id) };
             },
             .close_connection => {
-                sphio.close(elem.remote.initialized);
+                sphtud.io.close(elem.remote.initialized);
                 elem.remote = .none;
                 elem.remote_reader = .invalid;
                 elem.remote_writer = .invalid;
-                sphio.close(elem.socket);
+                sphtud.io.close(elem.socket);
                 self.pool.release(.invalid, elem_id);
                 return;
             },
@@ -130,7 +129,7 @@ fn serviceConnectionReady(self: *TcpFetchProxyService, elem_id: usize, comptime 
     }
 
     const socket = elem.remote.initialized;
-    errdefer sphio.close(socket);
+    errdefer sphtud.io.close(socket);
 
     try self.loop.register(.{
         .handle = socket,
@@ -165,19 +164,19 @@ const Storage = struct {
 
     client_write_buf: [4096]u8,
     client_read_buf: [256]u8,
-    client_writer: sphio.Writer,
-    client_reader: sphio.Reader,
+    client_writer: sphtud.io.Writer,
+    client_reader: sphtud.io.Reader,
 
     impl: Impl,
 
     remote: union(enum) {
         none,
-        initializing: sphio.TcpSpawner.SpawnHandle,
+        initializing: sphtud.io.TcpSpawner.SpawnHandle,
         initialized: std.posix.fd_t,
     },
     remote_write_buf: [4096]u8,
-    remote_reader: sphio.Reader,
-    remote_writer: sphio.Writer,
+    remote_reader: sphtud.io.Reader,
+    remote_writer: sphtud.io.Writer,
 
     pub fn initPinned(elem: *Storage, socket: std.posix.fd_t) void {
         elem.socket = socket;
@@ -201,17 +200,17 @@ const Storage = struct {
     }
 
     pub fn deinit(self: *Storage) void {
-        sphio.close(self.socket);
+        sphtud.io.close(self.socket);
     }
 };
 
 pub const Ids = struct {
     new_connection: usize,
-    service_elem: sphio.IdAlloc.Range,
-    connection_ready: sphio.IdAlloc.Range,
-    total: sphio.IdAlloc.Range,
+    service_elem: sphtud.io.IdAlloc.Range,
+    connection_ready: sphtud.io.IdAlloc.Range,
+    total: sphtud.io.IdAlloc.Range,
 
-    pub fn init(alloc: *sphio.IdAlloc) Ids {
+    pub fn init(alloc: *sphtud.io.IdAlloc) Ids {
         const start = alloc.mark();
         return .{
             .new_connection = alloc.allocOne(),
