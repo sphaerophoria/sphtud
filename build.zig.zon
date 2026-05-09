@@ -18,11 +18,11 @@
         .sphtext = .{
             .path = "src/sphtext",
         },
-        .sphui = .{
-            .path = "src/gui",
-        },
         .sphwindow = .{
             .path = "src/sphwindow",
+        },
+        .sphwindow_events = .{
+            .path = "src/sphwindow_events",
         },
         .sphutil = .{
             .path = "src/sphutil",

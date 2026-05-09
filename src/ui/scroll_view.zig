@@ -1,0 +1,229 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const sphrender = @import("sphrender");
+const gui = @import("../ui.zig");
+const Scrollbar = gui.scrollbar.Scrollbar;
+const SquircleRenderer = @import("SquircleRenderer.zig");
+const Widget = gui.Widget;
+const PixelBBox = gui.PixelBBox;
+const PixelSize = gui.PixelSize;
+const InputState = gui.InputState;
+
+pub fn ScrollView(comptime Action: type) type {
+    return struct {
+        inner: Widget(Action),
+        size: PixelSize,
+
+        scrollbar_present: bool = false,
+        scroll_offs: i32 = 0,
+        scrollbar: Scrollbar,
+
+        const Self = @This();
+
+        const widget_vtable = Widget(Action).VTable{
+            .render = Self.render,
+            .getSize = Self.getSize,
+            .update = Self.update,
+            .setInputState = Self.setInputState,
+            .setFocused = Self.setFocused,
+            .reset = Self.reset,
+        };
+
+        pub fn init(
+            alloc: Allocator,
+            inner: Widget(Action),
+            scroll_shared: *const gui.scrollbar.Shared,
+        ) !Widget(Action) {
+            const view = try alloc.create(Self);
+
+            view.* = .{
+                .inner = inner,
+                .scrollbar = .{
+                    .shared = scroll_shared,
+                },
+                .size = inner.getSize(),
+            };
+            return .{
+                .ctx = view,
+                .name = "scroll_view",
+                .vtable = &widget_vtable,
+            };
+        }
+
+        fn getSize(ctx: ?*anyopaque) PixelSize {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            return self.size;
+        }
+
+        fn update(ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) !void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+
+            // We cannot know if the layout requires a scrollbar without
+            // actually executing a layout. Try layout with the current scroll
+            // state, and re-layout if the state is wrong
+            const scrollbar_options = [2]bool{
+                self.scrollbar_present,
+                !self.scrollbar_present,
+            };
+
+            for (scrollbar_options) |scrollbar_present| {
+                self.scrollbar_present = scrollbar_present;
+
+                const adjusted_window_size: PixelSize = .{
+                    .width = available_size.width - self.scrollbarWidth(),
+                    .height = available_size.height,
+                };
+                try self.inner.update(adjusted_window_size, delta_s);
+
+                // If we update and the scrollbar is in the wrong state, flip it
+                if (scrollbarInWrongState(
+                    available_size.height,
+                    self.contentHeight(),
+                    self.scrollbar_present,
+                )) {
+                    continue;
+                }
+
+                break;
+            }
+
+            self.size = available_size;
+            self.clampScrollOffs();
+
+            self.scrollbar.handle_ratio =
+                @as(f32, @floatFromInt(available_size.height)) /
+                @as(f32, @floatFromInt(self.contentHeight()));
+
+            const max_scroll = self.contentHeight() -| available_size.height;
+            if (max_scroll > 0) {
+                self.scrollbar.scroll_ratio =
+                    @as(f32, @floatFromInt(self.scroll_offs)) /
+                    @as(f32, @floatFromInt(max_scroll));
+            } else {
+                self.scrollbar.scroll_ratio = 0;
+            }
+        }
+
+        fn setInputState(ctx: ?*anyopaque, bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) gui.InputResponse(Action) {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+
+            const widget_bounds = self.innerBounds(bounds);
+            const ret = self.inner.setInputState(
+                widget_bounds,
+                widget_bounds.calcIntersection(input_bounds),
+                input_state,
+            );
+
+            if (self.scrollbar_present) {
+                const new_scroll_ratio = self.scrollbar.handleInput(
+                    input_state,
+                    scrollAreaBounds(self.scrollbar, bounds),
+                );
+
+                if (new_scroll_ratio) |scroll_loc| {
+                    const scroll_height: f32 = @floatFromInt(self.contentHeight() - bounds.calcHeight());
+                    self.scroll_offs = @intFromFloat(scroll_height * scroll_loc);
+                }
+
+                if (input_bounds.containsMousePos(input_state.mouse_pos)) {
+                    self.scroll_offs -= @intFromFloat(input_state.frame_scroll * 15);
+                    input_state.consumeScroll();
+                }
+
+                self.clampScrollOffs();
+            }
+
+            return ret;
+        }
+
+        fn render(ctx: ?*anyopaque, bounds: PixelBBox, window_bounds: PixelBBox) void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+
+            {
+                // Child widgets do not attempt to keep themselves in their
+                // bounds. For most cases this is fine, however if we have a
+                // scrollview as part of a layout, we need to ensure that our
+                // child does not poke out the top or bottom of our scroll
+                const scissor = sphrender.TemporaryScissor.init();
+                defer scissor.reset();
+
+                const child_bounds = self.innerBounds(bounds);
+                const scissor_bounds = child_bounds.calcIntersection(bounds);
+                scissor.set(
+                    scissor_bounds.left,
+                    window_bounds.bottom - scissor_bounds.bottom,
+                    scissor_bounds.calcWidth(),
+                    scissor_bounds.calcHeight(),
+                );
+                self.inner.render(child_bounds, window_bounds);
+            }
+
+            if (self.scrollbar_present) {
+                self.scrollbar.render(
+                    scrollAreaBounds(self.scrollbar, bounds),
+                    window_bounds,
+                );
+            }
+        }
+
+        fn setFocused(ctx: ?*anyopaque, focused: bool) void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            self.inner.setFocused(focused);
+        }
+
+        fn reset(ctx: ?*anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            self.scroll_offs = 0;
+            self.inner.reset();
+        }
+
+        fn innerBounds(self: Self, bounds: PixelBBox) PixelBBox {
+            const top = bounds.top - self.scroll_offs;
+            const left = bounds.left;
+            const layout_size = self.inner.getSize();
+            return .{
+                .top = top,
+                .left = left,
+                .right = left + layout_size.width,
+                .bottom = top + layout_size.height,
+            };
+        }
+
+        fn contentHeight(self: Self) u31 {
+            return self.inner.getSize().height;
+        }
+
+        fn scrollbarWidth(self: Self) u31 {
+            if (self.scrollbar_present) {
+                return self.scrollbar.shared.style.width;
+            } else {
+                return 0;
+            }
+        }
+
+        fn clampScrollOffs(self: *Self) void {
+            self.scroll_offs = std.math.clamp(
+                self.scroll_offs,
+                0,
+                self.contentHeight() -| self.size.height,
+            );
+        }
+    };
+}
+
+fn scrollAreaBounds(scrollbar: Scrollbar, bounds: PixelBBox) PixelBBox {
+    return .{
+        .left = bounds.right - scrollbar.shared.style.width,
+        .right = bounds.right,
+        .top = bounds.top,
+        .bottom = bounds.bottom,
+    };
+}
+
+fn scrollbarMissing(window_height: i32, content_height: i32, scrollbar_present: bool) bool {
+    return (content_height > window_height) and !scrollbar_present;
+}
+
+fn scrollbarInWrongState(window_height: i32, content_height: i32, scrollbar_present: bool) bool {
+    return (content_height > window_height) != scrollbar_present;
+}

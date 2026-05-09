@@ -12,11 +12,6 @@ pushd src/sphtext/
 zig build test
 popd
 
-pushd src/gui/
-zig build test
-zig build
-popd
-
 pushd src/sphutil/
 zig build test
 popd
