@@ -3,7 +3,7 @@ const glfwb = @cImport({
     @cInclude("GLFW/glfw3.h");
 });
 const sphutil = @import("sphutil");
-const sphwindow_events = @import("sphwindow_events");
+const sphwindow_events = @import("window_events.zig");
 
 pub const Window = struct {
     window: *glfwb.GLFWwindow = undefined,
