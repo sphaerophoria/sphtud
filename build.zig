@@ -8,16 +8,22 @@ const Builder = struct {
     sphrender: *std.Build.Module,
     sphalloc: *std.Build.Module,
     sphutil: *std.Build.Module,
-    sphttp: *std.Build.Module,
     sphxml: *std.Build.Module,
     sphnet: *std.Build.Module,
     options: *std.Build.Step.Options,
     options_all: *std.Build.Step.Options,
 
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+
     fn init(b: *std.Build) Builder {
         const with_gl = b.option(bool, "with_gl", "") orelse false;
         const with_glfw = b.option(bool, "with_glfw", "") orelse false;
         const gl_extensions = b.option([]const []const u8, "gl_extensions", "") orelse &.{};
+
+        const target = b.standardTargetOptions(.{});
+        const optimize = b.standardOptimizeOption(.{});
 
         const sphmath = b.dependency("sphmath", .{}).module("sphmath");
         const sphrender = b.dependency("sphrender", .{
@@ -26,7 +32,6 @@ const Builder = struct {
 
         const sphalloc = b.dependency("sphalloc", .{}).module("sphalloc");
         const sphutil = b.dependency("sphutil", .{}).module("sphutil");
-        const sphttp = b.dependency("sphttp", .{}).module("sphttp");
         const sphxml = b.dependency("sphxml", .{}).module("sphxml");
         const sphnet = b.dependency("sphnet", .{}).module("sphnet");
 
@@ -46,11 +51,14 @@ const Builder = struct {
             .sphrender = sphrender,
             .sphalloc = sphalloc,
             .sphutil = sphutil,
-            .sphttp = sphttp,
             .sphxml = sphxml,
             .sphnet = sphnet,
             .options = options,
             .options_all = options_all,
+
+            .b = b,
+            .target = target,
+            .optimize = optimize,
         };
     }
 
@@ -58,7 +66,6 @@ const Builder = struct {
         mod.addImport("sphalloc", self.sphalloc);
         mod.addImport("sphutil", self.sphutil);
         mod.addImport("sphmath", self.sphmath);
-        mod.addImport("sphttp", self.sphttp);
         mod.addImport("sphxml", self.sphxml);
         mod.addImport("sphnet", self.sphnet);
         mod.addOptions("config", self.options);
@@ -77,7 +84,6 @@ const Builder = struct {
         mod.addImport("sphalloc", self.sphalloc);
         mod.addImport("sphutil", self.sphutil);
         mod.addImport("sphmath", self.sphmath);
-        mod.addImport("sphttp", self.sphttp);
         mod.addImport("sphxml", self.sphxml);
         mod.addImport("sphnet", self.sphnet);
         mod.addOptions("config", self.options_all);
@@ -87,23 +93,33 @@ const Builder = struct {
         mod.linkSystemLibrary("glfw", .{});
         mod.link_libc = true;
     }
+
+    fn addExample(self: Builder, name: []const u8, path: []const u8, sphtud_all: *std.Build.Module) void {
+        const example = self.b.addExecutable(.{
+            .name = name,
+            .root_module = self.b.createModule(.{
+                .root_source_file = self.b.path(path),
+                .target = self.target,
+                .optimize = self.optimize,
+            }),
+        });
+        example.root_module.addImport("sphtud", sphtud_all);
+        self.b.installArtifact(example);
+    }
 };
 
 pub fn build(b: *std.Build) !void {
     const builder = Builder.init(b);
 
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-
     const sphtud = b.addModule("sphtud", .{
         .root_source_file = b.path("src/sphtud.zig"),
-        .target = target,
+        .target = builder.target,
     });
     builder.addImports(sphtud);
 
     const sphtud_all = b.addModule("sphtud", .{
         .root_source_file = b.path("src/sphtud.zig"),
-        .target = target,
+        .target = builder.target,
     });
     builder.addImportsAll(sphtud_all);
 
@@ -111,33 +127,16 @@ pub fn build(b: *std.Build) !void {
         .name = "sphtud_test",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/sphtud.zig"),
-            .target = target,
-            .optimize = optimize,
+            .target = builder.target,
+            .optimize = builder.optimize,
         }),
     });
     builder.addImportsAll(test_exe.root_module);
 
     b.installArtifact(test_exe);
 
-    const io_example = b.addExecutable(.{
-        .name = "io_example",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/examples/io_example.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    io_example.root_module.addImport("sphtud", sphtud);
-    b.installArtifact(io_example);
-
-    const gui_example = b.addExecutable(.{
-        .name = "gui_example",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/examples/gui_example.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    gui_example.root_module.addImport("sphtud", sphtud_all);
-    b.installArtifact(gui_example);
+    builder.addExample("io_example", "src/examples/io_example.zig", sphtud_all);
+    builder.addExample("gui_example", "src/examples/gui_example.zig", sphtud_all);
+    builder.addExample("http_client_example", "src/examples/http_client_example.zig", sphtud_all);
+    builder.addExample("http_server_example", "src/examples/http_server_example.zig", sphtud_all);
 }

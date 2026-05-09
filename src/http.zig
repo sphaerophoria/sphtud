@@ -1,6 +1,5 @@
 const std = @import("std");
-const sphalloc = @import("sphalloc");
-pub const url = @import("url.zig");
+pub const url = @import("http/url.zig");
 
 pub const HttpResponseReader = HttpReaderGeneric(HttpResponseHeader);
 pub const HttpRequestReader = HttpReaderGeneric(HttpRequestHeader);
@@ -52,6 +51,8 @@ fn HttpReaderGeneric(comptime Header: type) type {
 }
 
 test "HttpReader sanity" {
+    const sphalloc = @import("sphalloc");
+
     const test_message_content =
         "GET /some_url HTTP/1.1\r\n" ++
         "Content-Length: 11\r\n" ++

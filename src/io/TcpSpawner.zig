@@ -2,7 +2,7 @@ const std = @import("std");
 const DnsService = @import("DnsService.zig");
 const sphutil = @import("sphutil");
 const sphio = @import("../io.zig");
-const system = std.posix.system;
+const system = std.os.linux;
 
 const TcpSpawner = @This();
 
@@ -212,7 +212,7 @@ fn isSocketConnected(socket: std.posix.fd_t) !SocketConnectedRes {
     try sphio.getsockopt(socket, system.SOL.SOCKET, system.SO.ERROR, std.mem.asBytes(&err_val), &err_val_len);
     std.debug.assert(err_val_len == @sizeOf(c_int));
 
-    switch (std.posix.errno(@intCast(err_val))) {
+    switch (system.errno(@intCast(err_val))) {
         .SUCCESS => return .connected,
         .INPROGRESS => {
             // AFAICT this is never triggered, see write() test above

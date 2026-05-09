@@ -1,5 +1,6 @@
 const std = @import("std");
-const sphttp = @import("sphttp");
+const sphtud = @import("sphtud");
+const sphttp = sphtud.http;
 
 pub fn main() !void {
     var scratch_buf: [1 * 1024 * 1024]u8 = undefined;
