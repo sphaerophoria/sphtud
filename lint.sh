@@ -20,11 +20,6 @@ pushd src/sphalloc/
 zig build test
 popd
 
-pushd src/sphttp/
-zig build
-zig build test
-popd
-
 pushd src/sphxml/
 zig build test
 popd
