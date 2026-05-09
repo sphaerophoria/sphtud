@@ -1,5 +1,5 @@
 const std = @import("std");
-const img_mod = @import("../sphimage.zig");
+const img_mod = @import("../../img.zig");
 const SubDataReader = @import("SubDataReader.zig");
 const LzwDecompressor = @import("LzwDecompressor.zig");
 

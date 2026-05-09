@@ -13,7 +13,6 @@ const Builder = struct {
     sphutil: *std.Build.Module,
     sphttp: *std.Build.Module,
     sphxml: *std.Build.Module,
-    sphimage: *std.Build.Module,
     sphnet: *std.Build.Module,
     options: *std.Build.Step.Options,
 
@@ -42,7 +41,6 @@ const Builder = struct {
         const sphutil = b.dependency("sphutil", .{}).module("sphutil");
         const sphttp = b.dependency("sphttp", .{}).module("sphttp");
         const sphxml = b.dependency("sphxml", .{}).module("sphxml");
-        const sphimage = b.dependency("sphimage", .{}).module("sphimage");
         const sphnet = b.dependency("sphnet", .{}).module("sphnet");
 
         options.addOption(bool, "export_sphrender", with_gl);
@@ -61,7 +59,6 @@ const Builder = struct {
             .sphutil = sphutil,
             .sphttp = sphttp,
             .sphxml = sphxml,
-            .sphimage = sphimage,
             .sphnet = sphnet,
             .options = options,
         };
@@ -73,7 +70,6 @@ const Builder = struct {
         mod.addImport("sphmath", self.sphmath);
         mod.addImport("sphttp", self.sphttp);
         mod.addImport("sphxml", self.sphxml);
-        mod.addImport("sphimage", self.sphimage);
         mod.addImport("sphnet", self.sphnet);
         mod.addOptions("config", self.options);
 

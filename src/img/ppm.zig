@@ -1,4 +1,4 @@
-const img = @import("sphimage.zig");
+const img = @import("../img.zig");
 const std = @import("std");
 
 pub const Writer = struct {

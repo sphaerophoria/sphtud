@@ -1,6 +1,5 @@
-const img = @import("sphimage.zig");
+const sphtud = @import("../sphtud.zig");
 const std = @import("std");
-const sphmath = @import("sphmath");
 
 const Args = struct {
     in_path: []const u8,
@@ -106,7 +105,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var alloc_buf: [4 * 1024 * 1024]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&alloc_buf);
 
-    var options: img.ImageLoadOptions = .{
+    var options: sphtud.img.ImageLoadOptions = .{
         .vflip = args.vflip,
     };
 
@@ -123,7 +122,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
             },
         } };
     }
-    const image = try img.read(fba.allocator(), fba.allocator(), &reader.interface, options);
+    const image = try sphtud.img.read(fba.allocator(), fba.allocator(), &reader.interface, options);
 
     const ppm_f = try std.Io.Dir.cwd().createFile(io, args.out_path, .{});
     defer ppm_f.close(io);
@@ -132,7 +131,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
     var writer = ppm_f.writer(io, &writer_buf);
     const w = &writer.interface;
 
-    try img.ppm.write(image, w);
+    try sphtud.img.ppm.write(image, w);
 
     try w.flush();
 }

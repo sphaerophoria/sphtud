@@ -1,6 +1,5 @@
 const std = @import("std");
-const img = @import("sphimage.zig");
-const sphmath = @import("sphmath");
+const sphtud = @import("../sphtud.zig");
 
 pub const XYY = struct {
     x: f32,
@@ -23,7 +22,7 @@ pub const XYZ = struct {
     }
 };
 
-pub const srgb_to_xyz = sphmath.Mat3x3{
+pub const srgb_to_xyz = sphtud.math.Mat3x3{
     .data = .{
         0.4124, 0.3576, 0.1805,
         0.2126, 0.7152, 0.0722,
@@ -32,7 +31,7 @@ pub const srgb_to_xyz = sphmath.Mat3x3{
 };
 pub const xyz_to_srgb = srgb_to_xyz.invert();
 
-pub const bradford = sphmath.Mat3x3{
+pub const bradford = sphtud.math.Mat3x3{
     .data = .{
         0.8951,  0.2664,  -0.1614,
         -0.7502, 1.7135,  0.0367,
@@ -41,12 +40,12 @@ pub const bradford = sphmath.Mat3x3{
 };
 pub const bradford_inv = bradford.invert();
 
-pub fn genRGBToXYZMat(r: XY, g: XY, b: XY, whitepoint: XY) sphmath.Mat3x3 {
+pub fn genRGBToXYZMat(r: XY, g: XY, b: XY, whitepoint: XY) sphtud.math.Mat3x3 {
     const ir_xyz = XYZ.fromxyy(.{ .x = r.x, .y = r.y, .Y = 1.0 });
     const ig_xyz = XYZ.fromxyy(.{ .x = g.x, .y = g.y, .Y = 1.0 });
     const ib_xyz = XYZ.fromxyy(.{ .x = b.x, .y = b.y, .Y = 1.0 });
 
-    const interm_mat = sphmath.Mat3x3{
+    const interm_mat = sphtud.math.Mat3x3{
         .data = .{
             ir_xyz.x, ig_xyz.x, ib_xyz.x,
             ir_xyz.y, ig_xyz.y, ib_xyz.y,
@@ -101,14 +100,14 @@ test "genRGBToXYZMat" {
     }
 }
 
-pub fn genColorTransform(in_rgb_to_xyz: sphmath.Mat3x3, out_rgb_to_xyz: sphmath.Mat3x3) sphmath.Mat3x3 {
+pub fn genColorTransform(in_rgb_to_xyz: sphtud.math.Mat3x3, out_rgb_to_xyz: sphtud.math.Mat3x3) sphtud.math.Mat3x3 {
     const out_rgb_to_lms = bradford.matmul(out_rgb_to_xyz);
     const in_rgb_to_lms = bradford.matmul(in_rgb_to_xyz);
 
     const in_whitepoint = in_rgb_to_lms.mul(.{ 1, 1, 1 });
     const out_whitepoint = out_rgb_to_lms.mul(.{ 1, 1, 1 });
 
-    const scale_mat = sphmath.Mat3x3{
+    const scale_mat = sphtud.math.Mat3x3{
         .data = .{
             out_whitepoint[0] / in_whitepoint[0], 0,                                    0,
             0,                                    out_whitepoint[1] / in_whitepoint[1], 0,
@@ -124,7 +123,7 @@ pub fn genColorTransform(in_rgb_to_xyz: sphmath.Mat3x3, out_rgb_to_xyz: sphmath.
 // Ideally we have another test for this but I don't want to :)
 test "genColorTransform identity" {
     const no_scale = genColorTransform(srgb_to_xyz, srgb_to_xyz);
-    const identity = sphmath.Mat3x3{};
+    const identity = sphtud.math.Mat3x3{};
 
     for (no_scale.data, identity.data) |s, e| {
         try std.testing.expectApproxEqAbs(e, s, 0.001);
@@ -147,14 +146,14 @@ pub fn linearToSrgb(val: f32) f32 {
     }
 }
 
-pub fn makeColorTransform(in_colorspace: img.Colorspace, desired_color_space_opt: ?img.Colorspace) sphmath.Mat3x3 {
+pub fn makeColorTransform(in_colorspace: sphtud.img.Colorspace, desired_color_space_opt: ?sphtud.img.Colorspace) sphtud.math.Mat3x3 {
     const desired_color_space = desired_color_space_opt orelse return .{};
     return genColorTransform(in_colorspace.asRgbToXyz(), desired_color_space.asRgbToXyz());
 }
 
 pub const Converter = struct {
-    data: img.PixelData,
-    color_transform: sphmath.Mat3x3,
+    data: sphtud.img.PixelData,
+    color_transform: sphtud.math.Mat3x3,
 
     const GammaAdjustment = struct {
         source_gamma: f32,
@@ -183,7 +182,7 @@ pub const Converter = struct {
         }
     };
 
-    pub fn convert(self: *Converter, source_transfer: img.TransferFn, dest_transfer: img.TransferFn) void {
+    pub fn convert(self: *Converter, source_transfer: sphtud.img.TransferFn, dest_transfer: sphtud.img.TransferFn) void {
         switch (source_transfer) {
             .gamma => |g| {
                 self.convertImageDataToLinearConcrete(GammaAdjustment{ .source_gamma = g, .dest_gamma = 1.0 }, dest_transfer);
@@ -197,7 +196,7 @@ pub const Converter = struct {
         }
     }
 
-    fn convertImageDataToLinearConcrete(self: *Converter, to_linear: anytype, dest_transfer: img.TransferFn) void {
+    fn convertImageDataToLinearConcrete(self: *Converter, to_linear: anytype, dest_transfer: sphtud.img.TransferFn) void {
         switch (dest_transfer) {
             .gamma => |g| {
                 self.convertImageDataFromLinearConcrete(
@@ -227,13 +226,13 @@ pub const Converter = struct {
                 while (it.next()) |px| {
                     var px_f = px.tof32();
 
-                    const linear = sphmath.Vec3{
+                    const linear = sphtud.math.Vec3{
                         to_linear.apply(px_f.r),
                         to_linear.apply(px_f.g),
                         to_linear.apply(px_f.b),
                     };
 
-                    const transformed = std.math.clamp(self.color_transform.mul(linear), @as(sphmath.Vec3, @splat(0.0)), @as(sphmath.Vec3, @splat(1.0)));
+                    const transformed = std.math.clamp(self.color_transform.mul(linear), @as(sphtud.math.Vec3, @splat(0.0)), @as(sphtud.math.Vec3, @splat(1.0)));
 
                     px_f.r = dest_transfer.apply(transformed[0]);
                     px_f.g = dest_transfer.apply(transformed[1]);
@@ -253,7 +252,7 @@ test "Color conversion sanity" {
         140, 160, 180,
     };
 
-    const pixel_data = img.PixelData.init(.rgb_888_packed, &pixel_data_bytes);
+    const pixel_data = sphtud.img.PixelData.init(.rgb_888_packed, &pixel_data_bytes);
     var converter = Converter{
         .color_transform = .{
             .data = .{

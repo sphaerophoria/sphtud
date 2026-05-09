@@ -1,5 +1,5 @@
 const std = @import("std");
-const img = @import("../sphimage.zig");
+const img = @import("../../img.zig");
 
 pub const Header = struct {
     width: u32,

@@ -1,9 +1,9 @@
 const std = @import("std");
-pub const png = @import("png.zig");
-pub const color = @import("color.zig");
-pub const ppm = @import("ppm.zig");
-pub const gif = @import("gif.zig");
-const sphmath = @import("sphmath");
+const sphtud = @import("sphtud.zig");
+pub const png = @import("img/png.zig");
+pub const color = @import("img/color.zig");
+pub const ppm = @import("img/ppm.zig");
+pub const gif = @import("img/gif.zig");
 
 pub fn read(alloc: std.mem.Allocator, scratch: std.mem.Allocator, r: *std.Io.Reader, options: ImageLoadOptions) !Image {
     switch (try detectType(r)) {
@@ -260,9 +260,9 @@ pub const PixelData = union(PixelFormat) {
 pub const Colorspace = union(enum) {
     srgb,
     // RGB -> XYZ matrix
-    chroma: sphmath.Mat3x3,
+    chroma: sphtud.math.Mat3x3,
 
-    pub fn asRgbToXyz(self: Colorspace) sphmath.Mat3x3 {
+    pub fn asRgbToXyz(self: Colorspace) sphtud.math.Mat3x3 {
         switch (self) {
             .srgb => return color.srgb_to_xyz,
             .chroma => |m| return m,
