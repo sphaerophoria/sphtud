@@ -7,21 +7,20 @@ const Builder = struct {
     sphmath: *std.Build.Module,
     sphrender: *std.Build.Module,
     sphtext: *std.Build.Module,
-    sphui: *std.Build.Module,
     sphwindow: *std.Build.Module,
+    sphwindow_events: *std.Build.Module,
     sphalloc: *std.Build.Module,
     sphutil: *std.Build.Module,
     sphttp: *std.Build.Module,
     sphxml: *std.Build.Module,
     sphnet: *std.Build.Module,
     options: *std.Build.Step.Options,
+    options_all: *std.Build.Step.Options,
 
     fn init(b: *std.Build) Builder {
         const with_gl = b.option(bool, "with_gl", "") orelse false;
         const with_glfw = b.option(bool, "with_glfw", "") orelse false;
         const gl_extensions = b.option([]const []const u8, "gl_extensions", "") orelse &.{};
-
-        const options = b.addOptions();
 
         const sphmath = b.dependency("sphmath", .{}).module("sphmath");
         const sphrender = b.dependency("sphrender", .{
@@ -32,19 +31,21 @@ const Builder = struct {
             .gl_extensions = gl_extensions,
         }).module("sphtext");
 
-        const sphui = b.dependency("sphui", .{
-            .gl_extensions = gl_extensions,
-        }).module("sphui");
-
         const sphwindow = b.dependency("sphwindow", .{}).module("sphwindow");
+        const sphwindow_events = b.dependency("sphwindow_events", .{}).module("sphwindow_events");
         const sphalloc = b.dependency("sphalloc", .{}).module("sphalloc");
         const sphutil = b.dependency("sphutil", .{}).module("sphutil");
         const sphttp = b.dependency("sphttp", .{}).module("sphttp");
         const sphxml = b.dependency("sphxml", .{}).module("sphxml");
         const sphnet = b.dependency("sphnet", .{}).module("sphnet");
 
+        const options = b.addOptions();
         options.addOption(bool, "export_sphrender", with_gl);
         options.addOption(bool, "export_sphwindow", with_glfw);
+
+        const options_all = b.addOptions();
+        options_all.addOption(bool, "export_sphrender", true);
+        options_all.addOption(bool, "export_sphwindow", true);
 
         return .{
             .with_gl = with_gl,
@@ -53,14 +54,15 @@ const Builder = struct {
             .sphmath = sphmath,
             .sphrender = sphrender,
             .sphtext = sphtext,
-            .sphui = sphui,
             .sphwindow = sphwindow,
+            .sphwindow_events = sphwindow_events,
             .sphalloc = sphalloc,
             .sphutil = sphutil,
             .sphttp = sphttp,
             .sphxml = sphxml,
             .sphnet = sphnet,
             .options = options,
+            .options_all = options_all,
         };
     }
 
@@ -76,12 +78,27 @@ const Builder = struct {
         if (self.with_gl) {
             mod.addImport("sphtext", self.sphtext);
             mod.addImport("sphrender", self.sphrender);
-            mod.addImport("sphui", self.sphui);
         }
 
+        mod.addImport("sphwindow_events", self.sphwindow_events);
         if (self.with_glfw) {
             mod.addImport("sphwindow", self.sphwindow);
         }
+    }
+
+    fn addImportsAll(self: Builder, mod: *std.Build.Module) void {
+        mod.addImport("sphalloc", self.sphalloc);
+        mod.addImport("sphutil", self.sphutil);
+        mod.addImport("sphmath", self.sphmath);
+        mod.addImport("sphttp", self.sphttp);
+        mod.addImport("sphxml", self.sphxml);
+        mod.addImport("sphnet", self.sphnet);
+        mod.addOptions("config", self.options_all);
+
+        mod.addImport("sphtext", self.sphtext);
+        mod.addImport("sphrender", self.sphrender);
+        mod.addImport("sphwindow", self.sphwindow);
+        mod.addImport("sphwindow_events", self.sphwindow_events);
     }
 };
 
@@ -92,6 +109,11 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/sphtud.zig"),
     });
     builder.addImports(sphtud);
+
+    const sphtud_all = b.addModule("sphtud", .{
+        .root_source_file = b.path("src/sphtud.zig"),
+    });
+    builder.addImportsAll(sphtud_all);
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -117,4 +139,15 @@ pub fn build(b: *std.Build) !void {
     });
     io_example.root_module.addImport("sphtud", sphtud);
     b.installArtifact(io_example);
+
+    const gui_example = b.addExecutable(.{
+        .name = "gui_example",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/examples/gui_example.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    gui_example.root_module.addImport("sphtud", sphtud_all);
+    b.installArtifact(gui_example);
 }
