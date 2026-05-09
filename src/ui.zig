@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const sphmath = @import("sphmath");
 const sphrender = @import("sphrender");
 const sphutil = @import("sphutil");
-const sphwindow_events = @import("sphwindow_events");
+const sphwindow_events = @import("window_events.zig");
 
 pub const label = @import("ui/label.zig");
 pub const drag = @import("ui/drag.zig");

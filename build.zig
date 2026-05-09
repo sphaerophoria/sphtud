@@ -6,7 +6,6 @@ const Builder = struct {
     gl_extensions: []const []const u8,
     sphmath: *std.Build.Module,
     sphrender: *std.Build.Module,
-    sphwindow_events: *std.Build.Module,
     sphalloc: *std.Build.Module,
     sphutil: *std.Build.Module,
     sphttp: *std.Build.Module,
@@ -25,7 +24,6 @@ const Builder = struct {
             .gl_extensions = gl_extensions,
         }).module("sphrender");
 
-        const sphwindow_events = b.dependency("sphwindow_events", .{}).module("sphwindow_events");
         const sphalloc = b.dependency("sphalloc", .{}).module("sphalloc");
         const sphutil = b.dependency("sphutil", .{}).module("sphutil");
         const sphttp = b.dependency("sphttp", .{}).module("sphttp");
@@ -46,7 +44,6 @@ const Builder = struct {
             .gl_extensions = gl_extensions,
             .sphmath = sphmath,
             .sphrender = sphrender,
-            .sphwindow_events = sphwindow_events,
             .sphalloc = sphalloc,
             .sphutil = sphutil,
             .sphttp = sphttp,
@@ -70,8 +67,6 @@ const Builder = struct {
             mod.addImport("sphrender", self.sphrender);
         }
 
-        mod.addImport("sphwindow_events", self.sphwindow_events);
-
         if (self.with_glfw) {
             mod.linkSystemLibrary("glfw", .{});
             mod.link_libc = true;
@@ -88,7 +83,6 @@ const Builder = struct {
         mod.addOptions("config", self.options_all);
 
         mod.addImport("sphrender", self.sphrender);
-        mod.addImport("sphwindow_events", self.sphwindow_events);
 
         mod.linkSystemLibrary("glfw", .{});
         mod.link_libc = true;
