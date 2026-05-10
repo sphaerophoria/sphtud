@@ -6,12 +6,15 @@ pub const runtime_segmented_list = @import("util/runtime_segmented_list.zig");
 pub const hash_map = @import("util/hash_map.zig");
 pub const object_pool = @import("util/object_pool.zig");
 pub const bit_set = @import("util/bit_set.zig");
+pub const linear_map = @import("util/linear_map.zig");
 
 pub const RuntimeSegmentedList = runtime_segmented_list.RuntimeSegmentedList;
 pub const RuntimeSegmentedListUnmanaged = runtime_segmented_list.RuntimeSegmentedListUnmanaged;
 
 pub const AutoHashMap = hash_map.AutoHashMap;
 pub const StringHashMap = hash_map.StringHashMap;
+
+pub const LinearMap = linear_map.LinearMap;
 
 pub const ObjectPool = object_pool.ObjectPool;
 
