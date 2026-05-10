@@ -20,9 +20,5 @@ pushd src/sphalloc/
 zig build test
 popd
 
-pushd src/sphxml/
-zig build test
-popd
-
 zig build
 ./zig-out/bin/sphtud_test

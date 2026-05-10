@@ -8,7 +8,6 @@ const Builder = struct {
     sphmath: *std.Build.Module,
     sphalloc: *std.Build.Module,
     sphutil: *std.Build.Module,
-    sphxml: *std.Build.Module,
     sphnet: *std.Build.Module,
     gl: *std.Build.Module,
     options: *std.Build.Step.Options,
@@ -29,7 +28,6 @@ const Builder = struct {
         const sphmath = b.dependency("sphmath", .{}).module("sphmath");
         const sphalloc = b.dependency("sphalloc", .{}).module("sphalloc");
         const sphutil = b.dependency("sphutil", .{}).module("sphutil");
-        const sphxml = b.dependency("sphxml", .{}).module("sphxml");
         const sphnet = b.dependency("sphnet", .{}).module("sphnet");
 
         const gl_zig = b.addTranslateC(.{
@@ -50,7 +48,9 @@ const Builder = struct {
                 .optimize = optimize,
             }),
         });
-        loader_gen.root_module.addImport("sphxml", sphxml);
+        loader_gen.root_module.addAnonymousImport("sphxml", .{
+            .root_source_file = b.path("src/xml.zig"),
+        });
 
         const run_loader_gen = b.addRunArtifact(loader_gen);
         run_loader_gen.addFileArg(gl_zig.getOutput());
@@ -81,7 +81,6 @@ const Builder = struct {
             .sphmath = sphmath,
             .sphalloc = sphalloc,
             .sphutil = sphutil,
-            .sphxml = sphxml,
             .sphnet = sphnet,
             .gl = gl,
             .options = options,
@@ -97,7 +96,6 @@ const Builder = struct {
         mod.addImport("sphalloc", self.sphalloc);
         mod.addImport("sphutil", self.sphutil);
         mod.addImport("sphmath", self.sphmath);
-        mod.addImport("sphxml", self.sphxml);
         mod.addImport("sphnet", self.sphnet);
         mod.addOptions("config", self.options);
 
@@ -111,7 +109,6 @@ const Builder = struct {
         mod.addImport("sphalloc", self.sphalloc);
         mod.addImport("sphutil", self.sphutil);
         mod.addImport("sphmath", self.sphmath);
-        mod.addImport("sphxml", self.sphxml);
         mod.addImport("sphnet", self.sphnet);
         mod.addOptions("config", self.options_all);
 
