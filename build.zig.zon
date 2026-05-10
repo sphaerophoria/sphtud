@@ -6,9 +6,6 @@
         .sphmath = .{
             .path = "src/sphmath",
         },
-        .sphnet = .{
-            .path = "src/sphnet",
-        },
         .sphrender = .{
             .path = "src/sphrender",
         },

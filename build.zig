@@ -7,7 +7,6 @@ const Builder = struct {
     gl_extensions: []const []const u8,
     sphmath: *std.Build.Module,
     sphutil: *std.Build.Module,
-    sphnet: *std.Build.Module,
     gl: *std.Build.Module,
     options: *std.Build.Step.Options,
     options_all: *std.Build.Step.Options,
@@ -26,13 +25,13 @@ const Builder = struct {
 
         const sphmath = b.dependency("sphmath", .{}).module("sphmath");
         const sphutil = b.dependency("sphutil_noalloc", .{}).module("sphutil_noalloc");
-        const sphnet = b.dependency("sphnet", .{}).module("sphnet");
 
         const gl_zig = b.addTranslateC(.{
             .root_source_file = b.path("src/render/gl.h"),
             .target = target,
             .optimize = optimize,
         });
+
         var include_it = try process_include_paths.IncludeIter.init(b.allocator, b.graph.io);
         while (include_it.next()) |p| {
             gl_zig.addSystemIncludePath(std.Build.LazyPath{ .cwd_relative = p });
@@ -78,7 +77,6 @@ const Builder = struct {
             .gl_extensions = gl_extensions,
             .sphmath = sphmath,
             .sphutil = sphutil,
-            .sphnet = sphnet,
             .gl = gl,
             .options = options,
             .options_all = options_all,
@@ -92,7 +90,6 @@ const Builder = struct {
     fn addImports(self: Builder, mod: *std.Build.Module) void {
         mod.addImport("sphutil", self.sphutil);
         mod.addImport("sphmath", self.sphmath);
-        mod.addImport("sphnet", self.sphnet);
         mod.addOptions("config", self.options);
 
         if (self.with_glfw) {
@@ -104,7 +101,6 @@ const Builder = struct {
     fn addImportsAll(self: Builder, mod: *std.Build.Module) void {
         mod.addImport("sphutil", self.sphutil);
         mod.addImport("sphmath", self.sphmath);
-        mod.addImport("sphnet", self.sphnet);
         mod.addOptions("config", self.options_all);
 
         mod.addImport("gl", self.gl);
