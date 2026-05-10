@@ -2,10 +2,11 @@ const process_include_paths = @import("build/process_include_paths.zig");
 const std = @import("std");
 
 const Builder = struct {
+    is_dep: bool,
     with_gl: bool,
     with_glfw: bool,
     gl_extensions: []const []const u8,
-    gl: *std.Build.Module,
+    gl: ?*std.Build.Module,
     options: *std.Build.Step.Options,
     options_all: *std.Build.Step.Options,
 
@@ -14,8 +15,9 @@ const Builder = struct {
     optimize: std.builtin.OptimizeMode,
 
     fn init(b: *std.Build) !Builder {
-        const with_gl = b.option(bool, "with_gl", "") orelse false;
-        const with_glfw = b.option(bool, "with_glfw", "") orelse false;
+        const is_dep = b.dep_prefix.len > 0;
+        const with_gl = b.option(bool, "with_gl", "") orelse !is_dep;
+        const with_glfw = b.option(bool, "with_glfw", "") orelse !is_dep;
         const gl_extensions = b.option([]const []const u8, "gl_extensions", "") orelse &.{};
 
         const target = b.standardTargetOptions(.{});
@@ -44,19 +46,22 @@ const Builder = struct {
             .root_source_file = b.path("src/xml.zig"),
         });
 
-        const run_loader_gen = b.addRunArtifact(loader_gen);
-        run_loader_gen.addFileArg(gl_zig.getOutput());
-        const gl_with_loader = run_loader_gen.addOutputFileArg("gl.zig");
+        var gl: ?*std.Build.Module = null;
+        if (with_gl) {
+            const run_loader_gen = b.addRunArtifact(loader_gen);
+            run_loader_gen.addFileArg(gl_zig.getOutput());
+            const gl_with_loader = run_loader_gen.addOutputFileArg("gl.zig");
 
-        for (gl_extensions) |extension| {
-            run_loader_gen.addArg(extension);
+            for (gl_extensions) |extension| {
+                run_loader_gen.addArg(extension);
+            }
+
+            gl = b.createModule(.{
+                .root_source_file = gl_with_loader,
+                .target = target,
+            });
+            gl.?.linkSystemLibrary("GL", .{});
         }
-
-        const gl = b.createModule(.{
-            .root_source_file = gl_with_loader,
-            .target = target,
-        });
-        gl.linkSystemLibrary("GL", .{});
 
         const options = b.addOptions();
         options.addOption(bool, "export_sphrender", with_gl);
@@ -67,6 +72,7 @@ const Builder = struct {
         options_all.addOption(bool, "export_sphwindow", true);
 
         return .{
+            .is_dep = is_dep,
             .with_gl = with_gl,
             .with_glfw = with_glfw,
             .gl_extensions = gl_extensions,
@@ -83,6 +89,10 @@ const Builder = struct {
     fn addImports(self: Builder, mod: *std.Build.Module) void {
         mod.addOptions("config", self.options);
 
+        if (self.gl) |gl| {
+            mod.addImport("gl", gl);
+        }
+
         if (self.with_glfw) {
             mod.linkSystemLibrary("glfw", .{});
             mod.link_libc = true;
@@ -92,8 +102,7 @@ const Builder = struct {
     fn addImportsAll(self: Builder, mod: *std.Build.Module) void {
         mod.addOptions("config", self.options_all);
 
-        mod.addImport("gl", self.gl);
-
+        mod.addImport("gl", self.gl.?);
         mod.linkSystemLibrary("glfw", .{});
         mod.link_libc = true;
     }
@@ -121,26 +130,32 @@ pub fn build(b: *std.Build) !void {
     });
     builder.addImports(sphtud);
 
-    const sphtud_all = b.addModule("sphtud", .{
-        .root_source_file = b.path("src/sphtud.zig"),
-        .target = builder.target,
-    });
-    builder.addImportsAll(sphtud_all);
-
-    const test_exe = b.addTest(.{
-        .name = "sphtud_test",
-        .root_module = b.createModule(.{
+    // sphtud can optionally depend on opengl and glfw, however even if this
+    // module is not used, the linkSystemLibrary call to glfw will fail, so we
+    // hack it to just not do this part if we have noticed that we are
+    // dependency
+    if (!builder.is_dep) {
+        const sphtud_all = b.addModule("sphtud", .{
             .root_source_file = b.path("src/sphtud.zig"),
             .target = builder.target,
-            .optimize = builder.optimize,
-        }),
-    });
-    builder.addImportsAll(test_exe.root_module);
+        });
+        builder.addImportsAll(sphtud_all);
 
-    b.installArtifact(test_exe);
+        const test_exe = b.addTest(.{
+            .name = "sphtud_test",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/sphtud.zig"),
+                .target = builder.target,
+                .optimize = builder.optimize,
+            }),
+        });
+        builder.addImportsAll(test_exe.root_module);
 
-    builder.addExample("io_example", "src/examples/io_example.zig", sphtud_all);
-    builder.addExample("gui_example", "src/examples/gui_example.zig", sphtud_all);
-    builder.addExample("http_client_example", "src/examples/http_client_example.zig", sphtud_all);
-    builder.addExample("http_server_example", "src/examples/http_server_example.zig", sphtud_all);
+        b.installArtifact(test_exe);
+
+        builder.addExample("io_example", "src/examples/io_example.zig", sphtud_all);
+        builder.addExample("gui_example", "src/examples/gui_example.zig", sphtud_all);
+        builder.addExample("http_client_example", "src/examples/http_client_example.zig", sphtud_all);
+        builder.addExample("http_server_example", "src/examples/http_server_example.zig", sphtud_all);
+    }
 }
