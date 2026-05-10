@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const sphrender = @import("../render.zig");
 const sphtext = @import("../text.zig");
 const gui = @import("../ui.zig");
-const sphalloc = @import("sphalloc");
+const sphalloc = @import("../alloc.zig");
 const ScratchAlloc = sphalloc.ScratchAlloc;
 const GlAlloc = sphrender.GlAlloc;
 

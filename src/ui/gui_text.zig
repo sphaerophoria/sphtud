@@ -8,7 +8,7 @@ const sphutil = @import("sphutil");
 const RuntimeSegmentedList = sphutil.RuntimeSegmentedList;
 const PixelSize = gui.PixelSize;
 const TextRenderer = sphtext.TextRenderer;
-const sphalloc = @import("sphalloc");
+const sphalloc = @import("../alloc.zig");
 const ScratchAlloc = sphalloc.ScratchAlloc;
 const GlAlloc = sphrender.GlAlloc;
 

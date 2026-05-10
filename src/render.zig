@@ -10,7 +10,7 @@ pub const Scratch = @import("render/Scratch.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const sphmath = @import("sphmath");
-const sphalloc = @import("sphalloc");
+const sphalloc = @import("alloc.zig");
 const Sphalloc = sphalloc.Sphalloc;
 
 pub fn initGl(loader: *const fn ([*c]const u8) callconv(.c) ?*const fn () callconv(.c) void) !void {

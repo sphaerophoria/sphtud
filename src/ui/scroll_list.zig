@@ -1,5 +1,5 @@
 const std = @import("std");
-const sphalloc = @import("sphalloc");
+const sphalloc = @import("../alloc.zig");
 const sphutil = @import("sphutil");
 const gui = @import("../ui.zig");
 

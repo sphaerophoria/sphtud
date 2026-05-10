@@ -1,4 +1,4 @@
-const sphalloc = @import("sphalloc");
+const sphalloc = @import("../alloc.zig");
 const sphmath = @import("sphmath");
 const sphrender = @import("../render.zig");
 const sphutil = @import("sphutil");

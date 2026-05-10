@@ -5,7 +5,7 @@ const ttf_mod = @import("ttf.zig");
 const sphmath = @import("sphmath");
 const gl = sphrender.gl;
 const GlAlloc = sphrender.GlAlloc;
-const sphalloc = @import("sphalloc");
+const sphalloc = @import("../alloc.zig");
 const ScratchAlloc = sphalloc.ScratchAlloc;
 
 const Texture = sphrender.Texture;

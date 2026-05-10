@@ -51,7 +51,7 @@ fn HttpReaderGeneric(comptime Header: type) type {
 }
 
 test "HttpReader sanity" {
-    const sphalloc = @import("sphalloc");
+    const sphalloc = @import("alloc.zig");
 
     const test_message_content =
         "GET /some_url HTTP/1.1\r\n" ++

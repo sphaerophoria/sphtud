@@ -6,7 +6,6 @@ const Builder = struct {
     with_glfw: bool,
     gl_extensions: []const []const u8,
     sphmath: *std.Build.Module,
-    sphalloc: *std.Build.Module,
     sphutil: *std.Build.Module,
     sphnet: *std.Build.Module,
     gl: *std.Build.Module,
@@ -26,7 +25,6 @@ const Builder = struct {
         const optimize = b.standardOptimizeOption(.{});
 
         const sphmath = b.dependency("sphmath", .{}).module("sphmath");
-        const sphalloc = b.dependency("sphalloc", .{}).module("sphalloc");
         const sphutil = b.dependency("sphutil_noalloc", .{}).module("sphutil_noalloc");
         const sphnet = b.dependency("sphnet", .{}).module("sphnet");
 
@@ -79,7 +77,6 @@ const Builder = struct {
             .with_glfw = with_glfw,
             .gl_extensions = gl_extensions,
             .sphmath = sphmath,
-            .sphalloc = sphalloc,
             .sphutil = sphutil,
             .sphnet = sphnet,
             .gl = gl,
@@ -93,7 +90,6 @@ const Builder = struct {
     }
 
     fn addImports(self: Builder, mod: *std.Build.Module) void {
-        mod.addImport("sphalloc", self.sphalloc);
         mod.addImport("sphutil", self.sphutil);
         mod.addImport("sphmath", self.sphmath);
         mod.addImport("sphnet", self.sphnet);
@@ -106,7 +102,6 @@ const Builder = struct {
     }
 
     fn addImportsAll(self: Builder, mod: *std.Build.Module) void {
-        mod.addImport("sphalloc", self.sphalloc);
         mod.addImport("sphutil", self.sphutil);
         mod.addImport("sphmath", self.sphmath);
         mod.addImport("sphnet", self.sphnet);
