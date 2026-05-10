@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const gui = @import("../ui.zig");
-const sphrender = @import("sphrender");
+const sphrender = @import("../render.zig");
 const gl = sphrender.gl;
 const CursorStyle = gui.CursorStyle;
 

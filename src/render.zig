@@ -1,11 +1,11 @@
 pub const gl = @import("gl");
-pub const geometry = @import("geometry.zig");
-pub const DistanceFieldGenerator = @import("DistanceFieldGenerator.zig");
-pub const shader_program = @import("shader_program.zig");
-pub const xyuvt_program = @import("xyuvt.zig");
-pub const xyt_program = @import("xyt.zig");
-pub const GlAlloc = @import("GlAlloc.zig");
-pub const Scratch = @import("Scratch.zig");
+pub const geometry = @import("render/geometry.zig");
+pub const DistanceFieldGenerator = @import("render/DistanceFieldGenerator.zig");
+pub const shader_program = @import("render/shader_program.zig");
+pub const xyuvt_program = @import("render/xyuvt.zig");
+pub const xyt_program = @import("render/xyt.zig");
+pub const GlAlloc = @import("render/GlAlloc.zig");
+pub const Scratch = @import("render/Scratch.zig");
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

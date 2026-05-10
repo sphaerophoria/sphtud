@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const sphmath = @import("sphmath");
-const sphrender = @import("sphrender");
+const sphrender = @import("../render.zig");
 const gui = @import("../ui.zig");
 const Color = gui.Color;
 const PixelBBox = gui.PixelBBox;

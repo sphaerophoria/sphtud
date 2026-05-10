@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const sphmath = @import("sphmath");
-const sphrender = @import("sphrender");
+const sphrender = @import("render.zig");
 const sphutil = @import("sphutil");
 const sphwindow_events = @import("window_events.zig");
 
