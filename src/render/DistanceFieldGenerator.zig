@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const sphmath = @import("sphmath");
+const sphmath = @import("../math.zig");
 const gl = @import("gl");
 const geometry = @import("geometry.zig");
 const sphrender = @import("../render.zig");

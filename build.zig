@@ -5,7 +5,6 @@ const Builder = struct {
     with_gl: bool,
     with_glfw: bool,
     gl_extensions: []const []const u8,
-    sphmath: *std.Build.Module,
     gl: *std.Build.Module,
     options: *std.Build.Step.Options,
     options_all: *std.Build.Step.Options,
@@ -21,8 +20,6 @@ const Builder = struct {
 
         const target = b.standardTargetOptions(.{});
         const optimize = b.standardOptimizeOption(.{});
-
-        const sphmath = b.dependency("sphmath", .{}).module("sphmath");
 
         const gl_zig = b.addTranslateC(.{
             .root_source_file = b.path("src/render/gl.h"),
@@ -73,7 +70,6 @@ const Builder = struct {
             .with_gl = with_gl,
             .with_glfw = with_glfw,
             .gl_extensions = gl_extensions,
-            .sphmath = sphmath,
             .gl = gl,
             .options = options,
             .options_all = options_all,
@@ -85,7 +81,6 @@ const Builder = struct {
     }
 
     fn addImports(self: Builder, mod: *std.Build.Module) void {
-        mod.addImport("sphmath", self.sphmath);
         mod.addOptions("config", self.options);
 
         if (self.with_glfw) {
@@ -95,7 +90,6 @@ const Builder = struct {
     }
 
     fn addImportsAll(self: Builder, mod: *std.Build.Module) void {
-        mod.addImport("sphmath", self.sphmath);
         mod.addOptions("config", self.options_all);
 
         mod.addImport("gl", self.gl);

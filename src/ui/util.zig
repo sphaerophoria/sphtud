@@ -1,6 +1,6 @@
 const std = @import("std");
 const gui = @import("../ui.zig");
-const sphmath = @import("sphmath");
+const sphmath = @import("../math.zig");
 const PixelBBox = gui.PixelBBox;
 const PixelSize = gui.PixelSize;
 const MousePos = gui.MousePos;

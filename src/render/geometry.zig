@@ -1,5 +1,5 @@
 const std = @import("std");
-const sphmath = @import("sphmath");
+const sphmath = @import("../math.zig");
 
 pub const CircleSampler = struct {
     idx: usize = 0,
