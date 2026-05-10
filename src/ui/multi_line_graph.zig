@@ -1,6 +1,6 @@
 const sphalloc = @import("sphalloc");
 const sphmath = @import("sphmath");
-const sphrender = @import("sphrender");
+const sphrender = @import("../render.zig");
 const sphutil = @import("sphutil");
 const gl = sphrender.gl;
 const gui = @import("../ui.zig");

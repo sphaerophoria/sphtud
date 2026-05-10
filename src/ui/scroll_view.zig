@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const sphrender = @import("sphrender");
+const sphrender = @import("../render.zig");
 const gui = @import("../ui.zig");
 const Scrollbar = gui.scrollbar.Scrollbar;
 const SquircleRenderer = @import("SquircleRenderer.zig");

@@ -1,3 +1,4 @@
+const process_include_paths = @import("build/process_include_paths.zig");
 const std = @import("std");
 
 const Builder = struct {
@@ -5,11 +6,11 @@ const Builder = struct {
     with_glfw: bool,
     gl_extensions: []const []const u8,
     sphmath: *std.Build.Module,
-    sphrender: *std.Build.Module,
     sphalloc: *std.Build.Module,
     sphutil: *std.Build.Module,
     sphxml: *std.Build.Module,
     sphnet: *std.Build.Module,
+    gl: *std.Build.Module,
     options: *std.Build.Step.Options,
     options_all: *std.Build.Step.Options,
 
@@ -17,7 +18,7 @@ const Builder = struct {
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 
-    fn init(b: *std.Build) Builder {
+    fn init(b: *std.Build) !Builder {
         const with_gl = b.option(bool, "with_gl", "") orelse false;
         const with_glfw = b.option(bool, "with_glfw", "") orelse false;
         const gl_extensions = b.option([]const []const u8, "gl_extensions", "") orelse &.{};
@@ -26,14 +27,44 @@ const Builder = struct {
         const optimize = b.standardOptimizeOption(.{});
 
         const sphmath = b.dependency("sphmath", .{}).module("sphmath");
-        const sphrender = b.dependency("sphrender", .{
-            .gl_extensions = gl_extensions,
-        }).module("sphrender");
-
         const sphalloc = b.dependency("sphalloc", .{}).module("sphalloc");
         const sphutil = b.dependency("sphutil", .{}).module("sphutil");
         const sphxml = b.dependency("sphxml", .{}).module("sphxml");
         const sphnet = b.dependency("sphnet", .{}).module("sphnet");
+
+        const gl_zig = b.addTranslateC(.{
+            .root_source_file = b.path("src/render/gl.h"),
+            .target = target,
+            .optimize = optimize,
+        });
+        var include_it = try process_include_paths.IncludeIter.init(b.allocator, b.graph.io);
+        while (include_it.next()) |p| {
+            gl_zig.addSystemIncludePath(std.Build.LazyPath{ .cwd_relative = p });
+        }
+
+        const loader_gen = b.addExecutable(.{
+            .name = "inject_loader",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("build/inject_loader.zig"),
+                .target = b.graph.host,
+                .optimize = optimize,
+            }),
+        });
+        loader_gen.root_module.addImport("sphxml", sphxml);
+
+        const run_loader_gen = b.addRunArtifact(loader_gen);
+        run_loader_gen.addFileArg(gl_zig.getOutput());
+        const gl_with_loader = run_loader_gen.addOutputFileArg("gl.zig");
+
+        for (gl_extensions) |extension| {
+            run_loader_gen.addArg(extension);
+        }
+
+        const gl = b.createModule(.{
+            .root_source_file = gl_with_loader,
+            .target = target,
+        });
+        gl.linkSystemLibrary("GL", .{});
 
         const options = b.addOptions();
         options.addOption(bool, "export_sphrender", with_gl);
@@ -48,11 +79,11 @@ const Builder = struct {
             .with_glfw = with_glfw,
             .gl_extensions = gl_extensions,
             .sphmath = sphmath,
-            .sphrender = sphrender,
             .sphalloc = sphalloc,
             .sphutil = sphutil,
             .sphxml = sphxml,
             .sphnet = sphnet,
+            .gl = gl,
             .options = options,
             .options_all = options_all,
 
@@ -70,10 +101,6 @@ const Builder = struct {
         mod.addImport("sphnet", self.sphnet);
         mod.addOptions("config", self.options);
 
-        if (self.with_gl) {
-            mod.addImport("sphrender", self.sphrender);
-        }
-
         if (self.with_glfw) {
             mod.linkSystemLibrary("glfw", .{});
             mod.link_libc = true;
@@ -88,7 +115,7 @@ const Builder = struct {
         mod.addImport("sphnet", self.sphnet);
         mod.addOptions("config", self.options_all);
 
-        mod.addImport("sphrender", self.sphrender);
+        mod.addImport("gl", self.gl);
 
         mod.linkSystemLibrary("glfw", .{});
         mod.link_libc = true;
@@ -109,7 +136,7 @@ const Builder = struct {
 };
 
 pub fn build(b: *std.Build) !void {
-    const builder = Builder.init(b);
+    const builder = try Builder.init(b);
 
     const sphtud = b.addModule("sphtud", .{
         .root_source_file = b.path("src/sphtud.zig"),
