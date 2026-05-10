@@ -15,8 +15,8 @@
         .sphrender = .{
             .path = "src/sphrender",
         },
-        .sphutil = .{
-            .path = "src/sphutil",
+        .sphutil_noalloc = .{
+            .path = "src/sphutil_noalloc",
         },
     },
     .paths = .{

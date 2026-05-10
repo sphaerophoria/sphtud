@@ -27,7 +27,7 @@ const Builder = struct {
 
         const sphmath = b.dependency("sphmath", .{}).module("sphmath");
         const sphalloc = b.dependency("sphalloc", .{}).module("sphalloc");
-        const sphutil = b.dependency("sphutil", .{}).module("sphutil");
+        const sphutil = b.dependency("sphutil_noalloc", .{}).module("sphutil_noalloc");
         const sphnet = b.dependency("sphnet", .{}).module("sphnet");
 
         const gl_zig = b.addTranslateC(.{
