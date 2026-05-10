@@ -9,7 +9,7 @@ pub const Scratch = @import("render/Scratch.zig");
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const sphmath = @import("sphmath");
+const sphmath = @import("math.zig");
 const sphalloc = @import("alloc.zig");
 const Sphalloc = sphalloc.Sphalloc;
 

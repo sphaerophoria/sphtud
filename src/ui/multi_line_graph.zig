@@ -1,5 +1,5 @@
 const sphalloc = @import("../alloc.zig");
-const sphmath = @import("sphmath");
+const sphmath = @import("../math.zig");
 const sphrender = @import("../render.zig");
 const sphutil = @import("../util.zig");
 const gl = sphrender.gl;
