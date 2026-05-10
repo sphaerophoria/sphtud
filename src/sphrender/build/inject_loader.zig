@@ -1,6 +1,4 @@
 const std = @import("std");
-const sphalloc = @import("sphalloc");
-const sphutil = @import("sphutil");
 const sphxml = @import("sphxml");
 const XmlParser = sphxml.Parser;
 
@@ -34,16 +32,13 @@ pub const GlXmlParser = struct {
     };
 
     // Do not assume that slices returned by this call will be valid after the next call
-    pub fn step(self: *GlXmlParser, scratch: sphalloc.LinearAllocator) !?ApiItem {
-        const cp = scratch.checkpoint();
-        defer scratch.restore(cp);
-
+    pub fn step(self: *GlXmlParser) !?ApiItem {
         while (true) {
             var discarding_writer = std.Io.Writer.Discarding.init(&.{});
 
             const xml_item = try self.xml_parser.next(&discarding_writer.writer) orelse return null;
             switch (self.state) {
-                .default => try self.doDefault(scratch, xml_item),
+                .default => try self.doDefault( xml_item),
                 .feature => try self.doFeature(xml_item),
                 .feature_require => if (try self.doFeatureRequire(xml_item)) |item| return item,
                 .extension => try self.doExtension(xml_item),
@@ -62,10 +57,7 @@ pub const GlXmlParser = struct {
         };
     }
 
-    fn doDefault(self: *GlXmlParser, scratch: sphalloc.LinearAllocator, xml_item: sphxml.Item) !void {
-        const cp = scratch.checkpoint();
-        defer scratch.restore(cp);
-
+    fn doDefault(self: *GlXmlParser, xml_item: sphxml.Item) !void {
         if (shouldEnter(xml_item, "feature")) {
             var attr_it = xml_item.attributeIt();
 
@@ -182,9 +174,9 @@ fn wantsExtension(desired: []const []const u8, extension: []const u8) bool {
     return false;
 }
 
-fn findDesiredProtos(alloc: std.mem.Allocator, scratch: sphalloc.LinearAllocator, desired_extensions: []const [:0]const u8) ![]const []const u8 {
-    const cp = scratch.checkpoint();
-    defer scratch.restore(cp);
+fn findDesiredProtos(alloc: std.mem.Allocator, desired_extensions: []const [:0]const u8) ![]const []const u8 {
+    var tmp_alloc = std.heap.ArenaAllocator.init(alloc);
+    defer tmp_alloc.deinit();
 
     const gl_xml = @embedFile("gl.xml");
 
@@ -192,14 +184,9 @@ fn findDesiredProtos(alloc: std.mem.Allocator, scratch: sphalloc.LinearAllocator
 
     var gl_xml_parser = GlXmlParser.init(&f_reader);
 
-    var desired_protos = try sphutil.hash_map.StringHashMap(void).init(
-        scratch.allocator(),
-        scratch.expansion(),
-        1000,
-        1000,
-    );
+    var desired_protos = std.hash_map.StringHashMap(void).init(tmp_alloc.allocator());
 
-    while (try gl_xml_parser.step(scratch)) |item| {
+    while (try gl_xml_parser.step()) |item| {
         // Odd case where it's removed then added, so is in the default
         // definitions but also included in later versions
         if (std.mem.eql(u8, item.name, "glGetPointerv")) {
@@ -219,29 +206,29 @@ fn findDesiredProtos(alloc: std.mem.Allocator, scratch: sphalloc.LinearAllocator
                 // These will eventually go out to the caller, put them on the
                 // output alloc
                 const name = try alloc.dupe(u8, item.name);
-                gop.key.* = name;
+                gop.key_ptr.* = name;
             }
         }
     }
 
-    var ret = try sphutil.RuntimeBoundedArray([]const u8).init(alloc, desired_protos.len);
+    const ret_buf = try alloc.alloc([]const u8, desired_protos.count());
+    var ret = std.ArrayList([]const u8).initBuffer(ret_buf);
 
-    var it = desired_protos.iter();
+    var it = desired_protos.iterator();
     while (it.next()) |item| {
-        ret.append(item.key.*) catch unreachable;
+        ret.appendBounded(item.key_ptr.*) catch unreachable;
     }
 
     return ret.items;
 }
 
 pub fn main(init: std.process.Init.Minimal) !void {
-    var alloc_buf: [1 * 1024 * 1024]u8 = undefined;
-    var alloc = sphalloc.BufAllocator.init(&alloc_buf);
+    const gpa = std.heap.smp_allocator;
 
     var io_impl = std.Io.Threaded.init_single_threaded;
     const io = io_impl.io();
 
-    const args = try init.args.toSlice(alloc.allocator());
+    const args = try init.args.toSlice(gpa);
 
     const translated_gl_path = args[1];
     const output_path = args[2];
@@ -257,9 +244,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
         const input_f = try std.Io.Dir.cwd().openFile(io, translated_gl_path, .{});
         defer input_f.close(io);
 
-        const cp = alloc.checkpoint();
-        defer alloc.restore(cp);
-
         var input_buf: [4096]u8 = undefined;
         var f_reader = input_f.reader(io, &input_buf);
 
@@ -268,13 +252,12 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     const desired_extensions = if (args.len > 3) args[3..] else &.{};
 
-    const desired_protos = try findDesiredProtos(alloc.allocator(), alloc.backLinear(), desired_extensions);
+    const desired_protos = try findDesiredProtos(gpa, desired_extensions);
 
     for (desired_protos) |proto| {
-        const cp = alloc.linear().checkpoint();
-        defer alloc.linear().restore(cp);
+        const upper_proto = try gpa.alloc(u8, proto.len);
+        defer gpa.free(upper_proto);
 
-        const upper_proto = try alloc.allocator().alloc(u8, proto.len);
         _ = std.ascii.upperString(upper_proto, proto);
         try stdout.print("pub var {s}: @typeInfo(PFN{s}PROC).optional.child = undefined;\n", .{ proto, upper_proto });
     }
