@@ -1,6 +1,6 @@
 const std = @import("std");
 const DnsService = @import("DnsService.zig");
-const sphutil = @import("sphutil");
+const sphutil = @import("../util.zig");
 const sphio = @import("../io.zig");
 const system = std.os.linux;
 

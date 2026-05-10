@@ -1,5 +1,5 @@
 const std = @import("std");
-const sphutil = @import("sphutil_noalloc.zig");
+const sphutil = @import("../util.zig");
 const ExpansionAlloc = sphutil.ExpansionAlloc;
 
 pub fn AutoHashMap(comptime K: type, comptime V: type) type {

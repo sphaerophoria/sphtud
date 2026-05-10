@@ -1,6 +1,6 @@
 const std = @import("std");
 const sphalloc = @import("../alloc.zig");
-const sphutil = @import("sphutil");
+const sphutil = @import("../util.zig");
 const gui = @import("../ui.zig");
 
 pub const Shared = struct {

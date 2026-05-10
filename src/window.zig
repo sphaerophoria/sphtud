@@ -2,7 +2,7 @@ const std = @import("std");
 const glfwb = @cImport({
     @cInclude("GLFW/glfw3.h");
 });
-const sphutil = @import("sphutil");
+const sphutil = @import("util.zig");
 const sphwindow_events = @import("window_events.zig");
 
 pub const Window = struct {

@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 const buddy_impl = @import("alloc/buddy_impl.zig");
-const sphutil = @import("sphutil");
+const sphutil = @import("util.zig");
 
 pub const MemoryTracker = @import("alloc/MemoryTracker.zig");
 

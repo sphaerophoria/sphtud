@@ -1,5 +1,5 @@
 const std = @import("std");
-const sphutil = @import("sphutil");
+const sphutil = @import("../util.zig");
 const Allocator = std.mem.Allocator;
 const gui = @import("../ui.zig");
 const Scrollbar = gui.scrollbar.Scrollbar;
