@@ -9,7 +9,7 @@ pub const text = if (config.export_sphrender) @import("text.zig") else void;
 pub const render = if (config.export_sphrender) @import("render.zig") else void;
 pub const ui = if (config.export_sphrender) @import("ui.zig") else void;
 pub const window = if (config.export_sphwindow) @import("window.zig") else void;
-pub const xml = @import("sphxml");
+pub const xml = @import("xml.zig");
 pub const img = @import("img.zig");
 pub const io = @import("io.zig");
 

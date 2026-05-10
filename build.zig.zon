@@ -18,9 +18,6 @@
         .sphutil = .{
             .path = "src/sphutil",
         },
-        .sphxml = .{
-            .path = "src/sphxml",
-        },
     },
     .paths = .{
         "src",
