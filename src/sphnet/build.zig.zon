@@ -1,9 +1,0 @@
-.{
-    .name = .sphnet,
-    .version = "0.0.1",
-    .minimum_zig_version = "0.15.0",
-    .paths = .{
-        "sphnet.zig",
-    },
-    .fingerprint = 0x369f2d02c5a8b145,
-}

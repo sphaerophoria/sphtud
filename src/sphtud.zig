@@ -2,7 +2,6 @@ const config = @import("config");
 
 pub const alloc = @import("alloc.zig");
 pub const math = @import("sphmath");
-pub const net = @import("sphnet");
 pub const util = @import("sphutil");
 pub const http = @import("http.zig");
 pub const text = if (config.export_sphrender) @import("text.zig") else void;
