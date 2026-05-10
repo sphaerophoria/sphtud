@@ -1,6 +1,6 @@
 const std = @import("std");
 const rsl = @import("runtime_segmented_list.zig");
-const sphutil = @import("sphutil_noalloc.zig");
+const sphutil = @import("../util.zig");
 const ExpansionAlloc = sphutil.ExpansionAlloc;
 const bit_set = @import("bit_set.zig");
 

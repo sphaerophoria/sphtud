@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const RuntimeBoundedArray = @import("runtime_bounded_array.zig").RuntimeBoundedArray;
-const ExpansionAlloc = @import("sphutil_noalloc.zig").ExpansionAlloc;
+const ExpansionAlloc = @import("../util.zig").ExpansionAlloc;
 const options = @import("options");
 
 /// Very similar in concept to standard library SegmentedList with a few

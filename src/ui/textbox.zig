@@ -13,7 +13,7 @@ const Color = gui.Color;
 const sphtext = @import("../text.zig");
 const TextRenderer = sphtext.TextRenderer;
 const SquircleRenderer = @import("SquircleRenderer.zig");
-const sphutil = @import("sphutil");
+const sphutil = @import("../util.zig");
 
 pub const TextboxStyle = struct {
     background_color: Color,
