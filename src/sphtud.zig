@@ -1,6 +1,6 @@
 const config = @import("config");
 
-pub const alloc = @import("sphalloc");
+pub const alloc = @import("alloc.zig");
 pub const math = @import("sphmath");
 pub const net = @import("sphnet");
 pub const util = @import("sphutil");

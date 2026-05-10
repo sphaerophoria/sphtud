@@ -1,8 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const sphalloc = @import("sphalloc.zig");
+const sphalloc = @import("../alloc.zig");
 const Sphalloc = sphalloc.Sphalloc;
-const sphutil = @import("sphutil_noalloc");
+const sphutil = @import("sphutil");
 const CircularBuffer = sphutil.CircularBuffer;
 
 root: *Sphalloc,

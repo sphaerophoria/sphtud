@@ -1,6 +1,6 @@
 const std = @import("std");
 const gl = @import("gl");
-const sphalloc = @import("sphalloc");
+const sphalloc = @import("../alloc.zig");
 const sphutil = @import("sphutil");
 const RuntimeSegmentedList = sphutil.RuntimeSegmentedList;
 const Sphalloc = sphalloc.Sphalloc;

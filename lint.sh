@@ -12,9 +12,5 @@ pushd src/sphutil_noalloc/
 zig build test
 popd
 
-pushd src/sphalloc/
-zig build test
-popd
-
 zig build
 ./zig-out/bin/sphtud_test

@@ -1,10 +1,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
-const buddy_impl = @import("buddy_impl.zig");
-const sphutil = @import("sphutil_noalloc");
+const buddy_impl = @import("alloc/buddy_impl.zig");
+const sphutil = @import("sphutil");
 
-pub const MemoryTracker = @import("MemoryTracker.zig");
+pub const MemoryTracker = @import("alloc/MemoryTracker.zig");
 
 const Block = []u8;
 
