@@ -11,6 +11,7 @@ pub const window = if (config.export_sphwindow) @import("window.zig") else void;
 pub const xml = @import("xml.zig");
 pub const img = @import("img.zig");
 pub const io = @import("io.zig");
+pub const strong_dyn = @import("strong_dyn.zig");
 
 test {
     const std = @import("std");

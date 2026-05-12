@@ -1,6 +1,19 @@
 const process_include_paths = @import("build/process_include_paths.zig");
 const std = @import("std");
 
+pub fn mkStrongDyn(b: *std.Build, sphtud_dep: *std.Build.Dependency, bindings: *std.Build.Module, fn_list: []const u8) *std.Build.Module {
+    const exe = sphtud_dep.artifact("gen_strongdl");
+    const run_mkstrong = b.addRunArtifact(exe);
+    run_mkstrong.addFileArg(b.path(fn_list));
+    const path = run_mkstrong.addOutputFileArg("lib.zig");
+
+    const mod = b.createModule(.{
+        .root_source_file = path,
+    });
+    mod.addImport("bindings", bindings);
+    return mod;
+}
+
 const Builder = struct {
     is_dep: bool,
     with_gl: bool,
@@ -158,4 +171,13 @@ pub fn build(b: *std.Build) !void {
         builder.addExample("http_client_example", "src/examples/http_client_example.zig", sphtud_all);
         builder.addExample("http_server_example", "src/examples/http_server_example.zig", sphtud_all);
     }
+
+    const gen_strongdl = b.addExecutable(.{
+        .name = "gen_strongdl",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("build/gen_strongdl.zig"),
+            .target = b.graph.host,
+        }),
+    });
+    b.installArtifact(gen_strongdl);
 }
