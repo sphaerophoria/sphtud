@@ -11,7 +11,7 @@ dns_service: *sphio.DnsService,
 expansion_alloc: sphutil.ExpansionAlloc,
 pool: sphutil.ObjectPool(Connection, usize),
 loop: *sphio.Loop,
-dns_update_start: usize,
+service_start_id: usize,
 
 const num_concurrent = 8;
 // Hardcode for now, there's probably some sane maximum like
@@ -29,7 +29,7 @@ pub fn init(arena: std.mem.Allocator, expansion: sphutil.ExpansionAlloc, dns_ser
             max_connections,
         ),
         .loop = loop,
-        .dns_update_start = ids.dns_update.start,
+        .service_start_id = ids.total.start,
     };
 }
 
@@ -45,6 +45,11 @@ pub const Ids = struct {
             .connection_update = alloc.allocMany(max_connections * num_concurrent),
             .total = start.range(),
         };
+    }
+
+    fn initFromStartId(id: usize) Ids {
+        var alloc = sphio.IdAlloc{ .idx = id };
+        return Ids.init(&alloc);
     }
 
     pub fn contians(self: Ids, id: usize) bool {
@@ -64,11 +69,12 @@ pub fn spawn(self: *TcpSpawner, host: []const u8, port: u16, on_completed: usize
     const connection = try self.pool.acquire(self.expansion_alloc);
     errdefer self.pool.release(self.expansion_alloc, connection.handle);
 
+    const ids = Ids.initFromStartId(self.service_start_id);
     connection.val.* = .{
         .result = null,
         .connections = @splat(-1),
         .port = port,
-        .query = try self.dns_service.makeQuery(host, self.dns_update_start + connection.handle),
+        .query = try self.dns_service.makeQuery(host, ids.dns_update.start + connection.handle),
         .on_connected = on_completed,
     };
 
@@ -84,6 +90,14 @@ pub fn finish(self: *TcpSpawner, handle: SpawnHandle) !std.posix.fd_t {
     const res = connection.result orelse return error.NotFinished;
     connection.deinit(self.dns_service);
     self.pool.release(self.expansion_alloc, handle.inner);
+
+    const ids = Ids.initFromStartId(self.service_start_id);
+
+    self.loop.clearEvents(ids.dns_update.start + handle.inner);
+    for (0..num_concurrent) |i| {
+        self.loop.clearEvents(ids.connectionId(handle.inner, @intCast(i)));
+    }
+
     return res;
 }
 

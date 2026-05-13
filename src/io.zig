@@ -6,6 +6,8 @@ pub const DnsService = @import("io/DnsService.zig");
 pub const TcpSpawner = @import("io/TcpSpawner.zig");
 pub const TimerService = @import("io/TimerService.zig");
 
+const invalid_id = std.math.maxInt(usize);
+
 pub const Reader = struct {
     fd: std.posix.fd_t,
     interface: std.Io.Reader,
@@ -570,10 +572,27 @@ pub const Loop = struct {
     };
 
     pub fn register(self: *Self, reg: Registration) !void {
+        if (reg.id == invalid_id) return error.InvalidEvent;
+
         var event = makeEvent(reg.id, reg.read, reg.write);
         switch (std.posix.errno(std.posix.system.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_ADD, reg.handle, &event))) {
             .SUCCESS => {},
             else => |err| return std.posix.unexpectedErrno(err),
+        }
+    }
+
+    pub fn clearEvents(self: *Self, id: usize) void {
+        var it = self.immediate_events.iter();
+        while (it.nextPtr()) |val| {
+            if (val.* == id) {
+                val.* = invalid_id;
+            }
+        }
+
+        for (self.buffered_events[self.event_cursor..self.num_events]) |*val| {
+            if (val.data.ptr == id) {
+                val.data.ptr = invalid_id;
+            }
         }
     }
 
@@ -582,11 +601,16 @@ pub const Loop = struct {
     }
 
     pub fn pushEvent(self: *Self, event: usize) !void {
+        if (event == invalid_id) return error.InvalidEvent;
+
         try self.immediate_events.pushNoClobber(event);
     }
 
     pub fn poll(self: *Self, timeout: i32) !?usize {
-        if (self.immediate_events.pop()) |ev| return ev;
+        while (self.immediate_events.pop()) |ev| {
+            if (ev == invalid_id) continue;
+            return ev;
+        }
 
         if (self.event_cursor >= self.num_events) {
             self.num_events = try epoll_wait(self.fd, &self.buffered_events, self.buffered_events.len, timeout);
@@ -595,9 +619,12 @@ pub const Loop = struct {
             if (self.num_events == 0) return null;
         }
 
-        const event = self.buffered_events[self.event_cursor];
-        self.event_cursor += 1;
-        return event.data.ptr;
+        while (true) {
+            const event = self.buffered_events[self.event_cursor];
+            self.event_cursor += 1;
+            if (event.data.ptr == invalid_id) continue;
+            return event.data.ptr;
+        }
     }
 
     fn makeEvent(

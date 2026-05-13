@@ -117,6 +117,7 @@ pub fn release(self: *Self, handle: Impl.QueryHandle) void {
         }
     }
 
+    self.loop.clearEvents(self.timeout_id_start + handle.id);
     self.impl.release(handle);
 }
 

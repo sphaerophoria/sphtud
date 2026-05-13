@@ -37,12 +37,17 @@ pub fn CircularBuffer(comptime T: type) type {
             idx: usize,
 
             pub fn next(self: *Iterator) ?T {
+                const ret = self.nextPtr() orelse return null;
+                return ret.*;
+            }
+
+            pub fn nextPtr(self: *Iterator) ?*T {
                 if (self.idx >= self.buf.head) {
                     return null;
                 }
                 defer self.idx += 1;
 
-                return self.buf.items[self.idx % self.buf.items.len];
+                return &self.buf.items[self.idx % self.buf.items.len];
             }
         };
 
