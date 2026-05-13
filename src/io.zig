@@ -1,6 +1,6 @@
 const std = @import("std");
 const sphtud = @import("sphtud.zig");
-const system = std.os.linux;
+pub const system = std.os.linux;
 
 pub const DnsService = @import("io/DnsService.zig");
 pub const TcpSpawner = @import("io/TcpSpawner.zig");
@@ -453,6 +453,17 @@ pub fn clock_gettime(clk_id: system.clockid_t) !std.Io.Timestamp {
             };
         },
         else => return error.ClockGetTime,
+    }
+}
+
+pub fn getrandom(buf: []u8) !void {
+    while (true) {
+        const rc = system.getrandom(buf.ptr, buf.len, 0);
+        switch (system.errno(rc)) {
+            .SUCCESS => return,
+            .INTR => continue,
+            else => return error.GetRandom,
+        }
     }
 }
 
