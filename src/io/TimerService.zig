@@ -1,21 +1,26 @@
 const std = @import("std");
 const sphio = @import("../io.zig");
+const sphtud = @import("../sphtud.zig");
 
 fd: std.posix.fd_t,
 gpa: std.mem.Allocator,
-queue: std.PriorityQueue(Elem, void, Elem.compare),
+queue: std.PriorityQueue(TimerHandle, *Pool, orderElem),
+pool: Pool,
 next_id: u64,
+
+const Pool = sphtud.util.ObjectPool(Elem, TimerHandle);
 
 const Elem = struct {
     timestamp: std.Io.Timestamp,
     id: u64,
     callback: usize,
-
-    fn compare(_: void, a: Elem, b: Elem) std.math.Order {
-        return std.math.order(a.timestamp.toNanoseconds(), b.timestamp.toNanoseconds());
-    }
 };
 
+fn orderElem(pool: *Pool, a_handle: TimerHandle, b_handle: TimerHandle) std.math.Order {
+    const a = pool.get(a_handle);
+    const b = pool.get(b_handle);
+    return std.math.order(a.timestamp.toNanoseconds(), b.timestamp.toNanoseconds());
+}
 // One list of times, register the next timeout
 
 const TimerService = @This();
@@ -35,6 +40,12 @@ pub fn init(gpa: std.mem.Allocator, loop: *sphio.Loop, service_id: usize) !Timer
 
     return .{
         .fd = fd,
+        .pool = try .init(
+            gpa,
+            .general(gpa),
+            16,
+            1024, // FIXME: max timers
+        ),
         .gpa = gpa,
         .queue = .empty,
         .next_id = 0,
@@ -43,9 +54,34 @@ pub fn init(gpa: std.mem.Allocator, loop: *sphio.Loop, service_id: usize) !Timer
 
 pub const TimerHandle = struct {
     id: u64,
+
+    pub fn toIdx(self: TimerHandle) usize {
+        return self.id;
+    }
+
+    pub fn fromIdx(idx: usize) TimerHandle {
+        return .{ .id = idx };
+    }
 };
 
 pub fn add(self: *TimerService, timeout: std.Io.Duration, callback: usize) !TimerHandle {
+    const timer = try self.pool.acquire(.general(self.gpa));
+    errdefer self.pool.release(.general(self.gpa), timer.handle);
+
+    timer.val.* = .{
+        // This will be set by the upcoming rearm
+        .timestamp = .zero,
+        .id = self.next_id,
+        .callback = callback,
+    };
+    self.next_id +%= 1;
+
+    try self.rearm(timer.handle, timeout);
+
+    return timer.handle;
+}
+
+pub fn rearm(self: *TimerService, id: TimerHandle, timeout: std.Io.Duration) !void {
     // add() is expected to be called willy nilly from the rest of the system.
     // If clock_gettime was expensive, we might consider pre-fetching the time
     // and storing it as a member of TimerService to avoid the syscall. HOWEVER
@@ -55,28 +91,22 @@ pub fn add(self: *TimerService, timeout: std.Io.Duration, callback: usize) !Time
     //
     // Screw it, we check every time
     const now = try sphio.clock_gettime(time_source);
+    const timer = self.pool.get(id);
 
-    const timestamp = now.addDuration(timeout);
+    timer.timestamp = now.addDuration(timeout);
 
-    if (self.queue.peek()) |prev_min| {
-        if (timestamp.toNanoseconds() < prev_min.timestamp.toNanoseconds()) {
-            try sphio.timerfd_settime(self.fd, timestamp);
-        }
-    } else {
-        try sphio.timerfd_settime(self.fd, timestamp);
+    if (self.timestampIsSoonest(timer.timestamp)) {
+        try sphio.timerfd_settime(self.fd, timer.timestamp);
     }
 
-    defer self.next_id +%= 1;
+    try self.queue.push(self.gpa, id);
+}
 
-    try self.queue.push(self.gpa, .{
-        .timestamp = timestamp,
-        .id = self.next_id,
-        .callback = callback,
-    });
+fn timestampIsSoonest(self: *TimerService, timestamp: std.Io.Timestamp) bool {
+    const prev_min_handle = self.queue.peek() orelse return true;
 
-    return .{
-        .id = self.next_id,
-    };
+    const prev_min = self.pool.get(prev_min_handle);
+    return timestamp.toNanoseconds() < prev_min.timestamp.toNanoseconds();
 }
 
 pub fn remove(self: *TimerService, id: TimerHandle) void {
@@ -87,18 +117,22 @@ pub fn remove(self: *TimerService, id: TimerHandle) void {
         defer idx += 1;
         if (elem.id == id.id) {
             _ = self.queue.popIndex(idx);
-            return;
+            break;
         }
     }
+
+    self.pool.release(.general(self.gpa), id);
 }
 
 pub fn service(self: *TimerService, loop: *sphio.Loop) !void {
     const now = try sphio.clock_gettime(time_source);
 
-    const next = self.queue.peek() orelse {
+    const next_handle = self.queue.peek() orelse {
         try self.clearTimer();
         return;
     };
+
+    const next = self.pool.get(next_handle);
 
     if (next.timestamp.toNanoseconds() < now.toNanoseconds()) {
         _ = self.queue.pop();
