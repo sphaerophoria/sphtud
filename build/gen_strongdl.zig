@@ -24,11 +24,38 @@ pub fn main(init: std.process.Init) !void {
         \\
     );
 
-    var it = std.mem.splitScalar(u8, fn_list, '\n');
-    while (it.next()) |name| {
-        if (name.len == 0) continue;
-        try w.print("{0s}: *const @TypeOf(bindings.{0s}),\n", .{name});
+    {
+        var it = std.mem.splitScalar(u8, fn_list, '\n');
+        while (it.next()) |name| {
+            if (name.len == 0) continue;
+            try w.print("{0s}: *const @TypeOf(bindings.{0s}),\n", .{name});
+        }
     }
+
+    try w.writeAll(
+        \\
+        \\//StrongDl uses function pointers to the the types of functions that
+        \\//are not defined. Zig's debug info needs these functions to be
+        \\//defined or else linking fails
+        \\//
+        \\//Define every function we are strongdling as an int just to appease
+        \\//the linker
+        \\pub const strongdl_export = struct {
+    );
+
+    {
+        var it = std.mem.splitScalar(u8, fn_list, '\n');
+        while (it.next()) |name| {
+            if (name.len == 0) continue;
+            try w.print("    pub export var {0s}: c_int = 0;\n", .{name});
+        }
+    }
+
+    try w.writeAll(
+        \\};
+        \\
+        \\ comptime { _ = strongdl_export; }
+    );
 
     try w.flush();
 }
