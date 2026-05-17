@@ -32,6 +32,7 @@ const Builder = struct {
         const with_gl = b.option(bool, "with_gl", "") orelse !is_dep;
         const with_glfw = b.option(bool, "with_glfw", "") orelse !is_dep;
         const gl_extensions = b.option([]const []const u8, "gl_extensions", "") orelse &.{};
+        const unique = b.option([]const u8, "unique", "Unique string for importer to avoid cache collisions");
 
         const target = b.standardTargetOptions(.{});
         const optimize = b.standardOptimizeOption(.{});
@@ -79,6 +80,10 @@ const Builder = struct {
         const options = b.addOptions();
         options.addOption(bool, "export_sphrender", with_gl);
         options.addOption(bool, "export_sphwindow", with_glfw);
+
+        if (unique) |s| {
+            options.addOption(void, s, {});
+        }
 
         const options_all = b.addOptions();
         options_all.addOption(bool, "export_sphrender", true);
