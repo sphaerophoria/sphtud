@@ -9,8 +9,10 @@
     },
     .paths = .{
         "src",
+        "build",
         "build.zig",
         "build.zig.zon",
+        "ttf",
     },
     .fingerprint = 0x705b099196c93755,
 }
