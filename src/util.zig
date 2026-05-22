@@ -7,6 +7,7 @@ pub const hash_map = @import("util/hash_map.zig");
 pub const object_pool = @import("util/object_pool.zig");
 pub const bit_set = @import("util/bit_set.zig");
 pub const linear_map = @import("util/linear_map.zig");
+pub const binary_heap = @import("util/binary_heap.zig");
 
 pub const RuntimeSegmentedList = runtime_segmented_list.RuntimeSegmentedList;
 pub const RuntimeSegmentedListUnmanaged = runtime_segmented_list.RuntimeSegmentedListUnmanaged;
@@ -23,6 +24,8 @@ pub const BitSet = bit_set.BitSet;
 pub const IoPipe = @import("util/io_pipe.zig").Pipe;
 
 pub const ExpansionAlloc = @import("util/ExpansionAlloc.zig");
+
+pub const BinaryHeap = binary_heap.BinaryHeap;
 
 test {
     std.testing.refAllDecls(@This());

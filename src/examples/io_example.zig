@@ -34,7 +34,7 @@ pub fn main() !void {
     var chain_buf: [256]usize = undefined;
     var loop = try sphtud.io.Loop.init(&chain_buf);
 
-    var timer = try sphtud.io.TimerService.init(alloc.general(), &loop, ids.timer_service);
+    var timer = try sphtud.io.TimerService.init(alloc.arena(), alloc.expansion(), &loop, ids.timer_service);
     _ = try timer.add(.fromSeconds(1), ids.counter);
 
     var dns_service = try sphtud.io.DnsService.init(&alloc, &loop, &timer, ids.dns_service);

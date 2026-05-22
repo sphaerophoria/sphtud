@@ -3,8 +3,8 @@ const sphio = @import("../io.zig");
 const sphtud = @import("../sphtud.zig");
 
 fd: std.posix.fd_t,
-gpa: std.mem.Allocator,
-queue: std.PriorityQueue(TimerHandle, *Pool, orderElem),
+expansion: sphtud.util.ExpansionAlloc,
+queue: sphtud.util.BinaryHeap(TimerHandle),
 pool: Pool,
 next_id: u64,
 
@@ -16,19 +16,26 @@ const Elem = struct {
     callback: usize,
 };
 
-fn orderElem(pool: *Pool, a_handle: TimerHandle, b_handle: TimerHandle) std.math.Order {
-    const a = pool.get(a_handle);
-    const b = pool.get(b_handle);
-    return std.math.order(a.timestamp.toNanoseconds(), b.timestamp.toNanoseconds());
-}
-// One list of times, register the next timeout
+const QueueCtx = struct {
+    pool: *Pool,
+
+    pub fn compare(self: QueueCtx, a_handle: TimerHandle, b_handle: TimerHandle) sphtud.util.binary_heap.Order {
+        const a = self.pool.get(a_handle);
+        const b = self.pool.get(b_handle);
+        return switch (std.math.order(a.timestamp.toNanoseconds(), b.timestamp.toNanoseconds())) {
+            .lt => .earlier,
+            .gt => .later,
+            .eq => .same,
+        };
+    }
+};
 
 const TimerService = @This();
 
 const timerfd_time_source: std.posix.system.timerfd_clockid_t = .BOOTTIME;
 const time_source: std.posix.system.clockid_t = .BOOTTIME;
 
-pub fn init(gpa: std.mem.Allocator, loop: *sphio.Loop, service_id: usize) !TimerService {
+pub fn init(arena: std.mem.Allocator, expansion: sphtud.util.ExpansionAlloc, loop: *sphio.Loop, service_id: usize) !TimerService {
     const fd = try sphio.timerfd_create(timerfd_time_source);
 
     try loop.register(.{
@@ -41,13 +48,18 @@ pub fn init(gpa: std.mem.Allocator, loop: *sphio.Loop, service_id: usize) !Timer
     return .{
         .fd = fd,
         .pool = try .init(
-            gpa,
-            .general(gpa),
+            arena,
+            expansion,
             16,
             1024,
         ),
-        .gpa = gpa,
-        .queue = .empty,
+        .expansion = expansion,
+        .queue = try .init(
+            arena,
+            expansion,
+            16,
+            1024,
+        ),
         .next_id = 0,
     };
 }
@@ -65,8 +77,8 @@ pub const TimerHandle = struct {
 };
 
 pub fn add(self: *TimerService, timeout: std.Io.Duration, callback: usize) !TimerHandle {
-    const timer = try self.pool.acquire(.general(self.gpa));
-    errdefer self.pool.release(.general(self.gpa), timer.handle);
+    const timer = try self.pool.acquire(self.expansion);
+    errdefer self.pool.release(self.expansion, timer.handle);
 
     timer.val.* = .{
         // This will be set by the upcoming rearm
@@ -99,7 +111,13 @@ pub fn rearm(self: *TimerService, id: TimerHandle, timeout: std.Io.Duration) !vo
         try sphio.timerfd_settime(self.fd, timer.timestamp);
     }
 
-    try self.queue.push(self.gpa, id);
+    try self.queue.push(self.expansion, self.queueCtx(), id);
+}
+
+fn queueCtx(self: *TimerService) QueueCtx {
+    return .{
+        .pool = &self.pool,
+    };
 }
 
 fn timestampIsSoonest(self: *TimerService, timestamp: std.Io.Timestamp) bool {
@@ -110,18 +128,19 @@ fn timestampIsSoonest(self: *TimerService, timestamp: std.Io.Timestamp) bool {
 }
 
 pub fn remove(self: *TimerService, id: TimerHandle) void {
-    var it = self.queue.iterator();
+    var it = self.queue.iter();
     var idx: usize = 0;
 
+    const queue_ctx = self.queueCtx();
     while (it.next()) |elem| {
         defer idx += 1;
         if (elem.id == id.id) {
-            _ = self.queue.popIndex(idx);
+            _ = self.queue.popIdx(self.expansion, queue_ctx, idx);
             break;
         }
     }
 
-    self.pool.release(.general(self.gpa), id);
+    self.pool.release(self.expansion, id);
 }
 
 pub fn service(self: *TimerService, loop: *sphio.Loop) !void {
@@ -135,7 +154,7 @@ pub fn service(self: *TimerService, loop: *sphio.Loop) !void {
     const next = self.pool.get(next_handle);
 
     if (next.timestamp.toNanoseconds() < now.toNanoseconds()) {
-        _ = self.queue.pop();
+        _ = self.queue.pop(self.expansion, self.queueCtx());
         try loop.pushEvent(next.callback);
     }
 
