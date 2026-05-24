@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub fn CircularBuffer(comptime T: type) type {
     return struct {
         items: []T,
@@ -26,6 +28,20 @@ pub fn CircularBuffer(comptime T: type) type {
 
             self.items[self.head % self.items.len] = val;
             self.head += 1;
+        }
+
+        pub fn writePastHead(self: *Self, distance: usize, val: T) !void {
+            if (self.items.len - self.count() < distance) {
+                return error.OutOfMemory;
+            }
+
+            const write_pos = (self.head + distance) % self.items.len;
+            self.items[write_pos] = val;
+        }
+
+        pub fn markWritten(self: *Self, amount: usize) void {
+            std.debug.assert(amount < self.items.len);
+            self.head += amount;
         }
 
         pub fn count(self: Self) usize {
@@ -77,7 +93,6 @@ pub fn CircularBuffer(comptime T: type) type {
 }
 
 test "CircularBuffer" {
-    const std = @import("std");
     var buf: [3]i32 = undefined;
 
     var circular_buf = CircularBuffer(i32){ .items = &buf };
