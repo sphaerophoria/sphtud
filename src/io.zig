@@ -169,7 +169,7 @@ const WritevBuilder = struct {
 pub fn fcntl(fd: std.posix.fd_t, op: c_int, param: c_int) !c_int {
     while (true) {
         const rc = system.fcntl(fd, op, @as(u32, @bitCast(param)));
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
             else => |err| {
@@ -181,10 +181,10 @@ pub fn fcntl(fd: std.posix.fd_t, op: c_int, param: c_int) !c_int {
 
 pub fn getsockopt(fd: i32, level: i32, optname: u32, noalias optval: [*]u8, noalias optlen: *system.socklen_t) !void {
     const rc = system.getsockopt(fd, level, optname, optval, optlen);
-    switch (std.posix.errno(rc)) {
+    switch (system.errno(rc)) {
         .SUCCESS => return,
         else => {
-            std.log.err("sockopt  on {x} failed with {any}\n", .{ fd, std.posix.errno(rc) });
+            std.log.err("sockopt  on {x} failed with {any}\n", .{ fd, system.errno(rc) });
             return error.GetSockOpt;
         },
     }
@@ -193,7 +193,7 @@ pub fn getsockopt(fd: i32, level: i32, optname: u32, noalias optval: [*]u8, noal
 pub fn socket(domain: u32, typ: u32, proto: u32) !std.posix.fd_t {
     while (true) {
         const rc = system.socket(domain, typ | system.SOCK.NONBLOCK | system.SOCK.CLOEXEC, proto);
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
             else => return error.Socket,
@@ -206,7 +206,7 @@ pub fn bind(sockfd: c_int, addr: std.Io.net.IpAddress) !void {
     const addr_len = std.Io.Threaded.addressToPosix(&addr, &posix_addr);
     while (true) {
         const rc = system.bind(sockfd, &posix_addr.any, addr_len);
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return,
             .INTR => continue,
             else => return error.Bind,
@@ -220,7 +220,7 @@ pub fn connect(sockfd: c_int, addr: std.Io.net.IpAddress) !bool {
 
     while (true) {
         const rc = system.connect(sockfd, &posix_addr.any, addr_len);
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return true,
             .INTR => continue,
             .INPROGRESS => return false,
@@ -234,7 +234,7 @@ pub fn connect(sockfd: c_int, addr: std.Io.net.IpAddress) !bool {
 pub fn listen(sockfd: c_int, backlog: u32) !void {
     while (true) {
         const rc = system.listen(sockfd, backlog);
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return,
             .INTR => continue,
             else => return error.Listen,
@@ -261,7 +261,7 @@ pub fn setsockopt(fd: std.posix.fd_t, level: i32, opt_name: u32, option: u32) !v
     const o: []const u8 = @ptrCast(&option);
     while (true) {
         const rc = system.setsockopt(fd, level, opt_name, o.ptr, @intCast(o.len));
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return,
             .INTR => continue,
             else => return error.SetSockOpt,
@@ -273,7 +273,7 @@ pub fn accept(fd: std.posix.fd_t) !std.posix.fd_t {
     const SOCK = system.SOCK;
     while (true) {
         const rc = system.accept4(fd, null, null, SOCK.CLOEXEC | SOCK.NONBLOCK);
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
             .AGAIN => return error.WouldBlock,
@@ -295,7 +295,7 @@ pub fn write(buf: []const u8, fd: std.posix.fd_t) !usize {
         const buf_ptr: ?[*]const u8 = if (buf.len == 0) null else buf.ptr;
         const rc = system.syscall3(.write, @bitCast(@as(isize, fd)), @intFromPtr(buf_ptr), buf.len);
 
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => break @intCast(rc),
             .INTR => continue,
             .AGAIN => return error.WouldBlock,
@@ -310,7 +310,7 @@ pub fn write(buf: []const u8, fd: std.posix.fd_t) !usize {
 pub fn pwritev2(fd: i32, iov: []const std.posix.iovec_const, offset: i64, flags: system.kernel_rwf) !usize {
     while (true) {
         const rc = system.pwritev2(fd, iov.ptr, iov.len, offset, flags);
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
             else => return error.WriteFailed,
@@ -332,7 +332,7 @@ pub fn close(fd: std.posix.fd_t) void {
 pub fn read(fd: std.posix.fd_t, buf: []u8) !usize {
     while (true) {
         const rc = system.read(fd, buf.ptr, buf.len);
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
             .AGAIN => return error.WouldBlock,
@@ -353,7 +353,7 @@ pub fn read(fd: std.posix.fd_t, buf: []u8) !usize {
 
 pub fn open(path: [:0]const u8, flags: system.O, perm: system.mode_t) !std.posix.fd_t {
     const rc = system.open(path.ptr, flags, perm);
-    switch (std.posix.errno(rc)) {
+    switch (system.errno(rc)) {
         .SUCCESS => return @intCast(rc),
         else => return error.Open,
     }
@@ -363,7 +363,7 @@ pub fn eventfd() !std.posix.fd_t {
     while (true) {
         const EFD = system.EFD;
         const rc = system.eventfd(0, EFD.CLOEXEC | EFD.NONBLOCK);
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
             else => return error.EventFd,
@@ -372,8 +372,8 @@ pub fn eventfd() !std.posix.fd_t {
 }
 
 pub fn epoll_create1() !std.posix.fd_t {
-    const rc = std.posix.system.epoll_create1(0);
-    const fd = switch (std.posix.errno(rc)) {
+    const rc = system.epoll_create1(0);
+    const fd = switch (system.errno(rc)) {
         .SUCCESS => rc,
         else => return error.EpollCreate,
     };
@@ -381,8 +381,8 @@ pub fn epoll_create1() !std.posix.fd_t {
 }
 
 pub fn epoll_ctl(epoll_fd: i32, op: u32, fd: i32, ev: ?*system.epoll_event) !void {
-    const rc = std.posix.system.epoll_ctl(epoll_fd, op, fd, ev);
-    switch (std.posix.errno(rc)) {
+    const rc = system.epoll_ctl(epoll_fd, op, fd, ev);
+    switch (system.errno(rc)) {
         .SUCCESS => {},
         else => return error.EpollCtl,
     }
@@ -391,7 +391,7 @@ pub fn epoll_ctl(epoll_fd: i32, op: u32, fd: i32, ev: ?*system.epoll_event) !voi
 pub fn epoll_wait(epoll_fd: i32, events: [*]system.epoll_event, maxevents: u32, timeout: i32) !usize {
     while (true) {
         const rc = system.epoll_wait(epoll_fd, events, maxevents, timeout);
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
             else => return error.EpollWait,
@@ -404,7 +404,7 @@ pub fn timerfd_create(clockid: system.timerfd_clockid_t) !std.posix.fd_t {
         .CLOEXEC = true,
         .NONBLOCK = true,
     });
-    switch (std.posix.errno(rc)) {
+    switch (system.errno(rc)) {
         .SUCCESS => return @intCast(rc),
         else => return error.TimerfdCreate,
     }
@@ -425,7 +425,7 @@ pub fn timerfd_settime(fd: i32, timeout: std.Io.Timestamp) !void {
     };
 
     const rc = system.timerfd_settime(fd, .{ .ABSTIME = true }, &spec, null);
-    switch (std.posix.errno(rc)) {
+    switch (system.errno(rc)) {
         .SUCCESS => return,
         else => return error.TimerfdSettime,
     }
@@ -433,7 +433,7 @@ pub fn timerfd_settime(fd: i32, timeout: std.Io.Timestamp) !void {
 
 pub fn signalfd(mask: *system.sigset_t) !std.posix.fd_t {
     const rc = system.signalfd(-1, mask, system.SFD.CLOEXEC | system.SFD.NONBLOCK);
-    switch (std.posix.errno(rc)) {
+    switch (system.errno(rc)) {
         .SUCCESS => return @intCast(rc),
         else => return error.Signalfd,
     }
@@ -442,7 +442,7 @@ pub fn signalfd(mask: *system.sigset_t) !std.posix.fd_t {
 pub fn clock_gettime(clk_id: system.clockid_t) !std.Io.Timestamp {
     var tp: system.timespec = undefined;
     const rc = system.clock_gettime(clk_id, &tp);
-    switch (std.posix.errno(rc)) {
+    switch (system.errno(rc)) {
         .SUCCESS => {
             var ret: i96 = tp.sec;
             ret *= std.time.ns_per_s;
@@ -473,7 +473,7 @@ pub fn sendto(fd: i32, buf: []const u8, flags: u32, addr: std.Io.net.IpAddress) 
 
     while (true) {
         const rc = system.sendto(fd, buf.ptr, buf.len, flags, &posix_addr.any, addr_len);
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
             else => return error.SendTo,
@@ -490,7 +490,7 @@ pub fn recvfrom(
 ) !usize {
     while (true) {
         const rc = system.recvfrom(fd, buf.ptr, buf.len, flags, addr, alen);
-        switch (std.posix.errno(rc)) {
+        switch (system.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
             .AGAIN => return error.WouldBlock,
@@ -586,7 +586,7 @@ pub const Loop = struct {
         if (reg.id == invalid_id) return error.InvalidEvent;
 
         var event = makeEvent(reg.id, reg.read, reg.write);
-        switch (std.posix.errno(std.posix.system.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_ADD, reg.handle, &event))) {
+        switch (system.errno(system.epoll_ctl(self.fd, std.os.linux.EPOLL.CTL_ADD, reg.handle, &event))) {
             .SUCCESS => {},
             else => |err| return std.posix.unexpectedErrno(err),
         }
