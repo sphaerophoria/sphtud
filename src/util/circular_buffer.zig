@@ -13,7 +13,7 @@ pub fn CircularBuffer(comptime T: type) type {
             var ret: ?T = null;
 
             if (self.count() == self.items.len) {
-                ret = self.incTail();
+                ret = self.items[self.incTail()];
             }
 
             self.items[self.head % self.items.len] = val;
@@ -77,11 +77,19 @@ pub fn CircularBuffer(comptime T: type) type {
 
         pub fn pop(self: *Self) ?T {
             if (self.count() == 0) return null;
-            return self.incTail();
+            return self.items[self.incTail()];
         }
 
-        fn incTail(self: *Self) T {
-            const ret = self.items[self.tail];
+        pub fn popWrite(self: *Self, replacement: T) ?T {
+            if (self.count() == 0) return null;
+            const idx = self.incTail();
+            const ret = self.items[idx];
+            self.items[idx] = replacement;
+            return ret;
+        }
+
+        fn incTail(self: *Self) usize {
+            const ret = self.tail;
             self.tail += 1;
             if (self.tail >= self.items.len) {
                 self.tail -= self.items.len;
