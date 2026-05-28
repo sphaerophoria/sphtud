@@ -10,6 +10,7 @@ const sphmath = sphtud.math;
 
 const GuiAction = union(enum) {
     text_edit: gui.textbox.TextboxNotifier,
+    button,
 
     pub fn makeTextEdit(notifier: gui.textbox.TextboxNotifier) GuiAction {
         return .{
@@ -233,6 +234,15 @@ pub const CustomWidget = struct {
     }
 };
 
+const ButtonCountRetriever = struct {
+    buf: [32]u8,
+    count: *u32,
+
+    pub fn getText(self: *ButtonCountRetriever) []const u8 {
+        return std.fmt.bufPrint(&self.buf, "Pressed {d} times", .{self.count.*}) catch "Pressed too many times";
+    }
+};
+
 pub fn main() !void {
     var allocators: sphrender.AppAllocators = undefined;
     try allocators.initPinned(10 * 1024 * 1024);
@@ -265,10 +275,19 @@ pub fn main() !void {
     const widget_factory = gui_state.factory(gui_alloc);
     const layout = try widget_factory.makeLayout();
 
+    var button_clicks: u32 = 0;
+    var button_label_text = ButtonCountRetriever{
+        .buf = undefined,
+        .count = &button_clicks,
+    };
+
     try layout.pushWidget(try widget_factory.makeLabel("A label", .{}));
     try layout.pushWidget(try widget_factory.makeLabel("A red label", .{
         .color = .{ .r = 1.0, .g = 0.0, .b = 0.0, .a = 1.0 },
     }));
+
+    try layout.pushWidget(try widget_factory.makeButton("A button", @as(GuiAction, .button)));
+    try layout.pushWidget(try widget_factory.makeLabel(&button_label_text, .{}));
 
     var input_text_buf: [100]u8 = undefined;
 
@@ -351,6 +370,9 @@ pub fn main() !void {
         }, &window.queue);
 
         if (response.action) |*a| switch (a.*) {
+            .button => {
+                button_clicks +|= 1;
+            },
             .text_edit => |*notifier| {
                 for (notifier.events) |ev| switch (ev.key) {
                     .ascii => |char| {

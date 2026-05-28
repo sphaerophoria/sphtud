@@ -1,7 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const sphmath = @import("sphmath");
-const sphrender = @import("sphrender");
+const sphtud = @import("../sphtud.zig");
+const sphmath = sphtud.math;
+const sphrender = sphtud.render;
 const label_mod = @import("label.zig");
 const Label = label_mod.Label;
 const gui = @import("../ui.zig");
@@ -40,7 +41,7 @@ pub fn makeButton(
     shared: *const SharedButtonState,
     click_action: anytype,
 ) !Widget(Action) {
-    const label = try label_mod.makeLabel(Action, alloc, text_retriever, shared.text_shared);
+    const label = try label_mod.makeLabel(Action, alloc, text_retriever, .white, shared.text_shared);
 
     const T = Button(Action, @TypeOf(click_action));
     const button = try alloc.heap.arena().create(T);
