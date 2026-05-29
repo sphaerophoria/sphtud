@@ -2,18 +2,18 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const sphalloc = @import("../alloc.zig");
 const Sphalloc = sphalloc.Sphalloc;
-const sphutil = @import("sphutil");
+const sphutil = @import("../util.zig");
 const CircularBuffer = sphutil.CircularBuffer;
 
 root: *Sphalloc,
 sample_storage: CircularBuffer(Sample),
 sample_period_ms: u32,
 num_samples: usize = 0,
-last_sample: std.time.Instant,
+last_sample: std.Io.Timestamp,
 
 const MemoryTracker = @This();
 
-pub fn init(alloc: Allocator, now: std.time.Instant, sample_period_ms: u32, root: *Sphalloc) !MemoryTracker {
+pub fn init(alloc: Allocator, now: std.Io.Timestamp, sample_period_ms: u32, root: *Sphalloc) !MemoryTracker {
     return .{
         .root = root,
         .sample_storage = CircularBuffer(Sample){ .items = try alloc.alloc(Sample, 10000) },
@@ -45,8 +45,8 @@ pub fn snapshot(leaky: Allocator, root: *Sphalloc, max_elems: usize) ![]Sample {
     return ret.items;
 }
 
-pub fn step(self: *MemoryTracker, now: std.time.Instant) !void {
-    if (now.since(self.last_sample) / std.time.ns_per_ms < self.sample_period_ms) {
+pub fn step(self: *MemoryTracker, now: std.Io.Timestamp) !void {
+    if (self.last_sample.durationTo(now).toMilliseconds() < self.sample_period_ms) {
         return;
     }
 
@@ -115,7 +115,7 @@ pub fn collect(self: MemoryTracker, ret_alloc: std.mem.Allocator, scratch: sphal
     }
 
     const AllocSamplesBuilder = struct {
-        samples: std.ArrayListUnmanaged(usize) = .{},
+        samples: std.ArrayListUnmanaged(usize) = .empty,
         max: usize = 0,
     };
     var sample_map = std.StringHashMap(AllocSamplesBuilder).init(scratch_alloc);

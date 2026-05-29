@@ -27,6 +27,59 @@ pub const ExpansionAlloc = @import("util/ExpansionAlloc.zig");
 
 pub const BinaryHeap = binary_heap.BinaryHeap;
 
+/// Monotonic counter for allocating globally-unique event/callback IDs.
+pub const IdAlloc = struct {
+    idx: usize,
+
+    pub const init: IdAlloc = .{ .idx = 0 };
+
+    // inclusive
+    pub const Range = struct {
+        start: usize,
+        end: usize,
+
+        pub fn contains(self: Range, id: usize) bool {
+            return id >= self.start and id <= self.end;
+        }
+
+        pub fn offset(self: Range, id: usize) usize {
+            return id - self.start;
+        }
+    };
+
+    pub fn allocOne(self: *IdAlloc) usize {
+        defer self.idx += 1;
+        return self.idx;
+    }
+
+    pub fn allocMany(self: *IdAlloc, amount: usize) Range {
+        defer self.idx += amount;
+        return .{
+            .start = self.idx,
+            .end = self.idx + amount - 1,
+        };
+    }
+
+    const Mark = struct {
+        parent: *IdAlloc,
+        idx: usize,
+
+        pub fn range(self: Mark) Range {
+            return .{
+                .start = self.idx,
+                .end = self.parent.idx - 1,
+            };
+        }
+    };
+
+    pub fn mark(self: *IdAlloc) Mark {
+        return .{
+            .parent = self,
+            .idx = self.idx,
+        };
+    }
+};
+
 test {
     std.testing.refAllDecls(@This());
 }

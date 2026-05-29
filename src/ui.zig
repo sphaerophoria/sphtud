@@ -5,37 +5,39 @@ const sphrender = @import("render.zig");
 const sphutil = @import("sphutil");
 const sphwindow_events = @import("window_events.zig");
 
-pub const label = @import("ui/label.zig");
-pub const drag = @import("ui/drag.zig");
-pub const button = @import("ui/button.zig");
-pub const layout = @import("ui/layout.zig");
 pub const scrollbar = @import("ui/scrollbar.zig");
-pub const scroll_view = @import("ui/scroll_view.zig");
-pub const color_picker = @import("ui/color_picker.zig");
-pub const popup_layer = @import("ui/popup_layer.zig");
-pub const stack = @import("ui/stack.zig");
-pub const rect = @import("ui/rect.zig");
-pub const textbox = @import("ui/textbox.zig");
-pub const gui_text = @import("ui/gui_text.zig");
-pub const selectable_list = @import("ui/selectable_list.zig");
 pub const SquircleRenderer = @import("ui/SquircleRenderer.zig");
-pub const widget_factory = @import("ui/widget_factory.zig");
-pub const runner = @import("ui/runner.zig");
-pub const frame = @import("ui/frame.zig");
-pub const null_widget = @import("ui/null.zig");
-pub const combo_box = @import("ui/combo_box.zig");
-pub const box = @import("ui/box.zig");
-pub const checkbox = @import("ui/checkbox.zig");
 pub const util = @import("ui/util.zig");
-pub const memory_widget = @import("ui/memory_widget.zig");
-pub const thumbnail = @import("ui/thumbnail.zig");
-pub const grid = @import("ui/grid.zig");
-pub const interactable = @import("ui/interactable.zig");
-pub const drag_layer = @import("ui/drag_layer.zig");
-pub const one_of = @import("ui/one_of.zig");
-pub const histogram = @import("ui/histogram.zig");
-pub const multi_line_graph = @import("ui/multi_line_graph.zig");
-pub const scroll_list = @import("ui/scroll_list.zig");
+
+pub const Widget = @import("ui/Widget.zig");
+pub const Layout = @import("ui/Layout.zig");
+pub const Label = @import("ui/Label.zig");
+pub const Button = @import("ui/Button.zig");
+pub const Checkbox = @import("ui/Checkbox.zig");
+pub const Histogram = @import("ui/Histogram.zig");
+pub const Box = @import("ui/Box.zig");
+pub const ScrollView = @import("ui/ScrollView.zig");
+pub const ComboBox = @import("ui/ComboBox.zig");
+pub const Rect = @import("ui/Rect.zig");
+pub const Frame = @import("ui/Frame.zig");
+pub const ColorableFrame = @import("ui/ColorableFrame.zig");
+pub const Stack = @import("ui/Stack.zig");
+pub const Drag = @import("ui/Drag.zig");
+pub const SelectableList = @import("ui/SelectableList.zig");
+pub const PopupLayer = @import("ui/PopupLayer.zig");
+pub const DragLayer = @import("ui/DragLayer.zig");
+pub const ColorPicker = @import("ui/ColorPicker.zig");
+pub const Grid = @import("ui/Grid.zig");
+pub const Interactable = @import("ui/Interactable.zig");
+pub const MemoryWidget = @import("ui/MemoryWidget.zig");
+pub const WidgetState = @import("ui/WidgetState.zig");
+pub const WidgetFactory = @import("ui/WidgetFactory.zig");
+pub const OneOf = @import("ui/OneOf.zig");
+pub const Thumbnail = @import("ui/Thumbnail.zig");
+pub const Textbox = @import("ui/Textbox.zig");
+pub const Runner = @import("ui/Runner.zig");
+
+pub const EventQueue = std.ArrayList(usize);
 
 test {
     std.testing.refAllDecls(@This());
@@ -188,6 +190,20 @@ pub const PixelBBox = struct {
     top: i32,
     bottom: i32,
 
+    pub const empty: PixelBBox = .{
+        .left = 0,
+        .right = 0,
+        .top = 0,
+        .bottom = 0,
+    };
+
+    pub fn calcSize(self: PixelBBox) PixelSize {
+        return .{
+            .width = self.calcWidth(),
+            .height = self.calcHeight(),
+        };
+    }
+
     pub fn contains(self: PixelBBox, x: i32, y: i32) bool {
         return x >= self.left and x <= self.right and y <= self.bottom and y >= self.top;
     }
@@ -251,118 +267,6 @@ pub const CursorStyle = enum {
     default,
     hidden,
 };
-
-pub fn InputResponse(comptime Action: type) type {
-    return struct {
-        wants_focus: bool = false,
-        action: ?Action = null,
-        cursor_style: ?CursorStyle = null,
-    };
-}
-
-pub fn Widget(comptime Action: type) type {
-    return struct {
-        pub const VTable = struct {
-            render: *const fn (ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void,
-            getSize: *const fn (ctx: ?*anyopaque) PixelSize,
-            update: ?*const fn (ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) anyerror!void,
-            setInputState: ?*const fn (ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action),
-            setFocused: ?*const fn (ctx: ?*anyopaque, focused: bool) void,
-            reset: ?*const fn (ctx: ?*anyopaque) void,
-        };
-
-        const Self = @This();
-
-        vtable: *const VTable,
-        name: []const u8,
-        ctx: ?*anyopaque,
-
-        pub fn fromConcrete(val: anytype, comptime name: []const u8) Widget(Action) {
-            const T = @TypeOf(val.*);
-
-            const wrappers = struct {
-                fn render(ctx: ?*anyopaque, widget_bounds: PixelBBox, window_bounds: PixelBBox) void {
-                    const self: *T = @ptrCast(@alignCast(ctx));
-                    self.render(widget_bounds, window_bounds);
-                }
-
-                fn getSize(ctx: ?*anyopaque) PixelSize {
-                    const self: *T = @ptrCast(@alignCast(ctx));
-                    return self.getSize();
-                }
-
-                fn update(ctx: ?*anyopaque, available_size: PixelSize, delta_s: f32) anyerror!void {
-                    const self: *T = @ptrCast(@alignCast(ctx));
-                    return self.update(available_size, delta_s);
-                }
-
-                fn setInputState(ctx: ?*anyopaque, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
-                    const self: *T = @ptrCast(@alignCast(ctx));
-                    return self.setInputState(widget_bounds, input_bounds, input_state);
-                }
-
-                fn setFocused(ctx: ?*anyopaque, focused: bool) void {
-                    const self: *T = @ptrCast(@alignCast(ctx));
-                    self.setFocused(focused);
-                }
-
-                fn reset(ctx: ?*anyopaque) void {
-                    const self: *T = @ptrCast(@alignCast(ctx));
-                    self.reset();
-                }
-            };
-
-            return .{
-                .ctx = val,
-                .vtable = &.{
-                    .render = wrappers.render,
-                    .getSize = wrappers.getSize,
-                    .update = if (@hasDecl(T, "update")) wrappers.update else null,
-                    .setInputState = if (@hasDecl(T, "setInputState")) wrappers.setInputState else null,
-                    .setFocused = if (@hasDecl(T, "setFocused")) wrappers.setFocused else null,
-                    .reset = if (@hasDecl(T, "reset")) wrappers.reset else null,
-                },
-                .name = name,
-            };
-        }
-
-        pub fn getSize(self: Self) PixelSize {
-            return self.vtable.getSize(self.ctx);
-        }
-
-        pub fn update(self: Self, available_size: PixelSize, delta_s: f32) !void {
-            if (self.vtable.update) |u| {
-                try u(self.ctx, available_size, delta_s);
-            }
-        }
-
-        pub fn render(self: Self, widget_bounds: PixelBBox, window_bounds: PixelBBox) void {
-            self.vtable.render(self.ctx, widget_bounds, window_bounds);
-        }
-
-        pub fn setInputState(self: Self, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) InputResponse(Action) {
-            if (self.vtable.setInputState) |setState| {
-                return setState(self.ctx, widget_bounds, input_bounds, input_state);
-            }
-            return .{
-                .wants_focus = false,
-                .action = null,
-            };
-        }
-
-        pub fn setFocused(self: Self, focused: bool) void {
-            if (self.vtable.setFocused) |f| {
-                f(self.ctx, focused);
-            }
-        }
-
-        pub fn reset(self: Self) void {
-            if (self.vtable.reset) |f| {
-                f(self.ctx);
-            }
-        }
-    };
-}
 
 pub const Color = struct {
     r: f32,

@@ -499,61 +499,7 @@ pub fn recvfrom(
     }
 }
 
-/// This is more of a utility thing, but pretty tied to our typical usage of
-/// the sphio event loop. Each service gets allocated a block of IDs that are
-/// globally unique and used as callback handles in the event loop, this is
-/// just a nice lil helper to make that easy
-pub const IdAlloc = struct {
-    idx: usize,
-
-    pub const init: IdAlloc = .{ .idx = 0 };
-
-    // inclusive
-    pub const Range = struct {
-        start: usize,
-        end: usize,
-
-        pub fn contains(self: Range, id: usize) bool {
-            return id >= self.start and id <= self.end;
-        }
-
-        pub fn offset(self: Range, id: usize) usize {
-            return id - self.start;
-        }
-    };
-
-    pub fn allocOne(self: *IdAlloc) usize {
-        defer self.idx += 1;
-        return self.idx;
-    }
-
-    pub fn allocMany(self: *IdAlloc, amount: usize) Range {
-        defer self.idx += amount;
-        return .{
-            .start = self.idx,
-            .end = self.idx + amount - 1,
-        };
-    }
-
-    const Mark = struct {
-        parent: *IdAlloc,
-        idx: usize,
-
-        pub fn range(self: Mark) Range {
-            return .{
-                .start = self.idx,
-                .end = self.parent.idx - 1,
-            };
-        }
-    };
-
-    pub fn mark(self: *IdAlloc) Mark {
-        return .{
-            .parent = self,
-            .idx = self.idx,
-        };
-    }
-};
+pub const IdAlloc = @import("util.zig").IdAlloc;
 
 pub const Loop = struct {
     fd: i32,

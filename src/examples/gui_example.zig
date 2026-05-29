@@ -1,23 +1,15 @@
 const std = @import("std");
 const sphtud = @import("sphtud");
-const sphalloc = sphtud.alloc;
+const sphtext = sphtud.text;
 const sphrender = sphtud.render;
-const gl = sphrender.gl;
-const sphwindow = sphtud.window;
 const gui = sphtud.ui;
-const sphutil = sphtud.util;
-const sphmath = sphtud.math;
-
-const GuiAction = union(enum) {
-    text_edit: gui.textbox.TextboxNotifier,
-    button,
-
-    pub fn makeTextEdit(notifier: gui.textbox.TextboxNotifier) GuiAction {
-        return .{
-            .text_edit = notifier,
-        };
-    }
-};
+const RuntimeSegmentedList = sphtud.util.RuntimeSegmentedList;
+const TextRenderer = sphtud.text.TextRenderer;
+const gl = sphtud.render.gl;
+const sphalloc = sphtud.alloc;
+const ScratchAlloc = sphalloc.ScratchAlloc;
+const GlAlloc = sphtud.render.GlAlloc;
+const Layout = gui.Layout2;
 
 fn standardNormalVal(z: f32) f32 {
     return std.math.pow(f32, std.math.e, -z * z / 2) / std.math.sqrt(2 * std.math.pi);
@@ -39,137 +31,46 @@ fn generateStandardDist(out: []f32) void {
     }
 }
 
-const HistogramRetriever = struct {
-    buf: []const f32,
+pub const SelectableListOptions = enum {
+    first,
+    second,
+    third,
+    fourth,
+};
 
-    pub fn generation(_: HistogramRetriever) u64 {
-        return 0;
-    }
+const grid_columns = [_]gui.Grid.ColumnConfig{
+    .{ .width = .{ .fixed = 100 }, .horizontal_justify = .left, .vertical_justify = .center },
+    .{ .width = .{ .ratio = 1 }, .horizontal_justify = .right, .vertical_justify = .center },
+};
 
-    pub fn numBuckets(self: HistogramRetriever) usize {
-        return self.buf.len;
-    }
+const Ids = struct {
+    button_click: usize,
+    checkbox_toggle: usize,
+    want_checkbox_toggle: usize,
+    drag_start: usize,
+    on_drag: usize,
+    combo_select: usize,
+    color_change: usize,
+    textbox_change: usize,
+    thumbnail_drag_start: usize,
 
-    pub fn getXLabel(_: HistogramRetriever, alloc: std.mem.Allocator, idx: usize) ![]const u8 {
-        return try std.fmt.allocPrint(alloc, "{d}", .{idx});
-    }
-
-    pub fn getY(self: HistogramRetriever, idx: usize) f32 {
-        return self.buf[idx];
+    fn init() Ids {
+        var alloc = sphtud.util.IdAlloc.init;
+        return .{
+            .button_click = alloc.allocOne(),
+            .checkbox_toggle = alloc.allocOne(),
+            .want_checkbox_toggle = alloc.allocOne(),
+            .drag_start = alloc.allocOne(),
+            .on_drag = alloc.allocOne(),
+            .combo_select = alloc.allocOne(),
+            .color_change = alloc.allocOne(),
+            .textbox_change = alloc.allocOne(),
+            .thumbnail_drag_start = alloc.allocOne(),
+        };
     }
 };
 
-const MultiLineGraphRetriever = struct {
-    y_scale: f32,
-    y_offs: f32,
-    color: gui.Color,
-
-    const interval = 10;
-    const max_pos = 100;
-
-    pub fn getGeneration(_: MultiLineGraphRetriever) usize {
-        // Data never changes, but if it did you should return a new number
-        // here to force opengl regeneration
-        return 0;
-    }
-
-    // Colors are externally chosen here, this allows for an application to
-    // choose colors for different purposes, and even change them on the fly if
-    // they want
-    pub fn getColor(self: MultiLineGraphRetriever) gui.Color {
-        return self.color;
-    }
-
-    // Sometimes we have more graphs than we want to see at once, this allows
-    // us to toggle them on and off
-    pub fn getEnable(_: MultiLineGraphRetriever) bool {
-        return true;
-    }
-
-    // We do not necessarily have an even distribution of points. This tells
-    // the graph widget how many points we have
-    pub fn len(_: MultiLineGraphRetriever) usize {
-        return max_pos / interval;
-    }
-
-    // This is the core of the retriever. When generating opengl buffers, the
-    // widget will ask for our iterator and iterate the graph points. This
-    // allows an arbitrary storage format to be used
-    const Iter = struct {
-        pos: usize,
-        parent: *MultiLineGraphRetriever,
-
-        pub fn next(self: *Iter) ?gui.multi_line_graph.GraphPoint {
-            if (self.pos >= max_pos) return null;
-            defer self.pos += interval;
-
-            return .{
-                .x = @floatFromInt(self.pos),
-                .y = self.parent.calcY(@floatFromInt(self.pos)),
-            };
-        }
-    };
-
-    pub fn iter(self: *MultiLineGraphRetriever) Iter {
-        return .{
-            .pos = 0,
-            .parent = self,
-        };
-    }
-
-    // This is called to set the scale of the graph
-    pub fn getBounds(self: MultiLineGraphRetriever) gui.multi_line_graph.GraphPoint {
-        // Max positions
-        return .{
-            .x = max_pos,
-            .y = self.calcY(max_pos),
-        };
-    }
-
-    // On hover, the widget will calculate the mouse position in graph space,
-    // but it doesn't know which data point actually belongs to that mouse
-    // position. Here we look at the data and tell the widget about what point
-    // is closest. We can choose to return null if we don't want to show anything
-    pub fn closestPoint(self: MultiLineGraphRetriever, in_pos: f32) ?gui.multi_line_graph.GraphPoint {
-        const x = in_pos - @mod(in_pos, interval);
-        return .{
-            .x = x,
-            .y = self.calcY(x),
-        };
-    }
-
-    fn calcY(self: MultiLineGraphRetriever, x: f32) f32 {
-        return x * x * self.y_scale + self.y_offs;
-    }
-};
-
-const ScrollLabelFactory = struct {
-    alloc: gui.GuiAlloc,
-    state: *gui.widget_factory.WidgetState(GuiAction),
-    arenas: sphutil.AutoHashMap(usize, gui.GuiAlloc),
-
-    pub fn createWidget(self: *ScrollLabelFactory, idx: usize) !gui.Widget(GuiAction) {
-        const gop = try self.arenas.getOrPut(idx);
-        if (!gop.found_existing) {
-            gop.val.* = try self.alloc.makeSubAlloc("list label");
-        }
-
-        const text = try std.fmt.allocPrint(gop.val.heap.arena(), "hello, i am widget {d}", .{idx});
-        const factory = self.state.factory(gop.val.*);
-        return try factory.makeLabel(text, .{});
-    }
-
-    pub fn destroyWidget(self: *ScrollLabelFactory, idx: usize, widget: gui.Widget(GuiAction)) void {
-        _ = widget;
-        const arena = self.arenas.remove(idx) orelse unreachable;
-        arena.deinit();
-    }
-
-    pub fn numItems(self: *const ScrollLabelFactory) usize {
-        _ = self;
-        return 10000;
-    }
-};
+const ids = Ids.init();
 
 pub const CustomWidget = struct {
     render_source: sphrender.xyuvt_program.RenderSource,
@@ -178,10 +79,11 @@ pub const CustomWidget = struct {
         default,
         hovered,
     } = .default,
+    widget: gui.Widget,
 
     const Uniforms = struct {
-        transform: sphmath.Mat3x3,
-        max_color: sphmath.Vec3,
+        transform: sphtud.math.Mat3x3,
+        max_color: sphtud.math.Vec3,
     };
 
     pub const frag =
@@ -204,11 +106,26 @@ pub const CustomWidget = struct {
         return .{
             .program = program,
             .render_source = render_source,
+            .widget = .{
+                .size = .{
+                    .width = 300,
+                    .height = 300,
+                },
+                .focused = false,
+                .vtable = &.{
+                    .render = render,
+                    .input = input,
+                    .update = null,
+                    .reset = null,
+                },
+            },
         };
     }
 
-    pub fn render(self: CustomWidget, widget_bounds: gui.PixelBBox, window_bounds: gui.PixelBBox) void {
-        const max_color: sphmath.Vec3 = switch (self.hover_state) {
+    pub fn render(widget: *gui.Widget, widget_bounds: gui.PixelBBox, window_bounds: gui.PixelBBox) void {
+        const self: *CustomWidget = @fieldParentPtr("widget", widget);
+
+        const max_color: sphtud.math.Vec3 = switch (self.hover_state) {
             .default => .{ 1.0, 0.0, 0.0 },
             .hovered => .{ 0.0, 1.0, 0.0 },
         };
@@ -220,177 +137,338 @@ pub const CustomWidget = struct {
         });
     }
 
-    pub fn getSize(_: CustomWidget) gui.PixelSize {
-        return .{ .width = 300, .height = 300 };
-    }
+    pub fn input(widget: *gui.Widget, _: gui.PixelBBox, input_bounds: gui.PixelBBox, input_state: *gui.InputState) !void {
+        const self: *CustomWidget = @fieldParentPtr("widget", widget);
 
-    pub fn setInputState(self: *CustomWidget, _: gui.PixelBBox, input_bounds: gui.PixelBBox, input_state: *gui.InputState) gui.InputResponse(GuiAction) {
         if (input_bounds.containsMousePos(input_state.mouse_pos)) {
             self.hover_state = .hovered;
         } else {
             self.hover_state = .default;
         }
-        return .{};
     }
 };
+const Gui = struct {
+    events: *gui.EventQueue,
 
-const ButtonCountRetriever = struct {
-    buf: [32]u8,
-    count: *u32,
+    thumbnail: *gui.Thumbnail,
+    thumbnail_box: *gui.Box,
+    textbox: *gui.Textbox,
+    textbox_mirror: *gui.Label,
+    button_label: *gui.Label,
+    button: *gui.Button,
+    drag: *gui.Drag,
+    drag_text: *gui.Label,
+    checkbox: *gui.Checkbox,
+    checkbox_text: *gui.Label,
+    checkbox_frame: *gui.ColorableFrame,
+    histogram: *gui.Histogram,
+    histogram_label: *gui.Label,
+    combo_preview: *gui.Label,
+    combo_popup_list: *gui.SelectableList,
+    color_picker: *gui.ColorPicker,
+    color_label: *gui.Label,
+    grid: *gui.Grid,
+    grid_labels: [3]*gui.Label,
+    one_of: *gui.OneOf,
+    memory_widget: *gui.MemoryWidget,
+    popup_layer: *gui.PopupLayer,
+    drag_layer: *gui.DragLayer,
+    runner: *gui.Runner,
 
-    pub fn getText(self: *ButtonCountRetriever) []const u8 {
-        return std.fmt.bufPrint(&self.buf, "Pressed {d} times", .{self.count.*}) catch "Pressed too many times";
+    pub fn init(allocators: *sphtud.render.AppAllocators, memory_tracker: *const sphtud.alloc.MemoryTracker) !Gui {
+        const gui_alloc = try allocators.root_render.makeSubAlloc("gui");
+
+        var ret: Gui = undefined;
+
+        const gui_state = try gui.WidgetState.init(
+            gui_alloc,
+            &allocators.scratch,
+            &allocators.scratch_gl,
+            .{},
+        );
+
+        const wf = gui.WidgetFactory{
+            .alloc = gui_alloc,
+            .state = gui_state,
+        };
+
+        var root_layout = try wf.makeLayout();
+
+        try appendText(wf, root_layout, "a thumbnail (drag me)");
+        ret.thumbnail = try wf.makeThumbnail();
+        ret.thumbnail_box = try wf.makeBox(&ret.thumbnail.widget, .{ .width = 200, .height = 150 }, .fill_none);
+        const thumbnail_interactable = try wf.makeInteractable(&ret.thumbnail_box.widget, ids.thumbnail_drag_start);
+        try root_layout.append(&thumbnail_interactable.widget);
+
+        try appendText(wf, root_layout, "a textbox");
+        ret.textbox = try wf.makeTextbox(ids.textbox_change);
+        try root_layout.append(&ret.textbox.widget);
+        ret.textbox_mirror = try wf.makeLabel("", .{});
+        try root_layout.append(&ret.textbox_mirror.widget);
+
+        ret.button_label = try wf.makeLabel("a button", .{});
+        try root_layout.append(&ret.button_label.widget);
+
+        var button_label = try wf.makeLabel("click me", .{});
+        ret.button = try wf.makeButton(&button_label.widget, ids.button_click);
+        try root_layout.append(&ret.button.widget);
+
+        var checkbox_layout = try wf.makeLayout();
+        checkbox_layout.cursor.direction = .left_to_right;
+
+        try appendText(wf, root_layout, "a checkbox");
+        ret.checkbox = try wf.makeCheckbox(false, ids.checkbox_toggle);
+        try checkbox_layout.append(&ret.checkbox.widget);
+
+        ret.checkbox_text = try wf.makeLabel("", .{});
+        const checkbox_text_interactable = try wf.makeInteractable(&ret.checkbox_text.widget, ids.want_checkbox_toggle);
+        try checkbox_layout.append(&checkbox_text_interactable.widget);
+
+        ret.checkbox_frame = try wf.makeColorableFrame(&checkbox_layout.widget);
+        try root_layout.append(&ret.checkbox_frame.widget);
+
+        try appendText(wf, root_layout, "i32 drag");
+        ret.drag_text = try wf.makeLabel("", .{});
+        ret.drag = try wf.makeDrag(&ret.drag_text.widget, ids.drag_start, ids.on_drag);
+        try root_layout.append(&ret.drag.widget);
+
+        try appendText(wf, root_layout, "A histogram");
+
+        ret.histogram_label = try wf.makeLabel(" ", .{});
+        ret.histogram = try wf.makeHistogram(&ret.histogram_label.widget);
+
+        var hist_box = try wf.makeBox(&ret.histogram.widget, .{
+            .width = 300,
+            .height = 150,
+        }, .fill_none);
+
+        try root_layout.append(&hist_box.widget);
+
+        try appendText(wf, root_layout, "a combo box");
+
+        {
+            ret.combo_popup_list = try wf.makeSelectableList(ids.combo_select);
+            const selectable_list_fields = std.meta.fields(SelectableListOptions);
+
+            const sl_widgets = try wf.alloc.heap.arena().alloc(*gui.Widget, selectable_list_fields.len);
+            inline for (selectable_list_fields, 0..) |item, i| {
+                const label = try wf.makeLabel(item.name, .{});
+                sl_widgets[i] = &label.widget;
+            }
+            ret.combo_popup_list.setItems(sl_widgets);
+
+            ret.combo_preview = try wf.makeLabel("select...", .{});
+            const combo_box = try wf.makeComboBox(&ret.combo_preview.widget, &ret.combo_popup_list.widget);
+            try root_layout.append(&combo_box.widget);
+        }
+
+        try appendText(wf, root_layout, "a color picker");
+        ret.color_picker = try wf.makeColorPicker(.{ .r = 0.8, .g = 0.3, .b = 0.2, .a = 1.0 }, ids.color_change);
+        try root_layout.append(&ret.color_picker.widget);
+        ret.color_label = try wf.makeLabel("", .{});
+        try root_layout.append(&ret.color_label.widget);
+
+        try appendText(wf, root_layout, "a grid");
+
+        ret.grid = try wf.makeGrid(&grid_columns, 6);
+        const grid_keys = [_][]const u8{ "alpha", "beta", "gamma" };
+        for (&ret.grid_labels, grid_keys) |*val_label, key| {
+            const key_label = try wf.makeLabel(key, .{});
+            try ret.grid.append(&key_label.widget);
+            val_label.* = try wf.makeLabel("0", .{});
+            try ret.grid.append(&val_label.*.widget);
+        }
+        try root_layout.append(&ret.grid.widget);
+
+        try appendText(wf, root_layout, "memory usage");
+        ret.memory_widget = try wf.makeMemoryWidget(memory_tracker);
+        try root_layout.append(&ret.memory_widget.widget);
+
+        ret.events = &gui_state.event_queue;
+        ret.popup_layer = &gui_state.popup_layer;
+        ret.drag_layer = &gui_state.drag_layer;
+
+        {
+            const options = try gui_alloc.heap.arena().alloc(*gui.Widget, 4);
+            const labels = [_][]const u8{
+                "one_of 1",
+                "one_of 2",
+                "one_of 3",
+                "one_of 4",
+            };
+
+            for (options, labels) |*o, l| {
+                const label = try wf.makeLabel(l, .{});
+                o.* = &label.widget;
+            }
+            ret.one_of = try wf.makeOneOf(options);
+            try root_layout.append(&ret.one_of.widget);
+        }
+
+        const custom = try gui_alloc.heap.arena().create(CustomWidget);
+        custom.* = try .init(gui_alloc);
+        try root_layout.append(&custom.widget);
+
+        const root_frame = try wf.makeFrame(&root_layout.widget);
+        var scroll_view = try wf.makeScrollView(&root_frame.widget);
+
+        const runner = try wf.makeRunner(&scroll_view.widget);
+        ret.runner = runner;
+
+        return ret;
+    }
+
+    fn appendText(wf: gui.WidgetFactory, layout: *gui.Layout, text: []const u8) !void {
+        const label = try wf.makeLabel(text, .{});
+        try layout.append(&label.widget);
     }
 };
 
 pub fn main() !void {
-    var allocators: sphrender.AppAllocators = undefined;
+    var allocators: sphtud.render.AppAllocators = undefined;
     try allocators.initPinned(10 * 1024 * 1024);
 
-    var window: sphwindow.Window = undefined;
+    var window: sphtud.window.Window = undefined;
     try window.initPinned("sphui demo", 800, 600);
 
-    try sphrender.initGl(window.glLoader());
+    try sphtud.render.initGl(window.glLoader());
 
     gl.glEnable(gl.GL_SCISSOR_TEST);
     gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA);
     gl.glEnable(gl.GL_BLEND);
 
-    const gui_alloc = try allocators.root_render.makeSubAlloc("gui");
-
-    const gui_state = try gui.widget_factory.widgetState(
-        GuiAction,
-        gui_alloc,
-        &allocators.scratch,
-        &allocators.scratch_gl,
-        .{},
+    var memory_tracker = try sphtud.alloc.MemoryTracker.init(
+        allocators.root.general(),
+        try sphtud.io.clock_gettime(.BOOTTIME),
+        100,
+        &allocators.root,
     );
 
-    var std_dist: [25]f32 = undefined;
-    generateStandardDist(&std_dist);
-    const histogram_retriever = HistogramRetriever{
-        .buf = &std_dist,
-    };
+    var widgets = try Gui.init(&allocators, &memory_tracker);
 
-    const widget_factory = gui_state.factory(gui_alloc);
-    const layout = try widget_factory.makeLayout();
+    // Create a simple 8x8 checkerboard test texture for the thumbnail
+    const tex_w = 8;
+    const tex_h = 8;
+    var tex_data: [tex_w * tex_h * 4]u8 = undefined;
+    for (0..tex_h) |y| {
+        for (0..tex_w) |x| {
+            const i = (y * tex_w + x) * 4;
+            const checker = (x + y) % 2 == 0;
+            tex_data[i + 0] = if (checker) 220 else 60;
+            tex_data[i + 1] = if (checker) 80 else 180;
+            tex_data[i + 2] = if (checker) 60 else 220;
+            tex_data[i + 3] = 255;
+        }
+    }
+    const thumb_texture = try sphrender.makeTextureFromRgba(&allocators.root_gl, &tex_data, tex_w);
+    widgets.thumbnail.texture = thumb_texture;
+    widgets.thumbnail.image_size = .{ .width = tex_w, .height = tex_h };
 
-    var button_clicks: u32 = 0;
-    var button_label_text = ButtonCountRetriever{
-        .buf = undefined,
-        .count = &button_clicks,
-    };
+    var dragging_thumbnail = false;
+    var drag_val: i32 = 10;
+    var drag_anchor: i32 = 0;
+    var drag_label_buf: [32]u8 = undefined;
+    try widgets.drag_text.setText(try std.fmt.bufPrint(&drag_label_buf, "{d:.3}", .{drag_val}));
 
-    try layout.pushWidget(try widget_factory.makeLabel("A label", .{}));
-    try layout.pushWidget(try widget_factory.makeLabel("A red label", .{
-        .color = .{ .r = 1.0, .g = 0.0, .b = 0.0, .a = 1.0 },
-    }));
+    var dist_buf: [64]f32 = undefined;
+    generateStandardDist(&dist_buf);
+    try widgets.histogram.setData(&dist_buf);
 
-    try layout.pushWidget(try widget_factory.makeButton("A button", @as(GuiAction, .button)));
-    try layout.pushWidget(try widget_factory.makeLabel(&button_label_text, .{}));
+    var hist_label_buf: [128]u8 = undefined;
+    try widgets.checkbox_text.setText("off");
 
-    var input_text_buf: [100]u8 = undefined;
+    var click_count: u32 = 0;
+    var button_label_buf: [128]u8 = undefined;
+    var grid_val_bufs: [3][32]u8 = undefined;
 
-    var input_text = std.ArrayList(u8).initBuffer(&input_text_buf);
-    try layout.pushWidget(try widget_factory.makeLabel("A text box", .{}));
-    try layout.pushWidget(try widget_factory.makeTextbox(&input_text.items, &GuiAction.makeTextEdit));
+    const start = try sphtud.io.clock_gettime(.BOOTTIME);
 
-    try layout.pushWidget(try widget_factory.makeLabel("A histogram", .{}));
-    try layout.pushWidget(try widget_factory.makeBox(
-        try widget_factory.makeHistogram(histogram_retriever),
-        .{ .width = 300, .height = 200 },
-        .fill_none,
-    ));
-
-    const multiline_retrievers = try gui_alloc.heap.arena().alloc(MultiLineGraphRetriever, 3);
-    multiline_retrievers[0] = .{
-        .y_scale = 1,
-        .y_offs = 0,
-        .color = .{ .r = 1, .g = 0.35, .b = 0.87, .a = 1 },
-    };
-    multiline_retrievers[1] = .{
-        .y_scale = 2,
-        .y_offs = 1,
-        .color = .{ .r = 0.47, .g = 1, .b = 0.26, .a = 1 },
-    };
-    multiline_retrievers[2] = .{
-        .y_scale = 3,
-        .y_offs = 2,
-        .color = .{ .r = 1, .g = 0.73, .b = 0.35, .a = 1 },
-    };
-
-    try layout.pushWidget(try widget_factory.makeLabel("A multi graph", .{}));
-    try layout.pushWidget(try widget_factory.makeBox(
-        try widget_factory.makeMultiLineGraph(multiline_retrievers),
-        .{ .width = 300, .height = 200 },
-        .fill_none,
-    ));
-
-    try layout.pushWidget(try widget_factory.makeLabel("A custom widget", .{}));
-    var custom_widget = try CustomWidget.init(gui_alloc);
-    try layout.pushWidget(try widget_factory.makeBox(
-        gui.Widget(GuiAction).fromConcrete(&custom_widget, "custom"),
-        .{ .width = 300, .height = 300 },
-        .fill_none,
-    ));
-
-    var label_factory_alloc = try allocators.root_render.makeSubAlloc("label factory");
-    var scroll_labels = ScrollLabelFactory{
-        .alloc = label_factory_alloc,
-        .state = gui_state,
-        .arenas = try .init(
-            label_factory_alloc.heap.arena(),
-            label_factory_alloc.heap.expansion(),
-            10,
-            10000,
-        ),
-    };
-    try layout.pushWidget(try widget_factory.makeBox(
-        try widget_factory.makeScrollList(&scroll_labels),
-        .{ .width = 300, .height = 300 },
-        .fill_width,
-    ));
-
-    var runner = try widget_factory.makeRunner(try widget_factory.makeScrollView(layout.asWidget()));
+    var selectable_list_elem_buf: [128]u8 = undefined;
 
     while (!window.closed()) {
         allocators.resetScratch();
         const width, const height = window.getWindowSize();
 
+        const now = try sphtud.io.clock_gettime(.BOOTTIME);
+        const elapsed_ms = start.durationTo(now).toMilliseconds();
+        var elapsed_s: f32 = @floatFromInt(elapsed_ms);
+        elapsed_s /= std.time.ms_per_s;
+
+        try memory_tracker.step(now);
+
         gl.glViewport(0, 0, @intCast(width), @intCast(height));
         gl.glScissor(0, 0, @intCast(width), @intCast(height));
 
-        const background_color = gui.widget_factory.StyleColors.background_color;
+        const background_color = gui.WidgetState.StyleColors.background_color;
         gl.glClearColor(background_color.r, background_color.g, background_color.b, background_color.a);
         gl.glClear(gl.GL_COLOR_BUFFER_BIT);
 
-        var response = try runner.step(1.0, .{
+        try widgets.runner.step(0.1, .{
             .width = @intCast(width),
             .height = @intCast(height),
         }, &window.queue);
 
-        if (response.action) |*a| switch (a.*) {
-            .button => {
-                button_clicks +|= 1;
+        while (widgets.events.pop()) |ev| switch (ev) {
+            ids.button_click => {
+                click_count +|= 1;
+                try widgets.button_label.setText(try std.fmt.bufPrint(&button_label_buf, "Clicked {d} times", .{click_count}));
             },
-            .text_edit => |*notifier| {
-                for (notifier.events) |ev| switch (ev.key) {
-                    .ascii => |char| {
-                        try input_text.insertBounded(notifier.priv.insert_idx, char);
-                        try notifier.notify(.insert);
-                    },
-                    .backspace => {
-                        _ = input_text.orderedRemove(notifier.backspaceIdx() orelse continue);
-                        try notifier.notify(.backspace);
-                    },
-                    .delete => {
-                        _ = input_text.orderedRemove(notifier.deleteIdx(input_text.items.len) orelse continue);
-                        try notifier.notify(.delete);
-                    },
-                    else => {},
-                };
+            ids.thumbnail_drag_start => dragging_thumbnail = true,
+            ids.drag_start => drag_anchor = drag_val,
+            ids.on_drag => {
+                drag_val = drag_anchor + @as(i32, @intFromFloat(widgets.drag.drag_delta_px * 0.1));
+                try widgets.drag_text.setText(try std.fmt.bufPrint(&drag_label_buf, "{d:.3}", .{drag_val}));
             },
+            ids.checkbox_toggle => {
+                const checked = widgets.checkbox.checked;
+                try widgets.checkbox_text.setText(if (checked) "on" else "off");
+                widgets.checkbox_frame.color = if (checked)
+                    gui.Color{ .r = 0.2, .g = 0.8, .b = 0.3, .a = 1.0 }
+                else
+                    null;
+            },
+            ids.want_checkbox_toggle => {
+                widgets.checkbox.checked = !widgets.checkbox.checked;
+                try widgets.events.appendBounded(ids.checkbox_toggle);
+            },
+            ids.color_change => {
+                const c = widgets.color_picker.color;
+                try widgets.color_label.setText(try std.fmt.bufPrint(&hist_label_buf, "r={d:.2} g={d:.2} b={d:.2}", .{ c.r, c.g, c.b }));
+            },
+            ids.textbox_change => {
+                try widgets.textbox_mirror.setText(widgets.textbox.text.items);
+            },
+            ids.combo_select => {
+                const tag: SelectableListOptions = @enumFromInt(widgets.combo_popup_list.selected_idx);
+                try widgets.combo_preview.setText(try std.fmt.bufPrint(&selectable_list_elem_buf, "{t}", .{tag}));
+                widgets.popup_layer.clear();
+            },
+            else => {},
         };
+
+        const grid_freqs = [_]f32{ 1.0, 2.0, 0.5 };
+        for (&widgets.grid_labels, &grid_val_bufs, grid_freqs) |label, *buf, freq| {
+            const v = @sin(elapsed_s * freq);
+            try label.setText(try std.fmt.bufPrint(buf, "{d:.3}", .{v}));
+        }
+
+        if (widgets.histogram.hoveredIdx()) |idx| {
+            try widgets.histogram_label.setText(try std.fmt.bufPrint(&hist_label_buf, "bucket={d} y={d:.4}", .{ idx, dist_buf[idx] }));
+        } else {
+            try widgets.histogram_label.setText(" ");
+        }
+
+        // Show the thumbnail floating under the cursor while it is being
+        // dragged; clear when the mouse button is released.
+        if (dragging_thumbnail and widgets.runner.input_state.mouse_down_location != null) {
+            widgets.drag_layer.set(&widgets.thumbnail_box.widget, 0, 0);
+        } else {
+            dragging_thumbnail = false;
+            widgets.drag_layer.reset();
+        }
+
+        widgets.one_of.selected = @intFromFloat(elapsed_s);
+        widgets.one_of.selected %= widgets.one_of.options.len;
 
         window.swapBuffers();
     }
