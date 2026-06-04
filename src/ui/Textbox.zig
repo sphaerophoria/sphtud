@@ -72,6 +72,11 @@ pub fn init(alloc: gui.GuiAlloc, gpa: std.mem.Allocator, on_change: usize, share
     };
 }
 
+pub fn setText(self: *Self, text: []const u8) !void {
+    self.text.clearRetainingCapacity();
+    try self.text.appendSlice(self.gpa, text);
+}
+
 fn update(widget: *Widget, _: PixelSize, delta_s: f32) !void {
     const self: *Self = @fieldParentPtr("widget", widget);
 
