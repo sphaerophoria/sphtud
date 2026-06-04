@@ -171,3 +171,9 @@ pub fn makeRunner(self: *const Self, inner: *gui.Widget) !*gui.Runner {
     ret.* = try gui.Runner.init(self.alloc.heap.general(), &root_stack.widget);
     return ret;
 }
+
+pub fn makeCentered(self: *const Self, inner: *gui.Widget) !*gui.Centered {
+    const ret = try self.alloc.heap.arena().create(gui.Centered);
+    ret.* = gui.Centered.init(inner);
+    return ret;
+}

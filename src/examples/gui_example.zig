@@ -200,6 +200,29 @@ const Gui = struct {
         const thumbnail_interactable = try wf.makeInteractable(&ret.thumbnail_box.widget, ids.thumbnail_drag_start);
         try root_layout.append(&thumbnail_interactable.widget);
 
+        {
+            const background = try wf.makeRect(.{ .r = 255, .g = 0, .b = 255, .a = 255 });
+
+            const label = try wf.makeLabel("a centered label", .{});
+            const centered = try wf.makeCentered(&label.widget);
+
+            const stack_items = try wf.alloc.heap.arena().dupe(
+                gui.Stack.StackItem,
+                &.{
+                    .{ .widget = &background.widget },
+                    .{ .widget = &centered.widget },
+                },
+            );
+            const stack = try wf.makeStack(stack_items);
+
+            const box = try wf.makeBox(
+                &stack.widget,
+                .{ .width = 200, .height = 200 },
+                .fill_none,
+            );
+            try root_layout.append(&box.widget);
+        }
+
         try appendText(wf, root_layout, "a textbox");
         ret.textbox = try wf.makeTextbox(ids.textbox_change);
         try root_layout.append(&ret.textbox.widget);

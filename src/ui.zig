@@ -36,6 +36,7 @@ pub const OneOf = @import("ui/OneOf.zig");
 pub const Thumbnail = @import("ui/Thumbnail.zig");
 pub const Textbox = @import("ui/Textbox.zig");
 pub const Runner = @import("ui/Runner.zig");
+pub const Centered = @import("ui/Centered.zig");
 
 pub const EventQueue = std.ArrayList(usize);
 
