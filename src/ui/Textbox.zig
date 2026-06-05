@@ -90,10 +90,7 @@ fn update(widget: *Widget, _: PixelSize, delta_s: f32) !void {
 }
 
 fn updateTextPosition(self: *Self) void {
-    const cursor_offs = cursorOffset(
-        &self.label,
-        self.cursor_pos,
-    );
+    const cursor_offs = self.cursorOffset();
     const cursor_widget_offs = cursor_offs + self.label_left_offs;
     const width: i32 = self.shared.style.width - self.shared.style.left_pad * 2;
 
@@ -126,7 +123,7 @@ fn render(widget: *Widget, widget_bounds: PixelBBox, window_bounds: PixelBBox) v
     self.label.widget.render(text_bounds, window_bounds);
 
     if (widget.focused) {
-        const cursor_offs = cursorOffset(&self.label, self.cursor_pos);
+        const cursor_offs = self.cursorOffset();
         const cursor_bounds = cursorPixelBounds(style, text_left + cursor_offs, widget_bounds);
         const cursor_transform = util.widgetToClipTransform(cursor_bounds, window_bounds);
         self.shared.squircle_renderer.render(style.cursor_color, 0.0, cursor_bounds, cursor_transform);
@@ -201,23 +198,39 @@ fn textPixelBounds(left: i32, text_size: PixelSize, widget_bounds: PixelBBox) Pi
     };
 }
 
-fn cursorOffset(
-    label: *gui.Label,
-    cursor_pos: usize,
-) i32 {
-    if (cursor_pos < label.glyph_locations.len) {
-        return label.glyph_locations.get(cursor_pos).pixel_x1 - label.layout_bounds.min_x;
+fn prevGlyphRight(label: *gui.Label, idx: usize) i32 {
+    const prev_idx = idx -| 1;
+    if (prev_idx >= label.glyph_locations.len) {
+        return 0;
+    } else if (idx == 0) {
+        return label.layout_bounds.min_x;
+    } else {
+        return label.glyph_locations.get(prev_idx).pixel_x2;
     }
-    return label.layout_bounds.max_x - label.layout_bounds.min_x;
+}
+
+fn currGlpyhLeft(label: *gui.Label, idx: usize) i32 {
+    if (idx >= label.glyph_locations.len) return label.layout_bounds.max_x;
+    return label.glyph_locations.get(idx).pixel_x1;
+}
+
+fn cursorOffset(
+    self: *Self,
+) i32 {
+    const left = currGlpyhLeft(&self.label, self.cursor_pos);
+    const right = prevGlyphRight(&self.label, self.cursor_pos);
+
+    return @divTrunc(left + right - self.shared.style.cursor_width + 1, 2);
 }
 
 fn cursorPixelBounds(style: Style, cursor_left: i32, widget_bounds: PixelBBox) PixelBBox {
     const center_y: i32 = @intFromFloat(widget_bounds.cy());
     const cursor_height: i32 = @intCast(style.height * 3 / 4);
     const top = center_y - @divTrunc(cursor_height, 2);
+    const right = cursor_left + style.cursor_width;
     return .{
         .left = cursor_left,
-        .right = cursor_left + @as(i32, style.cursor_width),
+        .right = right,
         .top = top,
         .bottom = top + cursor_height,
     };
