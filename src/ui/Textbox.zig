@@ -90,7 +90,7 @@ fn updateTextPosition(self: *Self) void {
         self.cursor_pos,
     );
     const cursor_widget_offs = cursor_offs + self.label_left_offs;
-    const width: i32 = self.shared.style.width;
+    const width: i32 = self.shared.style.width - self.shared.style.left_pad * 2;
 
     if (cursor_widget_offs < 0) {
         self.label_left_offs -= cursor_widget_offs;
