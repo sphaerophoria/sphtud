@@ -205,7 +205,7 @@ pub fn init(gui_alloc: gui.GuiAlloc, scratch_alloc: *ScratchAlloc, scratch_gl: *
             .height = typical_widget_height,
             .left_pad = layout_pad,
             .corner_radius = corner_radius,
-            .cursor_color = StyleColors.default_color,
+            .cursor_color = .white,
         },
     };
 
