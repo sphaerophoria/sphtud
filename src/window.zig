@@ -142,6 +142,13 @@ fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action
         }) catch |e| {
             logError("Failed to write key release", e, @errorReturnTrace());
         };
+    } else if (action == glfwb.GLFW_REPEAT) {
+        window.queue.pushNoClobber(.{ .key_repeat = .{
+            .key = key_char,
+            .ctrl = (modifiers & glfwb.GLFW_MOD_CONTROL) != 0,
+        } }) catch |e| {
+            logError("Failed to write key repeat", e, @errorReturnTrace());
+        };
     }
 }
 

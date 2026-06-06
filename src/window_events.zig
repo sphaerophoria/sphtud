@@ -27,6 +27,7 @@ pub const MousePos = struct { x: f32, y: f32 };
 pub const WindowAction = union(enum) {
     key_down: KeyEvent,
     key_up: Key,
+    key_repeat: KeyEvent,
     mouse_move: MousePos,
     mouse_down,
     mouse_up,

@@ -98,6 +98,10 @@ pub const KeyTracker = struct {
         };
     }
 
+    fn pushRepeat(self: *KeyTracker, key: KeyEvent) !void {
+        try self.pressed_this_frame.append(self.gpa, key);
+    }
+
     fn pushUp(self: *KeyTracker, key: Key) void {
         const lower_key = key.toLower();
         var idx: usize = 0;
@@ -172,6 +176,9 @@ pub const InputState = struct {
             },
             .key_up => |key| {
                 self.key_tracker.pushUp(key);
+            },
+            .key_repeat => |ev| {
+                try self.key_tracker.pushRepeat(ev);
             },
             .middle_down => self.mouse_middle_pressed = true,
             .middle_up => self.mouse_middle_released = true,
