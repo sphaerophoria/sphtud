@@ -36,16 +36,86 @@ gpa: std.mem.Allocator,
 label: gui.Label,
 // Actual text content
 text: std.ArrayList(u8),
-// Where the cursor is, in units of characters
-cursor_pos: usize,
 // Where the label should be positioned relative to its default
 // position in the box. Implements scrolling
 label_left_offs: i32,
+selection: Selection,
 shared: *const Shared,
 on_change: usize,
+state: union(enum) {
+    none,
+    dragging: struct {
+        speed: i32,
+        // Movement can accumulate slowly enough that movement doesn't happen
+        // every frame.
+        acc: f32,
+    },
+},
 widget: Widget,
 
 const Self = @This();
+
+const CharSide = enum {
+    left,
+    right,
+};
+
+const Selection = struct {
+    start: Item,
+    end: Item,
+
+    const init = Selection{
+        .start = .{ .inner = 0 },
+        .end = .{ .inner = 0 },
+    };
+
+    const Item = struct {
+        inner: usize,
+
+        fn init(idx: usize, side: CharSide) Item {
+            const offs: usize = switch (side) {
+                .left => 0,
+                .right => 1,
+            };
+            return .{ .inner = idx * 2 + offs };
+        }
+    };
+
+    fn charRange(self: Selection) ?[2]usize {
+        var left = self.start;
+        var right = self.end;
+
+        if (left.inner > right.inner) {
+            std.mem.swap(Item, &left, &right);
+        }
+
+        // One full character needs to be selected
+        if (right.inner - left.inner < 1) {
+            return null;
+        }
+
+        // Returned range is inclusive. Take the left side of the left index,
+        // and the right side of the right index. If we clicked the right side
+        // of a character on the left, we really want to start at the next
+        // character, and end at the previous if we clicked on the left side
+        // of the right character
+        //
+        // Since we've encoded as 2 indexes per char index, we can just offset
+        // inwards by one and everything works out
+        const left_idx = (left.inner + 1) / 2;
+        const right_idx = (right.inner - 1) / 2;
+
+        if (left_idx > right_idx) return null;
+
+        return .{
+            left_idx, right_idx,
+        };
+    }
+
+    fn clear(self: *Selection) void {
+        self.start = self.end;
+    }
+};
 
 pub fn init(alloc: gui.GuiAlloc, gpa: std.mem.Allocator, on_change: usize, shared: *const Shared) !Self {
     const label = try gui.Label.init(alloc, shared.label_shared, "", shared.style.text_color);
@@ -54,10 +124,11 @@ pub fn init(alloc: gui.GuiAlloc, gpa: std.mem.Allocator, on_change: usize, share
         .gpa = gpa,
         .text = .empty,
         .label = label,
-        .cursor_pos = 0,
         .label_left_offs = 0,
+        .selection = .init,
         .shared = shared,
         .on_change = on_change,
+        .state = .none,
         .widget = .{
             .focused = false,
             .size = .{
@@ -88,7 +159,33 @@ fn update(widget: *Widget, _: PixelSize, delta_s: f32) !void {
         delta_s,
     );
 
+    self.applyLabelSpeed(delta_s);
     self.updateTextPosition();
+}
+
+fn applyLabelSpeed(self: *Self, delta_s: f32) void {
+    const params = switch (self.state) {
+        .dragging => |*p| p,
+        .none => return,
+    };
+
+    if (params.speed == 0) {
+        return;
+    }
+
+    params.acc += @as(f32, @floatFromInt(params.speed)) * delta_s / 256;
+    const movement: i32 = @intFromFloat(params.acc);
+    params.acc -= @floatFromInt(movement);
+
+    self.label_left_offs -= movement;
+
+    const widget_edge_rel_text = -self.label_left_offs;
+    const ref_pos = if (params.speed < 0)
+        widget_edge_rel_text + self.shared.style.left_pad
+    else
+        widget_edge_rel_text + self.shared.style.width - self.shared.style.left_pad;
+
+    self.selection.end = self.calcSelectionItem(ref_pos);
 }
 
 fn updateTextPosition(self: *Self) void {
@@ -100,6 +197,14 @@ fn updateTextPosition(self: *Self) void {
         self.label_left_offs -= cursor_widget_offs;
     } else if (cursor_widget_offs > width) {
         self.label_left_offs -= cursor_widget_offs - width;
+    }
+
+    if (self.label.layout_bounds.max_x + self.label_left_offs < width) {
+        self.label_left_offs = width - self.label.layout_bounds.max_x;
+    }
+
+    if (self.label.layout_bounds.min_x + self.label_left_offs > 0) {
+        self.label_left_offs = 0;
     }
 }
 
@@ -122,6 +227,21 @@ fn render(widget: *Widget, widget_bounds: PixelBBox, window_bounds: PixelBBox) v
     );
 
     const text_bounds = textPixelBounds(text_left, self.label.widget.size, widget_bounds);
+
+    blk: {
+        const left_idx, const right_idx = self.selection.charRange() orelse break :blk;
+        if (left_idx >= self.label.glyph_locations.len) break :blk;
+
+        const left_glyph = self.label.glyph_locations.get(left_idx);
+        const right_glyph = self.label.glyph_locations.get(right_idx);
+
+        var selection_bounds = text_bounds;
+        selection_bounds.left = left_glyph.pixel_x1 + text_left;
+        selection_bounds.right = right_glyph.pixel_x2 + text_left;
+        const txfm = util.widgetToClipTransform(selection_bounds, window_bounds);
+        self.shared.squircle_renderer.render(.{ .r = 0, .g = 0, .b = 255, .a = 0 }, 0.0, selection_bounds, txfm);
+    }
+
     self.label.widget.render(text_bounds, window_bounds);
 
     if (widget.focused) {
@@ -137,19 +257,70 @@ fn input(widget: *Widget, widget_bounds: PixelBBox, input_bounds: PixelBBox, inp
 
     const mouse_x_pos: i32 = @intFromFloat(input_state.mouse_pos.x);
 
-    if (input_state.mouse_pressed and input_bounds.containsOptMousePos(input_state.mouse_down_location)) {
-        const text_left = textLeft(self.shared.style, self.label_left_offs, widget_bounds);
-        const mouse_x_rel_text = mouse_x_pos - text_left;
-        self.cursor_pos = closestGlyph(&self.label.glyph_locations, mouse_x_rel_text);
-        if (self.cursor_pos < self.label.glyph_locations.len) {
-            const glpyh_loc = self.label.glyph_locations.get(self.cursor_pos);
-            const glpyh_cx = @divTrunc(glpyh_loc.pixel_x1 + glpyh_loc.pixel_x2, 2);
+    if (input_state.mouse_released) {
+        self.state = .none;
+    }
 
-            if (mouse_x_rel_text >= glpyh_cx)
-                self.cursor_pos += 1;
+    const padded_widget: PixelBBox = .{
+        .left = widget_bounds.left + self.shared.style.left_pad,
+        .right = widget_bounds.right - self.shared.style.left_pad,
+        .top = widget_bounds.top,
+        .bottom = widget_bounds.bottom,
+    };
+
+    const mouse_in_input = input_bounds.containsMousePos(input_state.mouse_pos);
+    const mouse_in_padded_widget = padded_widget.containsMousePos(input_state.mouse_pos);
+    const dragging_in_padded_widget = mouse_in_padded_widget and self.state == .dragging;
+    const mouse_pressed_in_input = input_state.mouse_pressed and mouse_in_input;
+
+    const SelectionUpdate = enum {
+        // Jump to specific position
+        jump,
+        // Move some amount per frame
+        drift,
+        none,
+    };
+
+    const selection_update: SelectionUpdate =
+        if (dragging_in_padded_widget or mouse_pressed_in_input)
+            .jump
+        else if (self.state == .dragging and !widget_bounds.containsMousePos(input_state.mouse_pos))
+            .drift
+        else
+            .none;
+
+    switch (selection_update) {
+        .jump => {
+            self.selection.end = self.calcMouseSelection(widget_bounds, mouse_x_pos);
+        },
+        .drift => {
+            const widget_cx = widget_bounds.cx();
+            const ref_pos = if (input_state.mouse_pos.x >= widget_cx)
+                widget_bounds.right
+            else
+                widget_bounds.left;
+
+            self.state.dragging.speed = mouse_x_pos - ref_pos;
+        },
+        .none => {},
+    }
+
+    if (input_state.mouse_pressed) blk: {
+        self.selection.clear();
+
+        if (!input_bounds.containsOptMousePos(input_state.mouse_down_location)) {
+            break :blk;
         }
 
         widget.focused = true;
+        if (self.state != .dragging) {
+            self.state = .{
+                .dragging = .{
+                    .acc = 0,
+                    .speed = 0,
+                },
+            };
+        }
     }
 
     if (!widget.focused) return;
@@ -160,26 +331,31 @@ fn input(widget: *Widget, widget_bounds: PixelBBox, input_bounds: PixelBBox, inp
     for (frame_keys) |key| {
         switch (key.key) {
             .left_arrow => {
-                self.cursor_pos -|= 1;
+                self.setCursorPos(self.cursorPos() -| 1);
             },
             .right_arrow => {
-                self.cursor_pos = @min(self.cursor_pos + 1, self.text.items.len);
+                self.setCursorPos(@min(self.cursorPos() + 1, self.text.items.len));
             },
             .ascii => |char| {
-                try self.text.insert(self.gpa, self.cursor_pos, char);
-                self.cursor_pos += 1;
+                _ = self.removeSelectedText();
+                try self.text.insert(self.gpa, self.cursorPos(), char);
+                self.setCursorPos(self.cursorPos() + 1);
                 changed = true;
             },
             .backspace => {
-                if (self.cursor_pos > 0) {
-                    _ = self.text.orderedRemove(self.cursor_pos - 1);
-                    self.cursor_pos -= 1;
+                const removed = self.removeSelectedText();
+                changed |= removed;
+                if (!removed and self.cursorPos() > 0) {
+                    _ = self.text.orderedRemove(self.cursorPos() - 1);
+                    self.setCursorPos(self.cursorPos() - 1);
                     changed = true;
                 }
             },
             .delete => {
-                if (self.cursor_pos < self.text.items.len) {
-                    _ = self.text.orderedRemove(self.cursor_pos);
+                const removed = self.removeSelectedText();
+                changed |= removed;
+                if (!removed and self.cursorPos() < self.text.items.len) {
+                    _ = self.text.orderedRemove(self.cursorPos());
                     changed = true;
                 }
             },
@@ -192,10 +368,32 @@ fn input(widget: *Widget, widget_bounds: PixelBBox, input_bounds: PixelBBox, inp
     }
 }
 
+fn removeSelectedText(self: *Self) bool {
+    if (self.selection.charRange()) |r| {
+        self.text.replaceRangeBounded(r[0], r[1] - r[0] + 1, "") catch unreachable;
+        self.selection.clear();
+        self.setCursorPos(r[0]);
+        return true;
+    }
+
+    return false;
+}
+
 fn reset(widget: *Widget) void {
     const self: *Self = @fieldParentPtr("widget", widget);
     self.label_left_offs = 0;
-    self.cursor_pos = self.text.items.len;
+    self.selection.start = .init(0, .left);
+    self.selection.end = .init(0, .left);
+    self.state = .none;
+}
+
+fn cursorPos(self: *Self) usize {
+    return (self.selection.end.inner + 1) / 2;
+}
+
+fn setCursorPos(self: *Self, idx: usize) void {
+    self.selection.end.inner = idx * 2;
+    if (self.state != .dragging) self.selection.clear();
 }
 
 fn textLeft(style: Style, left_offs: i32, widget_bounds: PixelBBox) i32 {
@@ -232,8 +430,9 @@ fn currGlpyhLeft(label: *gui.Label, idx: usize) i32 {
 fn cursorOffset(
     self: *Self,
 ) i32 {
-    const left = currGlpyhLeft(&self.label, self.cursor_pos);
-    const right = prevGlyphRight(&self.label, self.cursor_pos);
+    const cursor_pos = self.cursorPos();
+    const left = currGlpyhLeft(&self.label, cursor_pos);
+    const right = prevGlyphRight(&self.label, cursor_pos);
 
     return @divTrunc(left + right - self.shared.style.cursor_width + 1, 2);
 }
@@ -274,4 +473,27 @@ fn closestGlyph(locs: *const GlyphLocs, x_pos: i32) usize {
     }
 
     return idx;
+}
+
+fn calcSelectionItem(self: *Self, pos_rel_text: i32) Selection.Item {
+    if (self.label.glyph_locations.len == 0) return .init(0, .left);
+
+    const char_idx = closestGlyph(&self.label.glyph_locations, pos_rel_text);
+    const glyph_loc = self.label.glyph_locations.get(char_idx);
+    const bounds_cx = @divTrunc(glyph_loc.pixel_x1 + glyph_loc.pixel_x2, 2);
+    const char_side = if (pos_rel_text > bounds_cx)
+        CharSide.right
+    else
+        CharSide.left;
+
+    return .init(char_idx, char_side);
+}
+
+fn calcMouseSelection(self: *Self, widget_bounds: gui.PixelBBox, mouse_x: i32) Selection.Item {
+    if (self.label.glyph_locations.len == 0) return .init(0, .left);
+
+    const left_pos_px = textLeft(self.shared.style, self.label_left_offs, widget_bounds);
+    const mouse_rel_text = mouse_x - left_pos_px;
+
+    return self.calcSelectionItem(mouse_rel_text);
 }
