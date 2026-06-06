@@ -8,6 +8,7 @@ pub const object_pool = @import("util/object_pool.zig");
 pub const bit_set = @import("util/bit_set.zig");
 pub const linear_map = @import("util/linear_map.zig");
 pub const binary_heap = @import("util/binary_heap.zig");
+pub const BinarySearch = @import("util/BinarySearch.zig");
 
 pub const RuntimeSegmentedList = runtime_segmented_list.RuntimeSegmentedList;
 pub const RuntimeSegmentedListUnmanaged = runtime_segmented_list.RuntimeSegmentedListUnmanaged;

@@ -29,6 +29,8 @@ pub const Shared = struct {
     style: Style,
 };
 
+const GlyphLocs = sphtud.util.RuntimeSegmentedList(TextRenderer.TextLayout.GlyphLoc);
+
 gpa: std.mem.Allocator,
 // Renders the text
 label: gui.Label,
@@ -130,11 +132,24 @@ fn render(widget: *Widget, widget_bounds: PixelBBox, window_bounds: PixelBBox) v
     }
 }
 
-fn input(widget: *Widget, _: PixelBBox, input_bounds: PixelBBox, input_state: *gui.InputState) !void {
+fn input(widget: *Widget, widget_bounds: PixelBBox, input_bounds: PixelBBox, input_state: *gui.InputState) !void {
     const self: *Self = @fieldParentPtr("widget", widget);
 
-    if (input_state.mouse_pressed) {
-        widget.focused = input_bounds.containsOptMousePos(input_state.mouse_down_location);
+    const mouse_x_pos: i32 = @intFromFloat(input_state.mouse_pos.x);
+
+    if (input_state.mouse_pressed and input_bounds.containsOptMousePos(input_state.mouse_down_location)) {
+        const text_left = textLeft(self.shared.style, self.label_left_offs, widget_bounds);
+        const mouse_x_rel_text = mouse_x_pos - text_left;
+        self.cursor_pos = closestGlyph(&self.label.glyph_locations, mouse_x_rel_text);
+        if (self.cursor_pos < self.label.glyph_locations.len) {
+            const glpyh_loc = self.label.glyph_locations.get(self.cursor_pos);
+            const glpyh_cx = @divTrunc(glpyh_loc.pixel_x1 + glpyh_loc.pixel_x2, 2);
+
+            if (mouse_x_rel_text >= glpyh_cx)
+                self.cursor_pos += 1;
+        }
+
+        widget.focused = true;
     }
 
     if (!widget.focused) return;
@@ -234,4 +249,29 @@ fn cursorPixelBounds(style: Style, cursor_left: i32, widget_bounds: PixelBBox) P
         .top = top,
         .bottom = top + cursor_height,
     };
+}
+
+fn closestGlyph(locs: *const GlyphLocs, x_pos: i32) usize {
+    var bs = sphtud.util.BinarySearch.init(locs.len);
+
+    var idx: usize = 0;
+
+    while (bs.step()) |step_idx| {
+        idx = step_idx;
+        const glyph_bounds = locs.get(idx);
+        const smaller_than_right = x_pos <= glyph_bounds.pixel_x2;
+        const larger_than_left = x_pos >= glyph_bounds.pixel_x1;
+        const is_hit = larger_than_left and smaller_than_right;
+
+        if (is_hit)
+            return idx
+        else if (smaller_than_right)
+            bs.moveLeft(idx)
+        else if (larger_than_left)
+            bs.moveRight(idx)
+        else
+            unreachable;
+    }
+
+    return idx;
 }
