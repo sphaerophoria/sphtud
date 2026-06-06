@@ -413,9 +413,9 @@ pub fn main() !void {
         const width, const height = window.getWindowSize();
 
         const now = try sphtud.io.clock_gettime(.BOOTTIME);
-        const elapsed_ms = start.durationTo(now).toMilliseconds();
-        var elapsed_s: f32 = @floatFromInt(elapsed_ms);
-        elapsed_s /= std.time.ms_per_s;
+        const elapsed_ns = start.durationTo(now).toNanoseconds();
+        var elapsed_s: f32 = @floatFromInt(elapsed_ns);
+        elapsed_s /= std.time.ns_per_s;
 
         try memory_tracker.step(now);
 
@@ -426,7 +426,7 @@ pub fn main() !void {
         gl.glClearColor(background_color.r, background_color.g, background_color.b, background_color.a);
         gl.glClear(gl.GL_COLOR_BUFFER_BIT);
 
-        try widgets.runner.step(0.1, .{
+        try widgets.runner.step(elapsed_s, .{
             .width = @intCast(width),
             .height = @intCast(height),
         }, &window.queue);
