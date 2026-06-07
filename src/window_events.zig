@@ -22,7 +22,7 @@ pub const Key = union(enum) {
     }
 };
 
-pub const KeyEvent = struct { key: Key, ctrl: bool };
+pub const KeyEvent = struct { key: Key, ctrl: bool, shift: bool };
 
 pub const MousePos = struct { x: f32, y: f32 };
 
