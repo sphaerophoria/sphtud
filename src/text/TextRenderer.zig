@@ -227,7 +227,7 @@ const LayoutHelper = struct {
         const metrics = ttf_mod.metricsForChar(self.ttf.*, c_u16);
 
         const glyph_bounds = self.calcCharBounds(metrics.left_side_bearing, c_u16) orelse {
-            self.advanceNoGlyphChar(metrics.advance_width);
+            try self.advanceNoGlyphChar(c_u16, metrics.advance_width);
             return true;
         };
 
@@ -279,13 +279,44 @@ const LayoutHelper = struct {
         self.rollback_data.start_x = self.funit_cursor_x;
     }
 
-    fn advanceNoGlyphChar(self: *LayoutHelper, advance_width: u16) void {
+    fn advanceNoGlyphChar(self: *LayoutHelper, c: u32, advance_width: u16) !void {
         self.funit_cursor_x += advance_width;
+        const px_left = self.bounds.max_x;
         self.bounds.max_x += self.funit_converter.pixelFromFunit(advance_width);
         // -1 to ensure that we stay BELOW the wrap width, or else future
         // checks will get confused about why the bounding box is >= the
         // wrap width
         self.bounds.max_x = @min(self.wrap_width_px - 1, self.bounds.max_x);
+
+        // Haven't read very thoroughly, but my vibe is kinda that...
+        //
+        // latin fonts TYPICALLY define 0 as the baseline. Ascender moves up
+        // from the baseline, descender moves down. Theoretically, there is
+        // nothing stopping both ascender and descender from being positive,
+        // and glyph authors are free to use that if it makes sense for the
+        // glyphs they are rendering
+        //
+        // HOWEVER for latin characters it will make sense to use 0, and for
+        // backwards compatibility reasons authors are almost forced to do so
+        //
+        // Other scripts(?) may do something else, and they will specify how
+        // their characters relate to the latin ones do through a BASE table
+        //
+        // https://freetype.org/freetype2/docs/glyphs/glyphs-3.html
+        // https://learn.microsoft.com/en-us/typography/opentype/spec/base
+        // https://wolthera.info/2025/04/going-in-depth-on-font-metrics/
+        //
+        // Our 0 is the funit cursor y, so use that as our Y position for
+        // characters that do not specify a bounding box
+        const baseline = self.funit_converter.pixelFromFunit(self.funit_cursor_y);
+
+        try self.glyphs.append(self.glyphloc_alloc, .{
+            .char = c,
+            .pixel_x1 = px_left,
+            .pixel_x2 = self.bounds.max_x,
+            .pixel_y1 = baseline,
+            .pixel_y2 = baseline,
+        });
     }
 
     fn doTextWrapping(self: *LayoutHelper) void {
