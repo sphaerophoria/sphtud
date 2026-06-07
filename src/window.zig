@@ -131,6 +131,7 @@ fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action
             .key_down = .{
                 .key = key_char,
                 .ctrl = (modifiers & glfwb.GLFW_MOD_CONTROL) != 0,
+                .shift = (modifiers & glfwb.GLFW_MOD_SHIFT) != 0,
             },
         }) catch |e| {
             logError("Failed to write key press", e, @errorReturnTrace());
@@ -145,6 +146,7 @@ fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action
         window.queue.pushNoClobber(.{ .key_repeat = .{
             .key = key_char,
             .ctrl = (modifiers & glfwb.GLFW_MOD_CONTROL) != 0,
+            .shift = (modifiers & glfwb.GLFW_MOD_SHIFT) != 0,
         } }) catch |e| {
             logError("Failed to write key repeat", e, @errorReturnTrace());
         };

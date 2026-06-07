@@ -80,6 +80,16 @@ const Selection = struct {
             };
             return .{ .inner = idx * 2 + offs };
         }
+
+        pub fn moveCharAmount(self: *Item, amount: i32, max: usize) void {
+            if (amount < 0) {
+                self.inner -|= @intCast(-amount * 2);
+            } else {
+                self.inner += @intCast(amount * 2);
+            }
+
+            self.inner = @min(max * 2, self.inner);
+        }
     };
 
     fn charRange(self: Selection) ?[2]usize {
@@ -268,6 +278,7 @@ fn render(widget: *Widget, widget_bounds: PixelBBox, window_bounds: PixelBBox) v
     blk: {
         const left_idx, const right_idx = self.selection.charRange() orelse break :blk;
         if (left_idx >= self.label.glyph_locations.len) break :blk;
+        if (right_idx >= self.label.glyph_locations.len) break :blk;
 
         const left_glyph = self.label.glyph_locations.get(left_idx);
         const right_glyph = self.label.glyph_locations.get(right_idx);
@@ -391,10 +402,16 @@ fn input(widget: *Widget, widget_bounds: PixelBBox, input_bounds: PixelBBox, inp
             },
             .key => |ev| switch (key_mapper.lookup(ev)) {
                 .move_left => {
-                    self.setCursorPos(self.cursorPos() -| 1);
+                    self.selection.end.moveCharAmount(-1, self.text.items.len);
+                    if (!ev.shift) {
+                        self.selection.clear();
+                    }
                 },
                 .move_right => {
-                    self.setCursorPos(@min(self.cursorPos() + 1, self.text.items.len));
+                    self.selection.end.moveCharAmount(1, self.text.items.len);
+                    if (!ev.shift) {
+                        self.selection.clear();
+                    }
                 },
                 .select_all => {
                     self.selection.start = .init(0, .left);
@@ -437,10 +454,16 @@ fn input(widget: *Widget, widget_bounds: PixelBBox, input_bounds: PixelBBox, inp
                     }
                 },
                 .jump_line_start => {
-                    self.setCursorPos(0);
+                    self.selection.end = .init(0, .left);
+                    if (!ev.shift) {
+                        self.selection.clear();
+                    }
                 },
                 .jump_line_end => {
-                    self.setCursorPos(self.text.items.len);
+                    self.selection.end = .init(self.text.items.len, .left);
+                    if (!ev.shift) {
+                        self.selection.clear();
+                    }
                 },
                 .none => {},
             },
