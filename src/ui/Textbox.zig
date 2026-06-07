@@ -396,6 +396,10 @@ fn input(widget: *Widget, widget_bounds: PixelBBox, input_bounds: PixelBBox, inp
                 .move_right => {
                     self.setCursorPos(@min(self.cursorPos() + 1, self.text.items.len));
                 },
+                .select_all => {
+                    self.selection.start = .init(0, .left);
+                    self.selection.end = .init(self.text.items.len, .left);
+                },
                 .backspace => {
                     const removed = self.removeSelectedText();
                     changed |= removed;

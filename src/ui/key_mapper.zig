@@ -3,6 +3,7 @@ const sphtud = @import("../sphtud.zig");
 pub const Action = enum {
     move_left,
     move_right,
+    select_all,
     backspace,
     delete,
     none,
@@ -10,10 +11,22 @@ pub const Action = enum {
 
 pub fn lookup(ev: sphtud.ui.KeyEvent) Action {
     if (ev.ctrl) {
-        return .none;
+        return lookupCtrl(ev.key);
     }
 
     return lookupNoMods(ev.key);
+}
+
+fn lookupCtrl(key: sphtud.ui.Key) Action {
+    switch (key) {
+        .ascii => |c| {
+            switch (c) {
+                'a' => return .select_all,
+                else => return .none,
+            }
+        },
+        else => return .none,
+    }
 }
 
 fn lookupNoMods(key: sphtud.ui.Key) Action {
