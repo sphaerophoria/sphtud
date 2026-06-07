@@ -436,6 +436,12 @@ fn input(widget: *Widget, widget_bounds: PixelBBox, input_bounds: PixelBBox, inp
                         changed = true;
                     }
                 },
+                .jump_line_start => {
+                    self.setCursorPos(0);
+                },
+                .jump_line_end => {
+                    self.setCursorPos(self.text.items.len);
+                },
                 .none => {},
             },
         }

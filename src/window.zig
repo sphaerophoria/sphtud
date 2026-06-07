@@ -120,6 +120,8 @@ fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action
         glfwb.GLFW_KEY_BACKSPACE => .backspace,
         glfwb.GLFW_KEY_DELETE => .delete,
         glfwb.GLFW_KEY_ESCAPE => .escape,
+        glfwb.GLFW_KEY_HOME => .home,
+        glfwb.GLFW_KEY_END => .end,
         glfwb.GLFW_KEY_EQUAL => .{ .ascii = '=' },
         else => return,
     };

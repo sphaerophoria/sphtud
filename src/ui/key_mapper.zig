@@ -8,6 +8,8 @@ pub const Action = enum {
     backspace_word,
     delete,
     delete_word,
+    jump_line_start,
+    jump_line_end,
     none,
 };
 
@@ -39,6 +41,8 @@ fn lookupNoMods(key: sphtud.ui.Key) Action {
         .right_arrow => .move_right,
         .backspace => .backspace,
         .delete => .delete,
+        .home => .jump_line_start,
+        .end => .jump_line_end,
         else => .none,
     };
 }

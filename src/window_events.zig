@@ -7,6 +7,8 @@ pub const Key = union(enum) {
     backspace,
     delete,
     escape,
+    home,
+    end,
 
     pub fn eql(self: Key, other: Key) bool {
         return std.meta.eql(self, other);
