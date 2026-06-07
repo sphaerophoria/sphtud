@@ -10,6 +10,7 @@ const Color = gui.Color;
 const PixelSize = gui.PixelSize;
 const PixelBBox = gui.PixelBBox;
 const TextRenderer = sphtext.TextRenderer;
+const key_mapper = gui.key_mapper;
 
 pub const Style = struct {
     background_color: Color,
@@ -366,41 +367,54 @@ fn input(widget: *Widget, widget_bounds: PixelBBox, input_bounds: PixelBBox, inp
 
     if (!widget.focused) return;
 
-    const frame_keys = input_state.key_tracker.pressed_this_frame.items;
+    const frame_items = input_state.key_tracker.pressed_this_frame.items;
     var changed = false;
 
-    for (frame_keys) |key| {
-        switch (key.key) {
-            .left_arrow => {
-                self.setCursorPos(self.cursorPos() -| 1);
-            },
-            .right_arrow => {
-                self.setCursorPos(@min(self.cursorPos() + 1, self.text.items.len));
-            },
-            .ascii => |char| {
+    for (frame_items) |item| {
+        switch (item) {
+            .codepoint => |c| {
                 _ = self.removeSelectedText();
-                try self.text.insert(self.gpa, self.cursorPos(), char);
+                const codepoint_u21: u21 = std.math.cast(u21, c) orelse {
+                    std.log.err("Invalid codepoint 0x{x}\n", .{c});
+                    continue;
+                };
+
+                var encoded: [4]u8 = undefined;
+                const encoded_len = std.unicode.utf8Encode(codepoint_u21, &encoded) catch {
+                    std.log.err("Invalid codepoint 0x{x}\n", .{c});
+                    continue;
+                };
+
+                try self.text.insertSlice(self.gpa, self.cursorPos(), encoded[0..encoded_len]);
                 self.setCursorPos(self.cursorPos() + 1);
                 changed = true;
             },
-            .backspace => {
-                const removed = self.removeSelectedText();
-                changed |= removed;
-                if (!removed and self.cursorPos() > 0) {
-                    _ = self.text.orderedRemove(self.cursorPos() - 1);
-                    self.setCursorPos(self.cursorPos() - 1);
-                    changed = true;
-                }
+            .key => |ev| switch (key_mapper.lookup(ev)) {
+                .move_left => {
+                    self.setCursorPos(self.cursorPos() -| 1);
+                },
+                .move_right => {
+                    self.setCursorPos(@min(self.cursorPos() + 1, self.text.items.len));
+                },
+                .backspace => {
+                    const removed = self.removeSelectedText();
+                    changed |= removed;
+                    if (!removed and self.cursorPos() > 0) {
+                        _ = self.text.orderedRemove(self.cursorPos() - 1);
+                        self.setCursorPos(self.cursorPos() - 1);
+                        changed = true;
+                    }
+                },
+                .delete => {
+                    const removed = self.removeSelectedText();
+                    changed |= removed;
+                    if (!removed and self.cursorPos() < self.text.items.len) {
+                        _ = self.text.orderedRemove(self.cursorPos());
+                        changed = true;
+                    }
+                },
+                .none => {},
             },
-            .delete => {
-                const removed = self.removeSelectedText();
-                changed |= removed;
-                if (!removed and self.cursorPos() < self.text.items.len) {
-                    _ = self.text.orderedRemove(self.cursorPos());
-                    changed = true;
-                }
-            },
-            else => {},
         }
     }
 

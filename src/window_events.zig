@@ -28,6 +28,7 @@ pub const WindowAction = union(enum) {
     key_down: KeyEvent,
     key_up: Key,
     key_repeat: KeyEvent,
+    codepoint: u32,
     mouse_move: MousePos,
     mouse_down,
     mouse_up,

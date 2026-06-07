@@ -39,6 +39,7 @@ pub const Runner = @import("ui/Runner.zig");
 pub const Centered = @import("ui/Centered.zig");
 
 pub const EventQueue = std.ArrayList(usize);
+pub const key_mapper = @import("ui/key_mapper.zig");
 
 test {
     std.testing.refAllDecls(@This());
@@ -49,13 +50,18 @@ pub const KeyEvent = sphwindow_events.KeyEvent;
 pub const WindowAction = sphwindow_events.WindowAction;
 pub const MousePos = sphwindow_events.MousePos;
 
+pub const InputEvent = union(enum) {
+    key: KeyEvent,
+    codepoint: u32,
+};
+
 pub const KeyTracker = struct {
     const max_pressed_keys = 16;
 
     gpa: std.mem.Allocator,
     // always lower case
     held_keys: std.ArrayList(Key) = .empty,
-    pressed_this_frame: std.ArrayList(KeyEvent),
+    pressed_this_frame: std.ArrayList(InputEvent),
 
     pub fn init(gpa: Allocator) !KeyTracker {
         return .{
@@ -83,7 +89,7 @@ pub const KeyTracker = struct {
     }
 
     fn pushDown(self: *KeyTracker, key: KeyEvent) !void {
-        try self.pressed_this_frame.append(self.gpa, key);
+        try self.pressed_this_frame.append(self.gpa, .{ .key = key });
 
         const lower_key = key.key.toLower();
         for (self.held_keys.items) |held| {
@@ -98,8 +104,12 @@ pub const KeyTracker = struct {
         };
     }
 
+    fn pushCodepoint(self: *KeyTracker, codepoint: u32) !void {
+        try self.pressed_this_frame.append(self.gpa, .{ .codepoint = codepoint });
+    }
+
     fn pushRepeat(self: *KeyTracker, key: KeyEvent) !void {
-        try self.pressed_this_frame.append(self.gpa, key);
+        try self.pressed_this_frame.append(self.gpa, .{ .key = key });
     }
 
     fn pushUp(self: *KeyTracker, key: Key) void {
@@ -173,6 +183,9 @@ pub const InputState = struct {
             },
             .key_down => |ev| {
                 try self.key_tracker.pushDown(ev);
+            },
+            .codepoint => |codepoint| {
+                try self.key_tracker.pushCodepoint(codepoint);
             },
             .key_up => |key| {
                 self.key_tracker.pushUp(key);
