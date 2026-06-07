@@ -409,6 +409,25 @@ fn input(widget: *Widget, widget_bounds: PixelBBox, input_bounds: PixelBBox, inp
                         changed = true;
                     }
                 },
+                .backspace_word => {
+                    const removed = self.removeSelectedText();
+                    changed |= removed;
+                    if (!removed) {
+                        const start_idx = advanceWordBackward(self.text.items, self.cursorPos());
+                        self.selection.start = .init(start_idx, .left);
+                        changed |= self.removeSelectedText();
+                    }
+                },
+                .delete_word => {
+                    const removed = self.removeSelectedText();
+                    changed |= removed;
+
+                    if (!removed) {
+                        const end_idx = advanceWordForward(self.text.items, self.cursorPos());
+                        self.selection.end = .init(end_idx, .left);
+                        changed |= self.removeSelectedText();
+                    }
+                },
                 .delete => {
                     const removed = self.removeSelectedText();
                     changed |= removed;
@@ -573,4 +592,45 @@ fn calcMouseSelection(self: *Self, widget_bounds: gui.PixelBBox, mouse_x: i32) S
     const mouse_rel_text = mouse_x - left_pos_px;
 
     return calcClosestSelectionItem(&self.label.glyph_locations, mouse_rel_text);
+}
+
+fn optIsWhitespace(opt: ?u8) bool {
+    const idx = opt orelse return false;
+    return std.ascii.isWhitespace(idx);
+}
+
+fn consumeWordWithExtraWs(it: anytype) bool {
+    while (optIsWhitespace(it.next())) {}
+
+    while (it.next()) |c| {
+        if (std.ascii.isWhitespace(c)) return true;
+    }
+
+    return false;
+}
+
+fn advanceWordForward(text: []const u8, idx: usize) usize {
+    var it = sphtud.util.ForwardIter(u8){
+        .items = text,
+        .idx = @min(text.len, idx),
+    };
+
+    if (consumeWordWithExtraWs(&it)) {
+        return it.idx - 1;
+    }
+
+    return it.idx;
+}
+
+fn advanceWordBackward(text: []const u8, idx: usize) usize {
+    var it = std.mem.ReverseIterator([]const u8){
+        .ptr = text.ptr,
+        .index = @min(text.len, idx),
+    };
+
+    if (consumeWordWithExtraWs(&it)) {
+        return it.index + 1;
+    }
+
+    return it.index;
 }

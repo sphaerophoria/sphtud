@@ -5,7 +5,9 @@ pub const Action = enum {
     move_right,
     select_all,
     backspace,
+    backspace_word,
     delete,
+    delete_word,
     none,
 };
 
@@ -25,6 +27,8 @@ fn lookupCtrl(key: sphtud.ui.Key) Action {
                 else => return .none,
             }
         },
+        .backspace => return .backspace_word,
+        .delete => return .delete_word,
         else => return .none,
     }
 }

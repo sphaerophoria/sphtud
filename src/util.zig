@@ -81,6 +81,20 @@ pub const IdAlloc = struct {
     }
 };
 
+// Forward version of std.mem.reverseIterator lol
+pub fn ForwardIter(comptime T: type) type {
+    return struct {
+        items: []const T,
+        idx: usize,
+
+        pub fn next(self: *@This()) ?T {
+            if (self.idx >= self.items.len) return null;
+            defer self.idx += 1;
+            return self.items[self.idx];
+        }
+    };
+}
+
 test {
     std.testing.refAllDecls(@This());
 }
