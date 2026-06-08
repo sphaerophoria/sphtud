@@ -317,7 +317,6 @@ const LayoutHelper = struct {
             .pixel_y1 = baseline,
             .pixel_y2 = baseline,
         });
-
     }
 
     fn doTextWrapping(self: *LayoutHelper) void {

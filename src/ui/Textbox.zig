@@ -473,7 +473,7 @@ fn input(widget: *Widget, widget_bounds: PixelBBox, input_bounds: PixelBBox, inp
                     }
                 },
                 .none => {},
-            }
+            },
         }
     }
 

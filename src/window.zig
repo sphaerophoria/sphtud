@@ -110,21 +110,21 @@ fn keyCallbackGlfw(glfw_window: ?*glfwb.GLFWwindow, key: c_int, _: c_int, action
     const window: *Window = @ptrCast(@alignCast(glfwb.glfwGetWindowUserPointer(glfw_window)));
 
     const key_char: sphwindow_events.Key = switch (key) {
-         glfwb.GLFW_KEY_A...glfwb.GLFW_KEY_Z => blk: {
-             const base_char: u8 = if (modifiers & glfwb.GLFW_MOD_SHIFT != 0) 'A' else 'a';
-             break :blk .{ .ascii = @intCast(key - glfwb.GLFW_KEY_A + base_char) };
-         },
-         glfwb.GLFW_KEY_GRAVE_ACCENT => .{ .ascii = @intCast('`') },
-         glfwb.GLFW_KEY_COMMA...glfwb.GLFW_KEY_9 => .{ .ascii = @intCast(key - glfwb.GLFW_KEY_COMMA + ',') },
-         glfwb.GLFW_KEY_SPACE => .{ .ascii = ' ' },
-         glfwb.GLFW_KEY_LEFT => .left_arrow,
-         glfwb.GLFW_KEY_RIGHT => .right_arrow,
-         glfwb.GLFW_KEY_BACKSPACE => .backspace,
-         glfwb.GLFW_KEY_DELETE => .delete,
-         glfwb.GLFW_KEY_ESCAPE => .escape,
-         glfwb.GLFW_KEY_HOME => .home,
-         glfwb.GLFW_KEY_END => .end,
-         glfwb.GLFW_KEY_EQUAL => .{ .ascii = '=' },
+        glfwb.GLFW_KEY_A...glfwb.GLFW_KEY_Z => blk: {
+            const base_char: u8 = if (modifiers & glfwb.GLFW_MOD_SHIFT != 0) 'A' else 'a';
+            break :blk .{ .ascii = @intCast(key - glfwb.GLFW_KEY_A + base_char) };
+        },
+        glfwb.GLFW_KEY_GRAVE_ACCENT => .{ .ascii = @intCast('`') },
+        glfwb.GLFW_KEY_COMMA...glfwb.GLFW_KEY_9 => .{ .ascii = @intCast(key - glfwb.GLFW_KEY_COMMA + ',') },
+        glfwb.GLFW_KEY_SPACE => .{ .ascii = ' ' },
+        glfwb.GLFW_KEY_LEFT => .left_arrow,
+        glfwb.GLFW_KEY_RIGHT => .right_arrow,
+        glfwb.GLFW_KEY_BACKSPACE => .backspace,
+        glfwb.GLFW_KEY_DELETE => .delete,
+        glfwb.GLFW_KEY_ESCAPE => .escape,
+        glfwb.GLFW_KEY_HOME => .home,
+        glfwb.GLFW_KEY_END => .end,
+        glfwb.GLFW_KEY_EQUAL => .{ .ascii = '=' },
         else => return,
     };
 
