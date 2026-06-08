@@ -418,6 +418,40 @@ fn input(widget: *Widget, widget_bounds: PixelBBox, input_bounds: PixelBBox, inp
                         changed |= word_start != word_end;
                     }
                 },
+                .delete_word => {
+                    const removed = self.removeSelectedText();
+                    changed |= removed;
+
+                    if (!removed) {
+                        const word_start = @min(self.text.items.len, self.cursorPos());
+                        var word_end: usize = word_start;
+
+                        // Advance while whitespace
+                        while (word_end < self.text.items.len) {
+                            const c = self.text.items[word_end];
+                            std.debug.assert(std.ascii.isAscii(c));
+                            if (!std.ascii.isWhitespace(c)) {
+                                break;
+                            }
+                            word_end += 1;
+                        }
+
+                        // Advance while not whitespace
+                        while (word_end < self.text.items.len) {
+                            const c = self.text.items[word_end];
+                            std.debug.assert(std.ascii.isAscii(c));
+                            if (std.ascii.isWhitespace(c)) {
+                                word_end = @min(word_end + 1, self.text.items.len);
+                                break;
+                            }
+                            word_end += 1;
+                        }
+
+                        try self.text.replaceRangeBounded(word_start, word_end - word_start, "");
+                        self.setCursorPos(word_start);
+                        changed |= word_start != word_end;
+                    }
+                },
                 .delete => {
                     const removed = self.removeSelectedText();
                     changed |= removed;
