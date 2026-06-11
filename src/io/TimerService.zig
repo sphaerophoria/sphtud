@@ -108,7 +108,7 @@ pub fn rearm(self: *TimerService, id: TimerHandle, timeout: std.Io.Duration) !vo
     timer.timestamp = now.addDuration(timeout);
 
     if (self.timestampIsSoonest(timer.timestamp)) {
-        try sphio.timerfd_settime(self.fd, timer.timestamp);
+        try sphio.timerfd_settime(self.fd, .{ .abs = timer.timestamp }, .zero);
     }
 
     try self.queue.push(self.expansion, self.queueCtx(), id);
@@ -158,7 +158,7 @@ pub fn service(self: *TimerService, loop: *sphio.Loop) !void {
         try loop.pushEvent(next.callback);
     }
 
-    try sphio.timerfd_settime(self.fd, next.timestamp);
+    try sphio.timerfd_settime(self.fd, .{ .abs = next.timestamp }, .zero);
 }
 
 fn clearTimer(self: *TimerService) !void {

@@ -1,4 +1,4 @@
-const process_include_paths = @import("build/process_include_paths.zig");
+pub const process_include_paths = @import("build/process_include_paths.zig");
 const std = @import("std");
 
 pub fn mkStrongDyn(b: *std.Build, sphtud_dep: *std.Build.Dependency, bindings: *std.Build.Module, fn_list: []const u8) *std.Build.Module {

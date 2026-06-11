@@ -95,7 +95,8 @@ pub const Writer = struct {
         const self: *Writer = @fieldParentPtr("interface", w);
 
         var iovs: [std.Io.Threaded.max_iovecs_len]std.posix.iovec_const = undefined;
-        var builder = WritevBuilder.init(&iovs);
+        var splat_buf: [4096]u8 = undefined;
+        var builder = WritevBuilder.init(&iovs, &splat_buf);
         _ = builder.pushVec(w.buffered());
         builder.pushData(data, splat);
 
@@ -106,12 +107,14 @@ pub const Writer = struct {
 
 const WritevBuilder = struct {
     iovs: []std.posix.iovec_const,
+    splat_buf: []u8,
     next_iov: usize,
 
-    fn init(iovs: []std.posix.iovec_const) WritevBuilder {
+    fn init(iovs: []std.posix.iovec_const, splat_buf: []u8) WritevBuilder {
         std.debug.assert(iovs.len > 0);
         return .{
             .iovs = iovs,
+            .splat_buf = splat_buf,
             .next_iov = 0,
         };
     }
@@ -139,16 +142,21 @@ const WritevBuilder = struct {
             if (b.pushVec(v)) break;
         }
 
-        switch (splat) {
-            0 => {},
-            1 => _ = b.pushVec(segmented.to_splat),
-            // Splat parameter definition is sitting around std.Io.Writer's vtable
-            // A good place to look would be in netWrite in std.Io.Threaded, on last look we found there are 3 cases
-            // * A single character splat optimization that pre-memsets a
-            //   larger buffer to be appended many times to the iovec
-            // * A 0 character splat, which resulted in nothing
-            // * A 2+ character splat which just appends many times
-            else => @panic("TODO handle splat"),
+        // memset style optimization
+        if (segmented.to_splat.len == 1) {
+            const per_buf_splat = @min(b.splat_buf.len, splat);
+            const buf = b.splat_buf[0..per_buf_splat];
+            @memset(buf, segmented.to_splat[0]);
+            var remaining = splat;
+            while (remaining > 0) {
+                const this_buf_len = @min(remaining, per_buf_splat);
+                if (b.pushVec(buf[0..this_buf_len])) break;
+                remaining -= this_buf_len;
+            }
+        } else {
+            for (0..splat) |_| {
+                if (b.pushVec(segmented.to_splat)) break;
+            }
         }
     }
 
@@ -165,6 +173,79 @@ const WritevBuilder = struct {
         };
     }
 };
+
+test "WritevBuilder standard" {
+    const data: []const []const u8 = &.{
+        "hello",
+        "world",
+    };
+
+    var iov_buf: [std.Io.Threaded.max_iovecs_len]std.posix.iovec_const = undefined;
+    var splat_buf: [4096]u8 = undefined;
+    var b = WritevBuilder.init(&iov_buf, &splat_buf);
+    b.pushData(data, 1);
+    const iovs = b.getIovs();
+
+    try std.testing.expectEqual(2, iovs.len);
+    try std.testing.expectEqualStrings("hello", iovs[0].base[0..iovs[0].len]);
+    try std.testing.expectEqualStrings("world", iovs[1].base[0..iovs[1].len]);
+}
+
+test "WritevBuilder splat" {
+    const data: []const []const u8 = &.{
+        "hello",
+        "world",
+    };
+
+    var iov_buf: [std.Io.Threaded.max_iovecs_len]std.posix.iovec_const = undefined;
+    var splat_buf: [4096]u8 = undefined;
+    var b = WritevBuilder.init(&iov_buf, &splat_buf);
+    b.pushData(data, 4);
+    const iovs = b.getIovs();
+
+    try std.testing.expectEqual(5, iovs.len);
+    try std.testing.expectEqualStrings("hello", iovs[0].base[0..iovs[0].len]);
+    try std.testing.expectEqualStrings("world", iovs[1].base[0..iovs[1].len]);
+    try std.testing.expectEqualStrings("world", iovs[2].base[0..iovs[2].len]);
+    try std.testing.expectEqualStrings("world", iovs[3].base[0..iovs[3].len]);
+    try std.testing.expectEqualStrings("world", iovs[4].base[0..iovs[4].len]);
+}
+
+test "WritevBuilder overflow" {
+    const data: []const []const u8 = &.{
+        "hello",
+        "world",
+    };
+
+    var iov_buf: [1]std.posix.iovec_const = undefined;
+    var splat_buf: [4096]u8 = undefined;
+    var b = WritevBuilder.init(&iov_buf, &splat_buf);
+    b.pushData(data, 4);
+    const iovs = b.getIovs();
+
+    try std.testing.expectEqual(1, iovs.len);
+    try std.testing.expectEqualStrings("hello", iovs[0].base[0..iovs[0].len]);
+}
+
+test "WritevBuilder splat single char" {
+    const data: []const []const u8 = &.{
+        "hello",
+        "world",
+        "a",
+    };
+
+    var iov_buf: [std.Io.Threaded.max_iovecs_len]std.posix.iovec_const = undefined;
+    var splat_buf: [4096]u8 = undefined;
+    var b = WritevBuilder.init(&iov_buf, &splat_buf);
+    b.pushData(data, 8000);
+    const iovs = b.getIovs();
+
+    try std.testing.expectEqual(4, iovs.len);
+    try std.testing.expectEqualStrings("hello", iovs[0].base[0..iovs[0].len]);
+    try std.testing.expectEqualStrings("world", iovs[1].base[0..iovs[1].len]);
+    try std.testing.expectEqualStrings("a" ** 4096, iovs[2].base[0..iovs[2].len]);
+    try std.testing.expectEqualStrings("a" ** 3904, iovs[3].base[0..iovs[3].len]);
+}
 
 pub fn fcntl(fd: std.posix.fd_t, op: c_int, param: c_int) !c_int {
     while (true) {
@@ -188,6 +269,18 @@ pub fn getsockopt(fd: i32, level: i32, optname: u32, noalias optval: [*]u8, noal
             return error.GetSockOpt;
         },
     }
+}
+
+pub const BlockMode = enum {
+    block,
+    nonblock,
+};
+
+pub fn setBlockMode(fd: std.posix.fd_t, block_mode: BlockMode) !void {
+    const flags = try fcntl(fd, system.F.GETFL, 0);
+    var flags_o: system.O = @bitCast(flags);
+    flags_o.NONBLOCK = if (block_mode == .block) false else true;
+    _ = try fcntl(fd, system.F.SETFL, @bitCast(flags_o));
 }
 
 pub fn socket(domain: u32, typ: u32, proto: u32) !std.posix.fd_t {
@@ -229,6 +322,57 @@ pub fn connect(sockfd: c_int, addr: std.Io.net.IpAddress) !bool {
             else => return error.Connect,
         }
     }
+}
+
+pub fn bindUnix(sockfd: c_int, addr: std.Io.net.UnixAddress) !void {
+    var posix_addr: UnixAddress = undefined;
+    const addr_len = addressUnixToPosix(&addr, &posix_addr);
+    while (true) {
+        const rc = system.bind(sockfd, &posix_addr.any, addr_len);
+        switch (system.errno(rc)) {
+            .SUCCESS => return,
+            .INTR => continue,
+            .ADDRINUSE => return error.AddressInUse,
+            else => return error.Bind,
+        }
+    }
+}
+pub fn connectUnix(sockfd: c_int, addr: std.Io.net.UnixAddress) !void {
+    var posix_addr: UnixAddress = undefined;
+    const addr_len = addressUnixToPosix(&addr, &posix_addr);
+
+    while (true) {
+        const rc = system.connect(sockfd, &posix_addr.any, addr_len);
+        switch (system.errno(rc)) {
+            .SUCCESS => return,
+            .INTR => continue,
+            .ALREADY => return error.AlreadyConnecting,
+            .ISCONN => return error.AlreadyConnected,
+            else => return error.Connect,
+        }
+    }
+}
+
+const UnixAddress = extern union {
+    any: system.sockaddr,
+    un: system.sockaddr.un,
+};
+
+fn addressUnixToPosix(a: *const std.Io.net.UnixAddress, storage: *UnixAddress) system.socklen_t {
+    storage.un.family = system.AF.UNIX;
+
+    var path_len = a.path.len;
+
+    // With the AFD API, `sockaddr.un` is purely informational, so
+    // use a suffix which is usually the most relevant part of a path.
+    @memcpy(storage.un.path[0..path_len], a.path);
+    if (storage.un.path.len - path_len > 0) {
+        @branchHint(.likely);
+        storage.un.path[path_len] = 0;
+        path_len += 1;
+    }
+
+    return @intCast(@offsetOf(system.sockaddr.un, "path") + path_len);
 }
 
 pub fn listen(sockfd: c_int, backlog: u32) !void {
@@ -318,15 +462,17 @@ pub fn pwritev2(fd: i32, iov: []const std.posix.iovec_const, offset: i64, flags:
     }
 }
 
-pub fn setNonblock(fd: std.posix.fd_t) !void {
-    var flags: system.O = @bitCast(try fcntl(fd, system.F.GETFL, 0));
-    flags.NONBLOCK = true;
-    _ = try fcntl(fd, system.F.SETFL, @bitCast(flags));
-}
-
 pub fn close(fd: std.posix.fd_t) void {
     // What would we even do if we failed :)
     _ = system.close(fd);
+}
+
+pub fn unlink(path: [:0]const u8) !void {
+    const rc = system.unlink(path);
+    switch (system.errno(rc)) {
+        .SUCCESS => return,
+        else => return error.Unlink,
+    }
 }
 
 pub fn read(fd: std.posix.fd_t, buf: []u8) !usize {
@@ -341,21 +487,90 @@ pub fn read(fd: std.posix.fd_t, buf: []u8) !usize {
     }
 }
 
-// * i moved
-// * doorbell rings my phone
-// * i don't like the phone
-// * SIP client
-// * we write our own
-// * zig 0.16
-// * new io implementation
-// * multi-thread DNS Lookup
-// * personally disagree with how every single programmer does io in the entire world
-
 pub fn open(path: [:0]const u8, flags: system.O, perm: system.mode_t) !std.posix.fd_t {
     const rc = system.open(path.ptr, flags, perm);
     switch (system.errno(rc)) {
         .SUCCESS => return @intCast(rc),
         else => return error.Open,
+    }
+}
+
+pub fn openat(dir: std.posix.fd_t, path: [:0]const u8, flags: system.O, perm: system.mode_t) !std.posix.fd_t {
+    const rc = system.openat(dir, path.ptr, flags, perm);
+    switch (system.errno(rc)) {
+        .SUCCESS => return @intCast(rc),
+        else => return error.Open,
+    }
+}
+
+pub const DirIter = struct {
+    fd: std.posix.fd_t,
+    buffer: []align(@alignOf(usize)) u8,
+    seek: usize,
+    end: usize,
+
+    pub fn init(dir_fd: std.posix.fd_t, buf: []align(@alignOf(usize)) u8) DirIter {
+        return .{
+            .fd = dir_fd,
+            .buffer = buf,
+            .seek = 0,
+            .end = 0,
+        };
+    }
+
+    pub const Entry = struct {
+        name: [:0]const u8,
+        kind: std.Io.File.Kind,
+        inode: std.Io.File.INode,
+    };
+
+    pub fn next(self: *DirIter) !?Entry {
+        if (self.bufferedEntry()) |e| return e;
+
+        const rc = system.getdents64(self.fd, self.buffer.ptr, self.buffer.len);
+        const len_bytes: usize = switch (system.errno(rc)) {
+            .SUCCESS => @intCast(rc),
+            else => return error.GetDents,
+        };
+        self.seek = 0;
+        self.end = len_bytes;
+
+        return self.bufferedEntry();
+    }
+
+    fn bufferedEntry(self: *DirIter) ?Entry {
+        if (self.end - self.seek < @sizeOf(system.dirent64)) return null;
+        const header = std.mem.bytesAsValue(system.dirent64, self.buffer[self.seek..self.end]);
+
+        const name_ptr: [*]const u8 = &header.name;
+        var name_len: usize = header.reclen - @offsetOf(system.dirent64, "name");
+        name_len = std.mem.findScalar(u8, name_ptr[0..name_len], 0).?;
+        self.seek += header.reclen;
+
+        return .{
+            .name = name_ptr[0..name_len :0],
+            .kind = switch (header.type) {
+                system.DT.BLK => .block_device,
+                system.DT.CHR => .character_device,
+                system.DT.DIR => .directory,
+                system.DT.FIFO => .named_pipe,
+                system.DT.LNK => .sym_link,
+                system.DT.REG => .file,
+                system.DT.SOCK => .unix_domain_socket,
+                system.DT.UNKNOWN => .unknown,
+                // FIXME: Should this be an error??
+                else => .unknown,
+            },
+            .inode = header.ino,
+        };
+    }
+};
+
+pub fn statx(dir_fd: std.posix.fd_t, path: [:0]const u8, flags: u32, mask: system.STATX) !system.Statx {
+    var ret: system.Statx = undefined;
+    switch (system.errno(system.statx(dir_fd, path, flags, mask, &ret))) {
+        .SUCCESS => return ret,
+        else => return error.Statx,
     }
 }
 
@@ -410,21 +625,37 @@ pub fn timerfd_create(clockid: system.timerfd_clockid_t) !std.posix.fd_t {
     }
 }
 
-pub fn timerfd_settime(fd: i32, timeout: std.Io.Timestamp) !void {
-    const nanoseconds = timeout.toNanoseconds();
+pub const Timeout = union(enum) {
+    abs: std.Io.Timestamp,
+    rel: std.Io.Duration,
+
+    pub fn toNanoseconds(self: Timeout) i96 {
+        switch (self) {
+            inline else => |v| return v.toNanoseconds(),
+        }
+    }
+};
+
+pub fn timerfd_settime(fd: i32, timeout: Timeout, interval: std.Io.Duration) !void {
+    const timeout_ns = timeout.toNanoseconds();
+    const interval_ns = interval.toNanoseconds();
 
     var spec = system.itimerspec{
         .it_interval = .{
-            .nsec = 0,
-            .sec = 0,
+            .sec = @intCast(@divFloor(interval_ns, std.time.ns_per_s)),
+            .nsec = @intCast(@mod(interval_ns, std.time.ns_per_s)),
         },
         .it_value = .{
-            .sec = @intCast(@divFloor(nanoseconds, std.time.ns_per_s)),
-            .nsec = @intCast(@mod(nanoseconds, std.time.ns_per_s)),
+            .sec = @intCast(@divFloor(timeout_ns, std.time.ns_per_s)),
+            .nsec = @intCast(@mod(timeout_ns, std.time.ns_per_s)),
         },
     };
 
-    const rc = system.timerfd_settime(fd, .{ .ABSTIME = true }, &spec, null);
+    const flags: system.TFD.TIMER = switch (timeout) {
+        .abs => .{ .ABSTIME = true },
+        .rel => .{ .ABSTIME = false },
+    };
+    const rc = system.timerfd_settime(fd, flags, &spec, null);
     switch (system.errno(rc)) {
         .SUCCESS => return,
         else => return error.TimerfdSettime,
@@ -453,6 +684,23 @@ pub fn clock_gettime(clk_id: system.clockid_t) !std.Io.Timestamp {
             };
         },
         else => return error.ClockGetTime,
+    }
+}
+
+pub fn nanosleep(timeout: std.Io.Duration) !void {
+    const timeout_ns = timeout.toNanoseconds();
+    var timespec: system.timespec = .{
+        .sec = @intCast(@divFloor(timeout_ns, std.time.ns_per_s)),
+        .nsec = @intCast(@mod(timeout_ns, std.time.ns_per_s)),
+    };
+
+    while (true) {
+        switch (system.errno(system.nanosleep(&timespec, &timespec))) {
+            .INTR => {
+                continue;
+            },
+            else => break,
+        }
     }
 }
 
@@ -497,6 +745,16 @@ pub fn recvfrom(
             else => return error.RecvFrom,
         }
     }
+}
+
+// Copy pasted from musl #define makedev
+pub fn makeDev(x: u32, y: u32) u64 {
+    const x_64: u64 = @intCast(x);
+    const y_64: u64 = @intCast(y);
+    return (((x_64) & 0xfffff000) << 32) |
+        (((x_64) & 0x00000fff) << 8) |
+        (((y_64) & 0xffffff00) << 12) |
+        (((y_64) & 0x000000ff));
 }
 
 pub const IdAlloc = @import("util.zig").IdAlloc;
