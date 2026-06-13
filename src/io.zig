@@ -662,7 +662,7 @@ pub fn timerfd_settime(fd: i32, timeout: Timeout, interval: std.Io.Duration) !vo
     }
 }
 
-pub fn signalfd(mask: *system.sigset_t) !std.posix.fd_t {
+pub fn signalfd(mask: *const system.sigset_t) !std.posix.fd_t {
     const rc = system.signalfd(-1, mask, system.SFD.CLOEXEC | system.SFD.NONBLOCK);
     switch (system.errno(rc)) {
         .SUCCESS => return @intCast(rc),
