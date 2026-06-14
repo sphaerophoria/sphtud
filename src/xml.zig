@@ -157,6 +157,8 @@ pub const AttributeIt = struct {
         };
 
         const key = try parseKey(&it);
+        if (key.len == 0) return null;
+
         try validateEq(&it);
         try validateQuote(&it);
         const val = try parseVal(&it);
@@ -172,6 +174,7 @@ pub const AttributeIt = struct {
     fn parseKey(it: *SliceCursor) ![]const u8 {
         const key_start = it.consumeWhileAny(&std.ascii.whitespace);
         const key_end = it.consumeWhileNone(std.ascii.whitespace ++ "=");
+        if (key_start == key_end) return "";
         if (key_end == it.data.len) {
             std.log.err("Cannot find key end in attribute", .{});
             return error.MalformedAttribute;
