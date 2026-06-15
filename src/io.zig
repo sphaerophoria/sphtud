@@ -46,6 +46,12 @@ pub const Reader = struct {
         return e == error.ReadFailed and source == error.WouldBlock;
     }
 
+    pub fn seekTo(self: *Reader, pos: i64) !void {
+        self.interface.end = 0;
+        self.interface.seek = 0;
+        try lseek(self.fd, pos, system.SEEK.SET);
+    }
+
     fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
         const self: *Reader = @fieldParentPtr("interface", r);
 
@@ -565,6 +571,14 @@ pub const DirIter = struct {
         };
     }
 };
+
+pub fn lseek(fd: std.posix.fd_t, offs: i64, whence: usize) !void {
+    const rc = system.lseek(fd, offs, whence);
+    switch (system.errno(rc)) {
+        .SUCCESS => return,
+        else => return error.LSeek,
+    }
+}
 
 pub fn statx(dir_fd: std.posix.fd_t, path: [:0]const u8, flags: u32, mask: system.STATX) !system.Statx {
     var ret: system.Statx = undefined;
