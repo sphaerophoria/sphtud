@@ -50,6 +50,10 @@ pub fn append(self: *Layout, widget: *gui.Widget) !void {
     self.updatePerpendicularLength(widget.size);
 }
 
+pub fn clear(self: *Layout) void {
+    self.items.clear(self.expansion);
+}
+
 fn update(widget: *gui.Widget, container_size: gui.PixelSize, delta_s: f32) !void {
     const self: *Layout = @fieldParentPtr("widget", widget);
 
