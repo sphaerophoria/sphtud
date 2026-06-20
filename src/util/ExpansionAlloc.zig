@@ -48,6 +48,16 @@ pub fn general(alloc: std.mem.Allocator) ExpansionAlloc {
     };
 }
 
+pub fn allocExternal(alloc: std.mem.Allocator, expansion: anytype) !ExpansionAlloc {
+    const info = try alloc.create(Info);
+    info.min_expansion_size_log2 = expansion.info.min_expansion_size_log2;
+    info.supports_free = expansion.info.supports_free;
+    return .{
+        .info = info,
+        .alloc = alloc,
+    };
+}
+
 pub const system_page = ExpansionAlloc{
     .info = &.{
         .min_expansion_size_log2 = @intCast(std.math.log2(std.heap.pageSize())),
