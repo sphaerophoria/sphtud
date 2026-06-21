@@ -173,6 +173,7 @@ const Gui = struct {
     memory_widget: *gui.MemoryWidget,
     popup_layer: *gui.PopupLayer,
     drag_layer: *gui.DragLayer,
+    time_label: *gui.Label,
     runner: *gui.Runner,
 
     pub fn init(allocators: *sphtud.render.AppAllocators, memory_tracker: *const sphtud.alloc.MemoryTracker) !Gui {
@@ -328,6 +329,9 @@ const Gui = struct {
             try root_layout.append(&ret.one_of.widget);
         }
 
+        ret.time_label = try wf.makeLabel("", .{});
+        try root_layout.append(&ret.time_label.widget);
+
         const custom = try gui_alloc.heap.arena().create(CustomWidget);
         custom.* = try .init(gui_alloc);
         try root_layout.append(&custom.widget);
@@ -346,6 +350,15 @@ const Gui = struct {
         try layout.append(&label.widget);
     }
 };
+
+fn makeTz(alloc: std.mem.Allocator, scratch: std.mem.Allocator) !sphtud.datetime.TimeZone {
+    const f = try sphtud.io.open("/etc/localtime", .{}, 0);
+    defer sphtud.io.close(f);
+
+    var tz_buf: [4096]u8 = undefined;
+    var tz_reader = sphtud.io.Reader.init(f, &tz_buf);
+    return try sphtud.datetime.TimeZone.init(alloc, scratch, &tz_reader.interface);
+}
 
 pub fn main() !void {
     var allocators: sphtud.render.AppAllocators = undefined;
@@ -407,6 +420,9 @@ pub fn main() !void {
     const start = try sphtud.io.clock_gettime(.BOOTTIME);
 
     var selectable_list_elem_buf: [128]u8 = undefined;
+    var time_buf: [128]u8 = undefined;
+
+    const tz = try makeTz(allocators.root.arena(), allocators.scratch.allocator());
 
     while (!window.closed()) {
         allocators.resetScratch();
@@ -492,6 +508,14 @@ pub fn main() !void {
 
         widgets.one_of.selected = @intFromFloat(elapsed_s);
         widgets.one_of.selected %= widgets.one_of.options.len;
+
+        const time = try sphtud.io.clock_gettime(.REALTIME);
+        var time_w = std.Io.Writer.fixed(&time_buf);
+        try time_w.writeAll("Time: ");
+        const dt = sphtud.datetime.DateTime.init(try tz.fromUTC(time.toSeconds()));
+        try dt.format(&time_w);
+
+        try widgets.time_label.setText(time_w.buffered());
 
         window.swapBuffers();
     }

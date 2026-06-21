@@ -12,6 +12,7 @@ pub const xml = @import("xml.zig");
 pub const img = @import("img.zig");
 pub const io = @import("io.zig");
 pub const strong_dyn = @import("strong_dyn.zig");
+pub const datetime = @import("datetime.zig");
 
 test {
     const std = @import("std");
