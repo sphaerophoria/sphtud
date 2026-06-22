@@ -771,6 +771,28 @@ pub fn makeDev(x: u32, y: u32) u64 {
         (((y_64) & 0x000000ff));
 }
 
+pub fn fork() !std.posix.pid_t {
+    const res = system.fork();
+    switch (system.errno(res)) {
+        .SUCCESS => return @intCast(res),
+        else => return error.Fork,
+    }
+}
+
+pub fn execve(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8) !noreturn {
+    _ = system.execve(path, argv, envp);
+    return error.Execve;
+}
+
+pub fn waitpid(pid: system.pid_t, flags: u32) !system.pid_t {
+    var discard: u32 = 0;
+    const res = system.waitpid(pid, &discard, flags);
+    switch (system.errno(res)) {
+        .SUCCESS => return @intCast(res),
+        else => return error.WaitPid,
+    }
+}
+
 pub const IdAlloc = @import("util.zig").IdAlloc;
 
 pub const Loop = struct {
