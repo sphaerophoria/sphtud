@@ -29,6 +29,7 @@ pub const Style = struct {
     corner_radius: f32 = 20.0,
     width: u31,
     height: u31,
+    pad: u31,
 };
 
 label: *Widget,
@@ -62,7 +63,12 @@ pub fn init(label: *Widget, on_click: usize, shared: *const Shared) !Self {
 
 fn update(widget: *Widget, _: PixelSize, delta_s: f32) !void {
     const self: *Self = @fieldParentPtr("widget", widget);
-    try self.label.update(self.widget.size, delta_s);
+    const label_available = gui.PixelSize{
+        .height = self.shared.style.height - self.shared.style.pad * 2,
+        .width = self.shared.style.width - self.shared.style.pad * 2,
+    };
+    try self.label.update(label_available, delta_s);
+    self.widget.size.height = @max(self.shared.style.height, self.label.size.height + self.shared.style.pad * 2);
 }
 
 fn input(widget: *Widget, _: PixelBBox, input_bounds: PixelBBox, input_state: *InputState) !void {

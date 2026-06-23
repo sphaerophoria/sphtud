@@ -99,6 +99,7 @@ pub fn init(gui_alloc: gui.GuiAlloc, scratch_alloc: *ScratchAlloc, scratch_gl: *
             .width = widget_width,
             .height = typical_widget_height,
             .corner_radius = corner_radius,
+            .pad = layout_pad,
         },
         .squircle_renderer = &ret.squircle_renderer,
         .event_queue = &ret.event_queue,

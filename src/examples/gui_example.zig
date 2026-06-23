@@ -233,7 +233,7 @@ const Gui = struct {
         ret.button_label = try wf.makeLabel("a button", .{});
         try root_layout.append(&ret.button_label.widget);
 
-        var button_label = try wf.makeLabel("click me", .{});
+        var button_label = try wf.makeLabel("click me (here goes a lot of long text)", .{});
         ret.button = try wf.makeButton(&button_label.widget, ids.button_click);
         try root_layout.append(&ret.button.widget);
 
