@@ -15,6 +15,7 @@ pub const io = @import("io.zig");
 pub const strong_dyn = @import("strong_dyn.zig");
 pub const datetime = @import("datetime.zig");
 pub const lex = @import("lex.zig");
+pub const geometry = @import("geometry.zig");
 
 test {
     const std = @import("std");
