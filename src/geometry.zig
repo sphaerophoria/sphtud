@@ -8,6 +8,10 @@ pub const Line2 = struct {
     b: Point2,
 };
 
+pub const Ray2 = struct {
+    start: Point2,
+    dir: Vec2,
+};
 pub const Point2 = Vec2;
 
 pub fn lineLineIntersection(a: Point2, a_dir: Vec2, b: Point2, b_dir: Vec2) ?Point2 {
@@ -122,12 +126,12 @@ test "lineLineIntersection" {
     }
 }
 
-pub fn rayLineIntersect(start: Point2, dir: Vec2, line: Line2) ?Point2 {
+pub fn rayLineIntersect(ray: Ray2, line: Line2) ?Point2 {
     const line_vec = line.b - line.a;
     const line_dir = math.normalize(line_vec);
-    const p = lineLineIntersection(start, dir, line.a, line_dir) orelse return null;
+    const p = lineLineIntersection(ray.start, ray.dir, line.a, line_dir) orelse return null;
 
-    const p_behind_ray = math.dot(p - start, dir) < 0;
+    const p_behind_ray = math.dot(p - ray.start, ray.dir) < 0;
     if (p_behind_ray) return null;
 
     // P may be outside the bounds of our line
@@ -135,4 +139,122 @@ pub fn rayLineIntersect(start: Point2, dir: Vec2, line: Line2) ?Point2 {
     const proj = math.dot(p - line.a, line_vec) / math.dot(line_vec, line_vec);
     if (proj < 0 or proj > 1) return null;
     return p;
+}
+
+pub const Circle = struct {
+    center: Point2,
+    radius: f32,
+};
+
+pub fn rayCircleIntersection(r: Ray2, c: Circle, ret_buf: *[2]Point2) []Point2 {
+    //
+    //                          -------------
+    //                      ----             ----
+    //                   ---                     ---
+    //                 --                           --
+    //                -                               -
+    //               -                                 -
+    //              -                                   -
+    //             |                                     |
+    //             |                  center             |
+    //             -                  *                  -
+    //             |                  |                  |
+    //             |                  |perp              |
+    //              -                 |                 -
+    //               - a              |              b -
+    //     start *----*---------------*---------------*------> dir
+    //                 --             midpoint      --
+    //                   ---                     ---
+    //                      ----             ----
+    //                          -------------
+    //
+    // Given a ray starting at start, and point in (normalized) dir, find
+    // intersection points a and b
+    //
+    // AFAICT, an orthogonal line to the ray that goes through the center of
+    // the circle is ALWAYS the midpoint of a and b along the ray. We can
+    // easily find this point with a dot product of center - start onto the ray
+    //
+    // From here we can just pythagoras with the radius to find the distance
+    // from the midpoint to the intersections and we have our answer
+
+    std.debug.assert(1.0 - sphtud.math.length2(r.dir) < 1e-6);
+
+    const to_midpoint = sphtud.math.dot(c.center - r.start, r.dir);
+    const midpoint = r.start + r.dir * Vec2{ to_midpoint, to_midpoint };
+
+    const r_2 = c.radius * c.radius;
+    const perp = midpoint - c.center;
+    const perp_len_2 = sphtud.math.length2(perp);
+
+    if (perp_len_2 > r_2) {
+        return &.{};
+    }
+
+    const offs = @sqrt(r_2 - perp_len_2);
+
+    const offs_v = Vec2{ offs, offs };
+    const a = midpoint + r.dir * offs_v;
+    const b = midpoint - r.dir * offs_v;
+
+    var ret = std.ArrayList(Vec2).initBuffer(ret_buf);
+    if (sphtud.math.dot(a - r.start, r.dir) >= 0) {
+        ret.appendBounded(a) catch unreachable;
+    }
+
+    if (sphtud.math.dot(b - r.start, r.dir) >= 0) {
+        ret.appendBounded(b) catch unreachable;
+    }
+
+    return ret.items;
+}
+
+pub const Ellipse = struct {
+    center: Point2,
+    rx: f32,
+    ry: f32,
+    // radians
+    rotation: f32,
+};
+
+fn ellipseToCircle(e: Ellipse) math.Transform {
+    return sphtud.math.Transform.translate(-e.center[0], -e.center[1])
+        .then(sphtud.math.Transform.rotate(-e.rotation))
+        .then(sphtud.math.Transform.scale(1 / e.rx, 1 / e.ry));
+}
+
+fn ellipseFromCircle(e: Ellipse) math.Transform {
+    return sphtud.math.Transform.scale(e.rx, e.ry)
+        .then(.rotate(e.rotation))
+        .then(.translate(e.center[0], e.center[1]));
+}
+
+pub fn rayEllipseIntersection(
+    ray: Ray2,
+    e: Ellipse,
+    ret_buf: *[2]Vec2,
+) []sphtud.math.Vec2 {
+    const to_circle = ellipseToCircle(e);
+
+    const old_end = ray.start + ray.dir;
+    const new_end = to_circle.apply2(old_end);
+    const new_start = to_circle.apply2(ray.start);
+    const new_dir = sphtud.math.normalize(new_end - new_start);
+
+    const ret = sphtud.geometry.rayCircleIntersection(
+        .{ .start = new_start, .dir = new_dir },
+        .{
+            .center = .{ 0, 0 },
+            .radius = 1,
+        },
+        ret_buf,
+    );
+
+    const from_circle = ellipseFromCircle(e);
+
+    for (ret) |*r| {
+        r.* = from_circle.apply2(r.*);
+    }
+
+    return ret;
 }

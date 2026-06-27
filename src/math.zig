@@ -302,6 +302,10 @@ pub const Transform = struct {
         return self.inner.mul(point);
     }
 
+    pub fn apply2(self: Transform, point: Vec2) Vec2 {
+        return applyHomogenous(self.inner.mul(.{ point[0], point[1], 1 }));
+    }
+
     pub fn invert(self: Transform) Transform {
         return .{ .inner = self.inner.invert() };
     }
