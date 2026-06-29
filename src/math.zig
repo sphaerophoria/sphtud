@@ -542,6 +542,212 @@ pub const Quaternion = struct {
     }
 };
 
+pub fn CubicSolution(comptime T: type) type {
+    return struct {
+        buf: [3]T,
+        len: u8,
+    };
+}
+
+pub fn DepressedCubic(comptime T: type) type {
+    return struct {
+        p: T,
+        q: T,
+        shift: T,
+    };
+}
+
+const polynomial_eps: f32 = 1e-6;
+
+pub fn solveLinear(comptime T: type, a: T, b: T) T {
+    // ax + b = 0
+    return -b / a;
+}
+
+pub fn solveQuadratic(comptime T: type, a: T, b: T, c: T) ?[2]T {
+    const disc = b * b - 4.0 * a * c;
+    if (disc < 0) return null;
+    const sd = @sqrt(disc);
+    return .{ (-b + sd) / (2.0 * a), (-b - sd) / (2.0 * a) };
+}
+
+pub fn calcCubicDiscriminant(comptime T: type, p: T, q: T) T {
+    // Discriminant of t^3 + p*t + q = 0.
+    return -4.0 * p * p * p - 27.0 * q * q;
+}
+
+pub fn solveCubicViete(comptime T: type, p: T, q: T) CubicSolution(T) {
+    // Three real roots of t^3 + p*t + q = 0 via the trigonometric method.
+    // Caller must guarantee disc > 0 (which implies p < 0).
+    //
+    // https://en.wikipedia.org/wiki/Cubic_equation#Trigonometric_solution_for_three_real_roots
+    const snp3 = @sqrt(-p / 3.0); //Sqrt Negative P over 3
+    const inv_snp3 = 1 / snp3;
+    // Clamp guards against floating point noise pushing the argument just
+    // outside [-1, 1] near disc ≈ 0, which would make acos return NaN.
+    const arg = std.math.clamp(3 * q / (2 * p) * inv_snp3, -1.0, 1.0);
+    const theta = std.math.acos(arg) / 3.0;
+    const two_pi_3 = 2.0 * std.math.pi / 3.0;
+
+    var ret: CubicSolution(T) = undefined;
+    for (0..3) |i| {
+        ret.buf[i] = 2 * snp3 * @cos(theta - two_pi_3 * @as(T, @floatFromInt(i)));
+    }
+    ret.len = 3;
+    return ret;
+}
+
+pub fn solveCubicCardano(comptime T: type, p: T, q: T) CubicSolution(T) {
+    // Single real root of t^3 + p*t + q = 0. Caller must guarantee disc < 0.
+    // https://en.wikipedia.org/wiki/Cubic_equation#Cardano's_formula
+    const sd = @sqrt(q * q / 4.0 + p * p * p / 27.0);
+    var ret = CubicSolution(T){ .buf = undefined, .len = 1 };
+    ret.buf[0] = std.math.cbrt(-q / 2.0 + sd) + std.math.cbrt(-q / 2.0 - sd);
+    return ret;
+}
+
+pub fn solveDepressedCubic(comptime T: type, p: T, q: T) CubicSolution(T) {
+    // t^3 + p*t + q = 0
+    var ret = CubicSolution(T){ .buf = undefined, .len = 0 };
+
+    const disc = calcCubicDiscriminant(T, p, q);
+    if (disc > polynomial_eps) return solveCubicViete(T, p, q);
+    if (disc < -polynomial_eps) return solveCubicCardano(T, p, q);
+
+    // https://en.wikipedia.org/wiki/Cubic_equation#Multiple_root
+    if (@abs(p) < polynomial_eps) {
+        // 0 is a triple root
+        ret.buf[0] = 0;
+        ret.len = 1;
+        return ret;
+    }
+
+    ret.buf[0] = 3.0 * q / p;
+    ret.buf[1] = -3.0 * q / (2.0 * p);
+    ret.len = 2;
+    return ret;
+}
+
+pub fn toDepressedCubic(comptime T: type, a: T, b: T, c: T, d: T) DepressedCubic(T) {
+    // https://en.wikipedia.org/wiki/Cubic_equation#Depressed_cubic
+    // Normalize ax^3 + bx^2 + cx + d by a, then substitute x = t - b/(3a) to
+    // remove the t^2 term, yielding t^3 + p*t + q = 0.
+    const bn = b / a;
+    const cn = c / a;
+    const dn = d / a;
+    return .{
+        .p = cn - bn * bn / 3.0,
+        .q = 2.0 * bn * bn * bn / 27.0 - bn * cn / 3.0 + dn,
+        .shift = bn / 3.0,
+    };
+}
+
+pub fn fromDepressedSolution(comptime T: type, sol: CubicSolution(T), shift: T) CubicSolution(T) {
+    var ret = sol;
+    for (ret.buf[0..ret.len]) |*v| v.* -= shift;
+    return ret;
+}
+
+pub fn solveCubic(comptime T: type, a: T, b: T, c: T, d: T) CubicSolution(T) {
+    // ax^3 + bx^2 + cx + d = 0
+
+    if (@abs(a) >= polynomial_eps) {
+        const dep = toDepressedCubic(T, a, b, c, d);
+        const sol = solveDepressedCubic(T, dep.p, dep.q);
+        return fromDepressedSolution(T, sol, dep.shift);
+    }
+
+    var ret = CubicSolution(T){ .buf = undefined, .len = 0 };
+
+    if (@abs(b) > polynomial_eps) {
+        const roots = solveQuadratic(T, b, c, d) orelse return ret;
+        ret.buf[0] = roots[0];
+        ret.buf[1] = roots[1];
+        ret.len = 2;
+    }
+
+    if (@abs(c) > polynomial_eps) {
+        ret.buf[0] = solveLinear(T, c, d);
+        ret.len = 1;
+        return ret;
+    }
+
+    return ret;
+}
+
+test "solveLinear" {
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), solveLinear(f32, 2, -4), 1e-4);
+}
+
+test "solveQuadratic two roots" {
+    // x^2 - 4 = 0
+    var roots = solveQuadratic(f32, 1, 0, -4) orelse return error.NoSolution;
+    std.mem.sort(f32, &roots, {}, std.sort.asc(f32));
+    try std.testing.expectApproxEqAbs(@as(f32, -2.0), roots[0], 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), roots[1], 1e-4);
+}
+
+test "calcCubicDiscriminant sign" {
+    // t^3 - 3t + 2 = (t-1)^2(t+2) → disc = 0
+    try std.testing.expectApproxEqAbs(@as(f32, 0), calcCubicDiscriminant(f32, -3, 2), 1e-4);
+    // t^3 - t → three real roots → disc > 0
+    try std.testing.expect(calcCubicDiscriminant(f32, -1, 0) > 0);
+    // t^3 + 1 → one real root → disc < 0
+    try std.testing.expect(calcCubicDiscriminant(f32, 0, 1) < 0);
+}
+
+test "solveCubic three real roots" {
+    // (x-1)(x-2)(x-3) = x^3 - 6x^2 + 11x - 6
+    const sol = solveCubic(f32, 1, -6, 11, -6);
+    try std.testing.expectEqual(@as(u8, 3), sol.len);
+    var roots = sol.buf;
+    std.mem.sort(f32, &roots, {}, std.sort.asc(f32));
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), roots[0], 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), roots[1], 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 3.0), roots[2], 1e-4);
+}
+
+test "solveCubic one real root" {
+    // x^3 - 1 = 0
+    const sol = solveCubic(f32, 1, 0, 0, -1);
+    try std.testing.expectEqual(@as(u8, 1), sol.len);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), sol.buf[0], 1e-4);
+}
+
+test "solveCubic triple root" {
+    // (x-1)^3 = x^3 - 3x^2 + 3x - 1
+    const sol = solveCubic(f32, 1, -3, 3, -1);
+    try std.testing.expectEqual(@as(u8, 1), sol.len);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), sol.buf[0], 1e-4);
+}
+
+test "solveCubic double plus simple root" {
+    // (x-1)^2 (x+2) = x^3 - 3x + 2
+    const sol = solveCubic(f32, 1, 0, -3, 2);
+    try std.testing.expectEqual(@as(u8, 2), sol.len);
+    var roots = [_]f32{ sol.buf[0], sol.buf[1] };
+    std.mem.sort(f32, &roots, {}, std.sort.asc(f32));
+    try std.testing.expectApproxEqAbs(@as(f32, -2.0), roots[0], 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), roots[1], 1e-4);
+}
+
+test "solveCubic degenerate quadratic" {
+    // x^2 - 1 = 0
+    const sol = solveCubic(f32, 0, 1, 0, -1);
+    try std.testing.expectEqual(@as(u8, 2), sol.len);
+    var roots = [_]f32{ sol.buf[0], sol.buf[1] };
+    std.mem.sort(f32, &roots, {}, std.sort.asc(f32));
+    try std.testing.expectApproxEqAbs(@as(f32, -1.0), roots[0], 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), roots[1], 1e-4);
+}
+
+test "solveCubic degenerate linear" {
+    // 2x - 4 = 0
+    const sol = solveCubic(f32, 0, 0, 2, -4);
+    try std.testing.expectEqual(@as(u8, 1), sol.len);
+    try std.testing.expectApproxEqAbs(@as(f32, 2.0), sol.buf[0], 1e-4);
+}
+
 test {
     std.testing.refAllDecls(@This());
 }
