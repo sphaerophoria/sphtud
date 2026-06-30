@@ -6,6 +6,10 @@ const Vec2 = sphtud.math.Vec2;
 pub const Line2 = struct {
     a: Point2,
     b: Point2,
+
+    pub fn dir(self: Line2) Vec2 {
+        return math.normalize(self.b - self.a);
+    }
 };
 
 pub const Ray2 = struct {
@@ -217,13 +221,13 @@ pub const Ellipse = struct {
     rotation: f32,
 };
 
-fn ellipseToCircle(e: Ellipse) math.Transform {
+pub fn ellipseToCircle(e: Ellipse) math.Transform {
     return sphtud.math.Transform.translate(-e.center[0], -e.center[1])
         .then(sphtud.math.Transform.rotate(-e.rotation))
         .then(sphtud.math.Transform.scale(1 / e.rx, 1 / e.ry));
 }
 
-fn ellipseFromCircle(e: Ellipse) math.Transform {
+pub fn ellipseFromCircle(e: Ellipse) math.Transform {
     return sphtud.math.Transform.scale(e.rx, e.ry)
         .then(.rotate(e.rotation))
         .then(.translate(e.center[0], e.center[1]));
