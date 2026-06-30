@@ -1,4 +1,5 @@
 const sphtud = @import("../sphtud.zig");
+const std = @import("std");
 const sphmath = sphtud.math;
 const gui = @import("../ui.zig");
 const SquircleRenderer = @import("../ui/SquircleRenderer.zig");
@@ -24,19 +25,18 @@ pub const Style = struct {
 };
 
 label: *Widget,
-on_drag_start: usize,
 on_drag: usize,
 shared: *const Shared,
 state: enum { default, hovered, dragging } = .default,
 drag_delta_px: f32 = 0,
+last_mouse_x: f32 = 0,
 widget: Widget,
 
 const Self = @This();
 
-pub fn init(label: *Widget, on_drag_start: usize, on_drag: usize, shared: *const Shared) Self {
+pub fn init(label: *Widget, on_drag: usize, shared: *const Shared) Self {
     return .{
         .label = label,
-        .on_drag_start = on_drag_start,
         .on_drag = on_drag,
         .shared = shared,
         .widget = .{
@@ -52,6 +52,20 @@ pub fn init(label: *Widget, on_drag_start: usize, on_drag: usize, shared: *const
     };
 }
 
+pub fn takeDrag(self: *Self) f32 {
+    defer self.drag_delta_px = 0;
+    return self.drag_delta_px;
+}
+
+pub fn takeDragInt(self: *Self, scale: f32) ?i32 {
+    const ret_f = self.drag_delta_px * scale;
+    const ret: i32 = @intFromFloat(std.math.trunc(ret_f));
+    if (ret == 0) return null;
+
+    self.drag_delta_px = @rem(ret_f, 1) / scale;
+    return ret;
+}
+
 fn update(widget: *Widget, _: PixelSize, delta_s: f32) !void {
     const self: *Self = @fieldParentPtr("widget", widget);
     try self.label.update(self.widget.size, delta_s);
@@ -61,17 +75,16 @@ fn input(widget: *Widget, _: PixelBBox, input_bounds: PixelBBox, input_state: *I
     const self: *Self = @fieldParentPtr("widget", widget);
 
     if (input_bounds.containsOptMousePos(input_state.mouse_down_location)) {
-        const anchor_x = input_state.mouse_down_location.?.x;
+        if (input_state.mouse_pressed) {
+            self.last_mouse_x = input_state.mouse_pos.x;
+        }
 
-        const event = switch (self.state) {
-            .dragging => self.on_drag,
-            .hovered, .default => self.on_drag_start,
-        };
-        try self.shared.event_queue.appendBounded(event);
+        try self.shared.event_queue.appendBounded(self.on_drag);
 
         self.state = .dragging;
 
-        self.drag_delta_px = input_state.mouse_pos.x - anchor_x;
+        self.drag_delta_px += input_state.mouse_pos.x - self.last_mouse_x;
+        self.last_mouse_x = input_state.mouse_pos.x;
     } else if (input_bounds.containsMousePos(input_state.mouse_pos)) {
         self.state = .hovered;
     } else {

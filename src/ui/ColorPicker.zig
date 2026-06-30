@@ -529,9 +529,6 @@ const ColorHexagon = struct {
     r_drag: Drag,
     g_drag: Drag,
     b_drag: Drag,
-    r_drag_start: f32 = 0,
-    g_drag_start: f32 = 0,
-    b_drag_start: f32 = 0,
     widget: Widget,
 
     fn initPinned(self: *ColorHexagon, alloc: gui.GuiAlloc, color: *Color, event_queue: *gui.EventQueue, on_change: usize, shared: *const Shared) !void {
@@ -547,12 +544,9 @@ const ColorHexagon = struct {
         self.b_label = try alloc.heap.arena().create(Label);
         self.b_label.* = try Label.init(alloc, shared.label_shared, "B: 1.00", .white);
 
-        self.r_drag = Drag.init(&self.r_label.widget, on_change, on_change, shared.drag_shared);
-        self.g_drag = Drag.init(&self.g_label.widget, on_change, on_change, shared.drag_shared);
-        self.b_drag = Drag.init(&self.b_label.widget, on_change, on_change, shared.drag_shared);
-        self.r_drag_start = 0;
-        self.g_drag_start = 0;
-        self.b_drag_start = 0;
+        self.r_drag = Drag.init(&self.r_label.widget, on_change, shared.drag_shared);
+        self.g_drag = Drag.init(&self.g_label.widget, on_change, shared.drag_shared);
+        self.b_drag = Drag.init(&self.b_label.widget, on_change, shared.drag_shared);
 
         self.widget = .{
             .focused = false,
@@ -632,30 +626,14 @@ const ColorHexagon = struct {
         const drag_scale = 1.0 / @as(f32, @floatFromInt(self.shared.style.popup_width));
         const slider_rows = sliderRowBounds(self.shared.style, widget_bounds);
 
-        {
-            const r_was_dragging = self.r_drag.state == .dragging;
-            try self.r_drag.widget.input(slider_rows[0], slider_rows[0].calcIntersection(input_bounds), input_state);
-            if (self.r_drag.state == .dragging) {
-                if (!r_was_dragging) self.r_drag_start = self.color.r;
-                self.color.r = std.math.clamp(self.r_drag_start + self.r_drag.drag_delta_px * drag_scale, 0, 1);
-            }
-        }
-        {
-            const g_was_dragging = self.g_drag.state == .dragging;
-            try self.g_drag.widget.input(slider_rows[1], slider_rows[1].calcIntersection(input_bounds), input_state);
-            if (self.g_drag.state == .dragging) {
-                if (!g_was_dragging) self.g_drag_start = self.color.g;
-                self.color.g = std.math.clamp(self.g_drag_start + self.g_drag.drag_delta_px * drag_scale, 0, 1);
-            }
-        }
-        {
-            const b_was_dragging = self.b_drag.state == .dragging;
-            try self.b_drag.widget.input(slider_rows[2], slider_rows[2].calcIntersection(input_bounds), input_state);
-            if (self.b_drag.state == .dragging) {
-                if (!b_was_dragging) self.b_drag_start = self.color.b;
-                self.color.b = std.math.clamp(self.b_drag_start + self.b_drag.drag_delta_px * drag_scale, 0, 1);
-            }
-        }
+        try self.r_drag.widget.input(slider_rows[0], slider_rows[0].calcIntersection(input_bounds), input_state);
+        self.color.r = std.math.clamp(self.color.r + self.r_drag.takeDrag() * drag_scale, 0, 1);
+
+        try self.g_drag.widget.input(slider_rows[1], slider_rows[1].calcIntersection(input_bounds), input_state);
+        self.color.g = std.math.clamp(self.color.g + self.g_drag.takeDrag() * drag_scale, 0, 1);
+
+        try self.b_drag.widget.input(slider_rows[2], slider_rows[2].calcIntersection(input_bounds), input_state);
+        self.color.b = std.math.clamp(self.color.b + self.b_drag.takeDrag() * drag_scale, 0, 1);
     }
 
     fn hexRender(widget: *Widget, bounds: PixelBBox, window: PixelBBox) void {

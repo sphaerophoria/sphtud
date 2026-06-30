@@ -47,7 +47,6 @@ const Ids = struct {
     button_click: usize,
     checkbox_toggle: usize,
     want_checkbox_toggle: usize,
-    drag_start: usize,
     on_drag: usize,
     combo_select: usize,
     color_change: usize,
@@ -60,7 +59,6 @@ const Ids = struct {
             .button_click = alloc.allocOne(),
             .checkbox_toggle = alloc.allocOne(),
             .want_checkbox_toggle = alloc.allocOne(),
-            .drag_start = alloc.allocOne(),
             .on_drag = alloc.allocOne(),
             .combo_select = alloc.allocOne(),
             .color_change = alloc.allocOne(),
@@ -253,7 +251,7 @@ const Gui = struct {
 
         try appendText(wf, root_layout, "i32 drag");
         ret.drag_text = try wf.makeLabel("", .{});
-        ret.drag = try wf.makeDrag(&ret.drag_text.widget, ids.drag_start, ids.on_drag);
+        ret.drag = try wf.makeDrag(&ret.drag_text.widget, ids.on_drag);
         try root_layout.append(&ret.drag.widget);
 
         try appendText(wf, root_layout, "A histogram");
@@ -402,7 +400,6 @@ pub fn main() !void {
 
     var dragging_thumbnail = false;
     var drag_val: i32 = 10;
-    var drag_anchor: i32 = 0;
     var drag_label_buf: [32]u8 = undefined;
     try widgets.drag_text.setText(try std.fmt.bufPrint(&drag_label_buf, "{d:.3}", .{drag_val}));
 
@@ -453,9 +450,8 @@ pub fn main() !void {
                 try widgets.button_label.setText(try std.fmt.bufPrint(&button_label_buf, "Clicked {d} times", .{click_count}));
             },
             ids.thumbnail_drag_start => dragging_thumbnail = true,
-            ids.drag_start => drag_anchor = drag_val,
             ids.on_drag => {
-                drag_val = drag_anchor + @as(i32, @intFromFloat(widgets.drag.drag_delta_px * 0.1));
+                drag_val += widgets.drag.takeDragInt(0.1) orelse continue;
                 try widgets.drag_text.setText(try std.fmt.bufPrint(&drag_label_buf, "{d:.3}", .{drag_val}));
             },
             ids.checkbox_toggle => {

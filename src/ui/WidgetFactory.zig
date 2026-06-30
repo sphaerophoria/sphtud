@@ -37,10 +37,22 @@ pub fn makeCheckbox(self: *const Self, checked: bool, on_toggle: usize) !*gui.Ch
     return ret;
 }
 
-pub fn makeDrag(self: *const Self, label: *gui.Widget, on_drag_start: usize, on_drag: usize) !*gui.Drag {
+pub fn makeDrag(self: *const Self, label: *gui.Widget, on_drag: usize) !*gui.Drag {
     const ret = try self.alloc.heap.arena().create(gui.Drag);
-    ret.* = .init(label, on_drag_start, on_drag, &self.state.drag_shared);
+    ret.* = .init(label, on_drag, &self.state.drag_shared);
     return ret;
+}
+
+pub fn makeDragF32(self: *const Self, initial_val: f32, on_change: usize) !gui.DragF32 {
+    const label = try self.makeLabel("", .{});
+    const drag = try self.makeDrag(&label.widget, on_change);
+    return try .init(label, drag, initial_val);
+}
+
+pub fn makeDragI32(self: *const Self, initial_val: i32, on_change: usize) !gui.DragI32 {
+    const label = try self.makeLabel("", .{});
+    const drag = try self.makeDrag(&label.widget, on_change);
+    return try .init(label, drag, initial_val);
 }
 
 pub fn makeHistogram(self: *const Self, label: *gui.Widget) !*gui.Histogram {
