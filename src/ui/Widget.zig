@@ -13,6 +13,20 @@ focused: bool,
 size: gui.PixelSize,
 vtable: *const VTable,
 
+pub fn asWidget(container: anytype) *Widget {
+    const T = @TypeOf(container);
+    switch (@typeInfo(T)) {
+        .pointer => |pi| {
+            const child_info = @typeInfo(pi.child);
+            if (child_info == .@"struct" and @hasField(pi.child, "widget")) {
+                return &container.widget;
+            }
+        },
+        else => {},
+    }
+    @compileError("widget should be a pointer to a struct with a widget field, found " ++ @typeName(T));
+}
+
 pub fn update(self: *Widget, available: gui.PixelSize, delta_s: f32) !void {
     if (self.vtable.update) |u| return u(self, available, delta_s);
 }
