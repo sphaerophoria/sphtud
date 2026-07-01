@@ -80,8 +80,9 @@ fn input(widget: *Widget, layer_bounds: PixelBBox, input_bounds: PixelBBox, inpu
         input_state,
     );
 
-    // Do not allow scrolling of things behind a popup, looks weird
+    // Prevent mouse events from making it behind the popup
     input_state.consumeScroll();
+    input_state.mouse_pressed = false;
 
     // Dismiss when a new click lands outside the popup, but only after the
     // click that opened it has been released (prevents instant self-close).
