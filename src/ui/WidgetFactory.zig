@@ -125,13 +125,13 @@ pub fn makeMemoryWidget(self: *const Self, memory_tracker: *const sphalloc.Memor
     return gui.MemoryWidget.init(self.alloc, memory_tracker, &self.state.memory_widget_shared);
 }
 
-pub fn makeGrid(self: *const Self, columns: []const gui.Grid.ColumnConfig, item_pad: u31) !*gui.Grid {
+pub fn makeGrid(self: *const Self, columns: []const gui.Grid.ColumnConfig) !*gui.Grid {
     const ret = try self.alloc.heap.arena().create(gui.Grid);
     ret.* = try .init(
         self.alloc.heap.arena(),
         self.alloc.heap.expansion(),
         columns,
-        item_pad,
+        self.state.layout_pad,
     );
     return ret;
 }

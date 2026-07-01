@@ -294,7 +294,7 @@ const Gui = struct {
 
         try appendText(wf, root_layout, "a grid");
 
-        ret.grid = try wf.makeGrid(&grid_columns, 6);
+        ret.grid = try wf.makeGrid(&grid_columns);
         const grid_keys = [_][]const u8{ "alpha", "beta", "gamma" };
         for (&ret.grid_labels, grid_keys) |*val_label, key| {
             const key_label = try wf.makeLabel(key, .{});
