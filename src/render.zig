@@ -448,10 +448,14 @@ pub fn setTextureFromR(texture: Texture, data: []const u8, width: usize) void {
 pub fn makeTextureFromSrgb(gl_alloc: *GlAlloc, data: []const u8, width: usize) !Texture {
     const texture = try makeTextureCommon(gl_alloc);
 
-    const height = data.len / width / 4;
-    gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_SRGB8_ALPHA8, @intCast(width), @intCast(height), 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, data.ptr);
-
+    setTextureFromSrgb(texture, data, width);
     return texture;
+}
+
+pub fn setTextureFromSrgb(texture: Texture, data: []const u8, width: usize) void {
+    const height = data.len / width / 4;
+    gl.glBindTexture(gl.GL_TEXTURE_2D, texture.inner);
+    gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_SRGB8_ALPHA8, @intCast(width), @intCast(height), 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, data.ptr);
 }
 
 pub fn makeTextureFromRgba(gl_alloc: *GlAlloc, data: []const u8, width: usize) !Texture {
