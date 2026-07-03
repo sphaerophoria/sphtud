@@ -1,4 +1,5 @@
 const std = @import("std");
+const lex = @import("lex.zig");
 
 pub const Parser = struct {
     reader: *std.Io.Reader,
@@ -50,9 +51,10 @@ pub const Parser = struct {
         };
         self.next_discard = tag_content.len;
 
-        const prefix = try parseElementPrefix(tag_content);
-
-        const end_sequence = try prefix.type.endSequence();
+        var buf = lex.Buf.init(tag_content);
+        const item_type = try parseElementPrefix(&buf);
+        const prefix_len = buf.idx;
+        const end_sequence = try item_type.endSequence();
 
         // If we were looking for --> but found >, we need to keep looking.
         // std.Io.Reader doesn't seem to have a "peek from position", so we just
@@ -69,45 +71,43 @@ pub const Parser = struct {
             const end = std.mem.indexOf(u8, buffered_data, end_sequence) orelse return error.NoEndSequence;
             tag_content = buffered_data[0 .. end + end_sequence.len];
             self.next_discard = tag_content.len;
+            buf = lex.Buf.init(tag_content);
+            buf.idx = prefix_len;
         }
 
         // From here on out, we may return references to data in
         // self.reader.buffer. Don't touch it!
 
-        const name_start = prefix.prefix_end;
-        var name_end = name_start;
+        const name: []const u8 = if (item_type != .xml_decl) blk: {
+            const name_range = buf.takeUntilAny(std.ascii.whitespace ++ "/>") orelse buf.emptyRange();
+            break :blk name_range.data(buf);
+        } else "";
 
-        // xml decl has no name
-        if (prefix.type != .xml_decl) {
-            name_end = std.mem.indexOfAnyPos(u8, tag_content, name_start, std.ascii.whitespace ++ "/>") orelse return error.NoNameEnd;
-        }
-
-        var element_end_tag_start = std.mem.indexOfPos(u8, tag_content, name_end, end_sequence) orelse return error.NoEndSequence;
-        var element_end_tag_len = end_sequence.len;
+        const attributes_start = buf.idx;
+        var element_end_tag_start = tag_content.len - end_sequence.len;
 
         // Special case for handling self closing tags
-        if (prefix.type == .element_start and tag_content[element_end_tag_start - 1] == '/') {
+        if (item_type == .element_start and element_end_tag_start > 0 and tag_content[element_end_tag_start - 1] == '/') {
             element_end_tag_start -= 1;
-            element_end_tag_len += 1;
             self.buffered_exit_event = .{
                 .type = .element_end,
                 .stream_start = self.stream_pos,
                 .stream_end = self.stream_pos + self.next_discard,
-                .name = tag_content[name_start..name_end],
+                .name = name,
                 .attributes = &.{},
             };
         }
 
-        const attributes_slice = switch (prefix.type) {
-            .xml_decl, .element_start => tag_content[name_end..element_end_tag_start],
+        const attributes_slice: []const u8 = switch (item_type) {
+            .xml_decl, .element_start => tag_content[attributes_start..element_end_tag_start],
             else => &.{},
         };
 
         return .{
-            .type = prefix.type,
+            .type = item_type,
             .stream_start = self.stream_pos,
             .stream_end = self.stream_pos + self.next_discard,
-            .name = tag_content[name_start..name_end],
+            .name = name,
             .attributes = attributes_slice,
         };
     }
@@ -128,7 +128,7 @@ pub const Item = struct {
 
     pub fn attributeIt(self: Item) AttributeIt {
         return .{
-            .data = self.attributes,
+            .buf = lex.Buf.init(self.attributes),
         };
     }
 
@@ -145,160 +145,49 @@ pub const Item = struct {
 };
 
 pub const AttributeIt = struct {
-    data: []const u8,
+    buf: lex.Buf,
 
     pub fn next(self: *AttributeIt) !?Attribute {
-        if (self.data.len == 0) {
-            return null;
-        }
+        _ = self.buf.takeWhileAny(&std.ascii.whitespace);
+        if (self.buf.empty()) return null;
 
-        var it = SliceCursor{
-            .data = self.data,
+        const key_range = self.buf.takeUntilAny(std.ascii.whitespace ++ "=") orelse {
+            return error.MalformedAttribute;
         };
 
-        const key = try parseKey(&it);
-        if (key.len == 0) return null;
+        _ = self.buf.takeWhileAny(&std.ascii.whitespace);
+        _ = self.buf.takeOne("=") orelse return error.MalformedAttribute;
 
-        try validateEq(&it);
-        try validateQuote(&it);
-        const val = try parseVal(&it);
+        _ = self.buf.takeWhileAny(&std.ascii.whitespace);
+        _ = self.buf.takeOne("\"") orelse return error.MalformedAttribute;
 
-        defer self.data = self.data[it.idx + 1 .. self.data.len];
-
-        return .{
-            .key = key,
-            .val = val,
-        };
-    }
-
-    fn parseKey(it: *SliceCursor) ![]const u8 {
-        const key_start = it.consumeWhileAny(&std.ascii.whitespace);
-        const key_end = it.consumeWhileNone(std.ascii.whitespace ++ "=");
-        if (key_start == key_end) return "";
-        if (key_end == it.data.len) {
-            std.log.err("Cannot find key end in attribute", .{});
-            return error.MalformedAttribute;
-        }
-
-        return it.data[key_start..key_end];
-    }
-
-    fn validateEq(it: *SliceCursor) !void {
-        _ = it.consumeWhileAny(&std.ascii.whitespace);
-        if (it.peekByte() != '=') {
-            std.log.err("Attribute is missing an = between key/val", .{});
-            return error.MalformedAttribute;
-        }
-        it.consume(1);
-    }
-
-    fn validateQuote(it: *SliceCursor) !void {
-        _ = it.consumeWhileAny(&std.ascii.whitespace);
-
-        if (it.peekByte() != '"') {
-            std.log.err("Attribute is missing a \" for the value start", .{});
-            return error.MalformedAttribute;
-        }
-        it.consume(1);
-    }
-
-    fn parseVal(it: *SliceCursor) ![]const u8 {
         // FIXME: What if we see an invalid character
         // FIXME: Escaped quote
-        const val_start = it.idx;
-        const val_end = it.consumeWhileNone("\"");
-        if (val_end == it.data.len) {
-            std.log.err("Attribute value does not end with a \"", .{});
-            return error.MalformedAttribute;
-        }
+        const val_range = self.buf.takeUntilAny("\"") orelse self.buf.emptyRange();
+        if (self.buf.empty()) return error.MalformedAttribute;
+        _ = self.buf.takeOne("\"");
 
-        return it.data[val_start..val_end];
+        return .{
+            .key = key_range.data(self.buf),
+            .val = val_range.data(self.buf),
+        };
     }
 };
 
-const ParsedElementPrefix = struct {
-    type: ItemType,
-    prefix_end: usize,
-};
+fn parseElementPrefix(buf: *lex.Buf) !ItemType {
+    _ = buf.takeOne("<") orelse return error.NotAnElement;
 
-fn parseElementPrefix(tag_content: []const u8) !ParsedElementPrefix {
-    var token_type: ItemType = .element_start;
-    var prefix_end: usize = 1;
-
-    var matcher_buf = [_]ItemTypeMatcher{
-        .{ .token = .xml_decl },
-        .{ .token = .element_end },
-        .{ .token = .comment },
-    };
-
-    var prefixes = std.ArrayList(ItemTypeMatcher).fromOwnedSlice(&matcher_buf);
-
-    var buf_slice_idx: usize = 0;
-
-    // Check each matcher for every byte we read. We want to keep the
-    // longest match. Because of this we can just keep re-assigning the
-    // same output token_type variable as the longer ones will assign
-    // later.
-    //
-    // As matchers reject/accept sequences, we remove them from the
-    // list of matchers for next bytes. The scheme of removal was written
-    // thinking there would be a lot more than 3 types to match against.
-    // It's possible there's something simpler, but this seems fine
-    while (prefixes.items.len > 0) {
-        defer buf_slice_idx += 1;
-        const b = tag_content[buf_slice_idx];
-
-        var to_remove_buf: [matcher_buf.len]usize = undefined;
-        var to_remove = std.ArrayList(usize).initBuffer(&to_remove_buf);
-
-        for (prefixes.items, 0..) |*prefix, prefix_idx| {
-            switch (try prefix.push(b)) {
-                .matched => {
-                    token_type = prefix.token;
-                    prefix_end = (try prefix.token.startSequence()).len;
-                    try to_remove.appendBounded(prefix_idx);
-                },
-                .not_a_match => {
-                    try to_remove.appendBounded(prefix_idx);
-                },
-                .feeding => {},
-            }
-        }
-
-        while (to_remove.pop()) |idx| {
-            _ = prefixes.swapRemove(idx);
-        }
+    if (buf.takeOne("?") != null) {
+        _ = buf.takeSequence("xml ") orelse return error.UnexpectedByte;
+        return .xml_decl;
     }
-
-    return .{
-        .type = token_type,
-        .prefix_end = prefix_end,
-    };
+    if (buf.takeOne("/") != null) return .element_end;
+    if (buf.takeOne("!") != null) {
+        _ = buf.takeSequence("--") orelse return error.UnexpectedByte;
+        return .comment;
+    }
+    return .element_start;
 }
-
-const ItemTypeMatcher = struct {
-    token: ItemType,
-    pos: u8 = 0,
-
-    const State = enum {
-        feeding,
-        matched,
-        not_a_match,
-    };
-
-    fn push(self: *ItemTypeMatcher, b: u8) !State {
-        const string = try self.token.startSequence();
-        const byte_matches = self.pos < string.len and string[self.pos] == b;
-        self.pos += 1;
-        if (byte_matches and self.pos == string.len) {
-            return .matched;
-        } else if (byte_matches) {
-            return .feeding;
-        } else {
-            return .not_a_match;
-        }
-    }
-};
 
 pub const ItemType = enum {
     xml_decl,
@@ -306,18 +195,6 @@ pub const ItemType = enum {
     element_end,
     element_content,
     comment,
-
-    fn startSequence(self: ItemType) ![]const u8 {
-        return switch (self) {
-            .xml_decl => "<?xml ",
-            .element_start => "<",
-            .element_end => "</",
-            .comment => "<!--",
-            .element_content => {
-                return error.UnexpectedContent;
-            },
-        };
-    }
 
     fn endSequence(self: ItemType) ![]const u8 {
         return switch (self) {
@@ -328,35 +205,6 @@ pub const ItemType = enum {
                 return error.UnexpectedContent;
             },
         };
-    }
-};
-
-const SliceCursor = struct {
-    data: []const u8,
-    idx: usize = 0,
-
-    fn consumeWhileAny(
-        self: *SliceCursor,
-        chars: []const u8,
-    ) usize {
-        self.idx = std.mem.indexOfNonePos(u8, self.data, self.idx, chars) orelse self.data.len;
-        return self.idx;
-    }
-
-    fn consumeWhileNone(
-        self: *SliceCursor,
-        chars: []const u8,
-    ) usize {
-        self.idx = std.mem.indexOfAnyPos(u8, self.data, self.idx, chars) orelse self.data.len;
-        return self.idx;
-    }
-
-    fn consume(self: *SliceCursor, amount: usize) void {
-        self.idx += amount;
-    }
-
-    fn peekByte(self: *SliceCursor) u8 {
-        return self.data[self.idx];
     }
 };
 

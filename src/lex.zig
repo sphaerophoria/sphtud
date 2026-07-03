@@ -43,6 +43,17 @@ pub const Buf = struct {
         return .init(self.idx);
     }
 
+    pub fn takeSequence(self: *Buf, seq: []const u8) ?Range {
+        if (!std.mem.startsWith(u8, self.remaining(), seq)) return null;
+        const start = self.idx;
+        self.idx += seq.len;
+
+        return .{
+            .start = start,
+            .end = self.idx,
+        };
+    }
+
     pub fn takeOneBetween(self: *Buf, start: u8, end_inclusive: u8) ?Idx {
         if (self.empty()) return null;
 
