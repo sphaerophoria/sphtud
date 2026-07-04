@@ -565,6 +565,10 @@ pub fn solveLinear(comptime T: type, a: T, b: T) T {
 }
 
 pub fn solveQuadratic(comptime T: type, a: T, b: T, c: T) ?[2]T {
+    if (a < polynomial_eps) {
+        const res = solveLinear(T, b, c);
+        return .{ res, res };
+    }
     const disc = b * b - 4.0 * a * c;
     if (disc < 0) return null;
     const sd = @sqrt(disc);
