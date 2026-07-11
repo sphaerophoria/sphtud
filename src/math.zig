@@ -648,7 +648,7 @@ pub fn toDepressedCubic(comptime T: type, a: T, b: T, c: T, d: T) DepressedCubic
 
 pub fn fromDepressedSolution(comptime T: type, sol: CubicSolution(T), shift: T) CubicSolution(T) {
     var ret = sol;
-    for (ret.buf[0..ret.len]) |*v| v.* -= shift;
+    for (0..ret.len) |i| ret.buf[i] -= shift;
     return ret;
 }
 
