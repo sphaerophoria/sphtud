@@ -60,9 +60,9 @@ pub const Mat3x3 = struct {
     },
 
     pub fn mul(self: Mat3x3, vec: Vec3) Vec3 {
-        const x = self.data[0..3].* * vec;
-        const y = self.data[3..6].* * vec;
-        const z = self.data[6..9].* * vec;
+        const x = Vec3{ self.data[0], self.data[1], self.data[2] } * vec;
+        const y = Vec3{ self.data[3], self.data[4], self.data[5] } * vec;
+        const z = Vec3{ self.data[6], self.data[7], self.data[8] } * vec;
 
         return .{
             @reduce(.Add, x),
@@ -78,17 +78,18 @@ pub const Mat3x3 = struct {
             const row = i / 3;
             const col = i % 3;
 
-            const a_row = a.data[row * 3 .. (row + 1) * 3];
+            const a_row_start = row * 3;
             const b_col = [3]f32{
                 b.data[col],
                 b.data[3 + col],
                 b.data[6 + col],
             };
 
+            // FIXME: Surely this is faster with some vectors?
             ret[i] =
-                a_row[0] * b_col[0] +
-                a_row[1] * b_col[1] +
-                a_row[2] * b_col[2];
+                a.data[a_row_start + 0] * b_col[0] +
+                a.data[a_row_start + 1] * b_col[1] +
+                a.data[a_row_start + 2] * b_col[2];
         }
 
         return .{

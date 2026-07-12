@@ -150,7 +150,18 @@ pub const Circle = struct {
     radius: f32,
 };
 
-pub fn rayCircleIntersection(r: Ray2, c: Circle, ret_buf: *[2]Point2) []Point2 {
+const RayCircleIntersectionRes = struct {
+    buf: [2]Point2,
+    len: u8,
+
+    pub const init = RayCircleIntersectionRes{ .buf = undefined, .len = 0 };
+
+    pub fn append(self: *RayCircleIntersectionRes, p: Point2) void {
+        self.buf[self.len] = p;
+        self.len += 1;
+    }
+};
+pub fn rayCircleIntersection(r: Ray2, c: Circle) RayCircleIntersectionRes {
     //
     //                          -------------
     //                      ----             ----
@@ -192,7 +203,7 @@ pub fn rayCircleIntersection(r: Ray2, c: Circle, ret_buf: *[2]Point2) []Point2 {
     const perp_len_2 = sphtud.math.length2(perp);
 
     if (perp_len_2 > r_2) {
-        return &.{};
+        return .init;
     }
 
     const offs = @sqrt(r_2 - perp_len_2);
@@ -201,16 +212,16 @@ pub fn rayCircleIntersection(r: Ray2, c: Circle, ret_buf: *[2]Point2) []Point2 {
     const a = midpoint + r.dir * offs_v;
     const b = midpoint - r.dir * offs_v;
 
-    var ret = std.ArrayList(Vec2).initBuffer(ret_buf);
+    var ret = RayCircleIntersectionRes.init;
     if (sphtud.math.dot(a - r.start, r.dir) >= 0) {
-        ret.appendBounded(a) catch unreachable;
+        ret.append(a);
     }
 
     if (sphtud.math.dot(b - r.start, r.dir) >= 0) {
-        ret.appendBounded(b) catch unreachable;
+        ret.append(b);
     }
 
-    return ret.items;
+    return ret;
 }
 
 pub const Ellipse = struct {
@@ -236,8 +247,7 @@ pub fn ellipseFromCircle(e: Ellipse) math.Transform {
 pub fn rayEllipseIntersection(
     ray: Ray2,
     e: Ellipse,
-    ret_buf: *[2]Vec2,
-) []sphtud.math.Vec2 {
+) sphtud.geometry.RayCircleIntersectionRes {
     const to_circle = ellipseToCircle(e);
 
     const old_end = ray.start + ray.dir;
@@ -245,19 +255,18 @@ pub fn rayEllipseIntersection(
     const new_start = to_circle.apply2(ray.start);
     const new_dir = sphtud.math.normalize(new_end - new_start);
 
-    const ret = sphtud.geometry.rayCircleIntersection(
+    var ret = sphtud.geometry.rayCircleIntersection(
         .{ .start = new_start, .dir = new_dir },
         .{
             .center = .{ 0, 0 },
             .radius = 1,
         },
-        ret_buf,
     );
 
     const from_circle = ellipseFromCircle(e);
 
-    for (ret) |*r| {
-        r.* = from_circle.apply2(r.*);
+    for (0..ret.len) |i| {
+        ret.buf[i] = from_circle.apply2(ret.buf[i]);
     }
 
     return ret;

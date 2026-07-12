@@ -65,6 +65,25 @@ pub const RenderSource = struct {
         self.len = data.len;
     }
 
+    pub fn bindFromBuffer(self: *RenderSource, comptime InElem: type, program: ProgramHandle, data: Buffer(InElem), offset_map: anytype) void {
+        const MappingType = @TypeOf(offset_map);
+        const fields = std.meta.fields(MappingType);
+        const field_locs = fieldLocs(fields, program);
+
+        const binding_index = 0;
+
+        gl.glVertexArrayVertexBuffer(self.vao, binding_index, data.vertex_buffer, 0, @sizeOf(InElem));
+
+        inline for (fields, field_locs) |field, loc| {
+            if (loc >= 0) {
+                applyAttribFormat(self.vao, loc, field.type, @field(offset_map, field.name));
+                gl.glVertexArrayAttribBinding(self.vao, @intCast(loc), binding_index);
+            }
+        }
+
+        self.len = data.len;
+    }
+
     pub fn setIndexBuffer(self: *RenderSource, comptime T: type, buf: IndexBuffer(T)) void {
         gl.glVertexArrayElementBuffer(self.vao, buf.value);
         self.index_type = switch (T) {
