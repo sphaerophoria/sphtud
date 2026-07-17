@@ -14,6 +14,8 @@ pkgs.mkShell {
     wayland
     linuxPackages_latest.perf
     kcov
+    openssl
+    pkg-config
   ];
 
   LD_LIBRARY_PATH = "${pkgs.wayland}/lib";

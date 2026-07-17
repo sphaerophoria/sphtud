@@ -4,6 +4,71 @@ pub const url = @import("http/url.zig");
 pub const HttpResponseReader = HttpReaderGeneric(HttpResponseHeader);
 pub const HttpRequestReader = HttpReaderGeneric(HttpRequestHeader);
 
+// Simple HTTP get -> body on 200
+pub const Simple = struct {
+    alloc: std.mem.Allocator,
+    body: std.ArrayList(u8),
+    http_reader: HttpResponseReader,
+    state: union(enum) {
+        head,
+        body: *std.Io.Reader,
+    },
+
+    // writer/uri are temporary, but the reader and alloc are stored
+    pub fn init(alloc: std.mem.Allocator, r: *std.Io.Reader, w: *std.Io.Writer, uri: std.Uri) !Simple {
+        var http_writer = HttpWriter.init(w);
+        var target_buf: [1024]u8 = undefined;
+        var tb_writer = std.Io.Writer.fixed(&target_buf);
+
+        try uri.writeToStream(&tb_writer, .{
+            .path = true,
+            .query = true,
+        });
+        try http_writer.startRequest(.{ .method = .GET, .target = tb_writer.buffered(), .content_length = null, .content_type = null });
+
+        var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
+        const host = try uri.getHost(&host_buf);
+        try http_writer.appendHeader("Host", host.bytes);
+        try http_writer.appendHeader("Accept", "*/*");
+        // Sometimes we get banned if we don't have a valid useragent
+        try http_writer.appendHeader("User-Agent", "curl/8.20.0");
+        try http_writer.appendHeader("Connection", "close");
+        try http_writer.writeBody("");
+        try w.flush();
+
+        return .{
+            .alloc = alloc,
+            .body = .empty,
+            .http_reader = .init(r),
+            .state = .head,
+        };
+    }
+
+    pub fn poll(self: *Simple) ![]const u8 {
+        sw: switch (self.state) {
+            .head => {
+                // Can use empty body buf as we are planning on streaming
+                // directly into the writer's buffer
+                const res = try self.http_reader.poll(self.alloc, &.{});
+
+                if (res.header.status != .ok) {
+                    return error.HttpFail;
+                }
+
+                self.state = .{
+                    .body = res.body_reader,
+                };
+
+                continue :sw self.state;
+            },
+            .body => |body_r| {
+                try body_r.appendRemaining(self.alloc, &self.body, .unlimited);
+                return self.body.items;
+            },
+        }
+    }
+};
+
 fn HttpReaderGeneric(comptime Header: type) type {
     return struct {
         input: *std.Io.Reader,
@@ -460,13 +525,15 @@ pub const HttpWriter = struct {
     pub const RequestParams = struct {
         method: std.http.Method,
         target: []const u8,
-        content_length: usize,
+        content_length: ?usize,
         content_type: ?[]const u8 = null,
     };
 
     pub fn startRequest(self: *Self, params: RequestParams) !void {
-        try self.writer.print("{t} {s} HTTP/1.1\r\n" ++
-            "Content-Length: {d}\r\n", .{ params.method, params.target, params.content_length });
+        try self.writer.print("{t} {s} HTTP/1.1\r\n", .{ params.method, params.target });
+        if (params.content_length) |cl| {
+            try self.writer.print("Content-Length: {d}\r\n", .{cl});
+        }
         if (params.content_type) |t| {
             try self.appendHeader("Content-Type", t);
         }
