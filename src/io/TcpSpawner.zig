@@ -16,7 +16,7 @@ service_start_id: usize,
 const num_concurrent = 8;
 // Hardcode for now, there's probably some sane maximum like
 // number of file descriptors allowed at once or something
-const max_connections = 1024;
+pub const max_connections = 1024;
 
 pub fn init(arena: std.mem.Allocator, expansion: sphutil.ExpansionAlloc, dns_service: *sphio.DnsService, loop: *sphio.Loop, comptime ids: Ids) !TcpSpawner {
     return .{
@@ -85,9 +85,9 @@ pub fn get(self: *TcpSpawner, handle: SpawnHandle) *Connection {
     return self.pool.get(handle.inner);
 }
 
-pub fn finish(self: *TcpSpawner, handle: SpawnHandle) !std.posix.fd_t {
+pub fn finish(self: *TcpSpawner, handle: SpawnHandle) !?std.posix.fd_t {
     const connection = self.pool.get(handle.inner);
-    const res = connection.result orelse return error.NotFinished;
+    const res = connection.result orelse return null;
     connection.deinit(self.dns_service);
     self.pool.release(self.expansion_alloc, handle.inner);
 
@@ -98,7 +98,7 @@ pub fn finish(self: *TcpSpawner, handle: SpawnHandle) !std.posix.fd_t {
         self.loop.clearEvents(ids.connectionId(handle.inner, @intCast(i)));
     }
 
-    return res;
+    return try res;
 }
 
 pub fn service(self: *TcpSpawner, id: usize, comptime ids: Ids) !void {

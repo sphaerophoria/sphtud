@@ -117,11 +117,12 @@ fn serviceConnectionReady(self: *TcpFetchProxyService, elem_id: usize, comptime 
 
     switch (elem.remote) {
         .initializing => |handle| {
+            const res = self.spawner.finish(handle) catch {
+                self.closeConnection(elem_id);
+                return false;
+            } orelse return false;
             elem.remote = .{
-                .initialized = self.spawner.finish(handle) catch {
-                    self.closeConnection(elem_id);
-                    return false;
-                },
+                .initialized = res,
             };
         },
         .initialized => {},

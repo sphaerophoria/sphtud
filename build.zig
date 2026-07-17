@@ -18,6 +18,7 @@ const Builder = struct {
     is_dep: bool,
     with_gl: bool,
     with_glfw: bool,
+    with_ssl: bool,
     gl_extensions: []const []const u8,
     gl: ?*std.Build.Module,
     options: *std.Build.Step.Options,
@@ -31,6 +32,7 @@ const Builder = struct {
         const is_dep = b.dep_prefix.len > 0;
         const with_gl = b.option(bool, "with_gl", "") orelse !is_dep;
         const with_glfw = b.option(bool, "with_glfw", "") orelse !is_dep;
+        const with_ssl = b.option(bool, "with_ssl", "") orelse !is_dep;
         const gl_extensions = b.option([]const []const u8, "gl_extensions", "") orelse &.{};
         const unique = b.option([]const u8, "unique", "Unique string for importer to avoid cache collisions");
 
@@ -80,6 +82,7 @@ const Builder = struct {
         const options = b.addOptions();
         options.addOption(bool, "export_sphrender", with_gl);
         options.addOption(bool, "export_sphwindow", with_glfw);
+        options.addOption(bool, "has_ssl", with_ssl);
 
         if (unique) |s| {
             options.addOption(void, s, {});
@@ -88,11 +91,13 @@ const Builder = struct {
         const options_all = b.addOptions();
         options_all.addOption(bool, "export_sphrender", true);
         options_all.addOption(bool, "export_sphwindow", true);
+        options_all.addOption(bool, "has_ssl", true);
 
         return .{
             .is_dep = is_dep,
             .with_gl = with_gl,
             .with_glfw = with_glfw,
+            .with_ssl = with_ssl,
             .gl_extensions = gl_extensions,
             .gl = gl,
             .options = options,
@@ -115,6 +120,11 @@ const Builder = struct {
             mod.linkSystemLibrary("glfw", .{});
             mod.link_libc = true;
         }
+
+        if (self.with_ssl) {
+            mod.linkSystemLibrary("ssl", .{});
+            mod.link_libc = true;
+        }
     }
 
     fn addImportsAll(self: Builder, mod: *std.Build.Module) void {
@@ -122,6 +132,7 @@ const Builder = struct {
 
         mod.addImport("gl", self.gl.?);
         mod.linkSystemLibrary("glfw", .{});
+        mod.linkSystemLibrary("ssl", .{});
         mod.link_libc = true;
     }
 
@@ -174,6 +185,7 @@ pub fn build(b: *std.Build) !void {
         builder.addExample("io_example", "src/examples/io_example.zig", sphtud_all);
         builder.addExample("gui_example", "src/examples/gui_example.zig", sphtud_all);
         builder.addExample("http_client_example", "src/examples/http_client_example.zig", sphtud_all);
+        builder.addExample("https_client_example", "src/examples/https_client_example.zig", sphtud_all);
         builder.addExample("http_server_example", "src/examples/http_server_example.zig", sphtud_all);
     }
 

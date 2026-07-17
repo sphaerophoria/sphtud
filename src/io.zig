@@ -1,12 +1,80 @@
 const std = @import("std");
 const sphtud = @import("sphtud.zig");
+const config = @import("config");
 pub const system = std.os.linux;
 
 pub const DnsService = @import("io/DnsService.zig");
 pub const TcpSpawner = @import("io/TcpSpawner.zig");
 pub const TimerService = @import("io/TimerService.zig");
+pub const SimpleHttpTls = @import("io/SimpleHttpTls.zig");
+
+pub const tls = if (config.has_ssl) @import("io/tls.zig") else void;
 
 const invalid_id = std.math.maxInt(usize);
+
+pub const Runtime = struct {
+    dns_service: DnsService,
+    timer_service: TimerService,
+    tcp_spawner: TcpSpawner,
+    tls_spawner: if (config.has_ssl) tls.Spawner else void,
+    chain_buf: [256]usize,
+    loop: sphtud.io.Loop,
+
+    pub const Ids = struct {
+        dns_service: sphtud.io.DnsService.Ids,
+        tcp_spawner: sphtud.io.TcpSpawner.Ids,
+        timer: usize,
+        total: sphtud.util.IdAlloc.Range,
+
+        pub fn init(alloc: *sphtud.io.IdAlloc) Ids {
+            const start = alloc.mark();
+            return .{
+                .dns_service = .init(alloc, 1024),
+                .tcp_spawner = .init(alloc),
+                .timer = alloc.allocOne(),
+                .total = start.range(),
+            };
+        }
+    };
+
+    pub fn initPinned(self: *Runtime, alloc: *sphtud.alloc.Sphalloc, comptime ids: Ids) !void {
+        self.loop = try Loop.init(&self.chain_buf);
+        self.timer_service = try .init(alloc.arena(), alloc.expansion(), &self.loop, ids.timer);
+        self.dns_service = try .init(alloc, &self.loop, &self.timer_service, ids.dns_service);
+        self.tcp_spawner = try .init(
+            alloc.arena(),
+            alloc.expansion(),
+            &self.dns_service,
+            &self.loop,
+            ids.tcp_spawner,
+        );
+
+        self.tls_spawner = if (config.has_ssl) try .init(
+            &self.tcp_spawner,
+            &self.loop,
+        ) else {};
+    }
+
+    pub fn service(self: *Runtime, comptime ids: Ids) !usize {
+        while (true) {
+            const event = try self.loop.poll(-1);
+            const id = event orelse continue;
+
+            switch (id) {
+                ids.dns_service.total.start...ids.dns_service.total.end => {
+                    try self.dns_service.service(id, ids.dns_service);
+                },
+                ids.tcp_spawner.total.start...ids.tcp_spawner.total.end => {
+                    try self.tcp_spawner.service(id, ids.tcp_spawner);
+                },
+                ids.timer => {
+                    try self.timer_service.service(&self.loop);
+                },
+                else => return id,
+            }
+        }
+    }
+};
 
 pub const Reader = struct {
     fd: std.posix.fd_t,
@@ -49,7 +117,7 @@ pub const Reader = struct {
     pub fn seekTo(self: *Reader, pos: i64) !void {
         self.interface.end = 0;
         self.interface.seek = 0;
-        try lseek(self.fd, pos, system.SEEK.SET);
+        _ = try lseek(self.fd, pos, system.SEEK.SET);
     }
 
     fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
@@ -572,10 +640,10 @@ pub const DirIter = struct {
     }
 };
 
-pub fn lseek(fd: std.posix.fd_t, offs: i64, whence: usize) !void {
+pub fn lseek(fd: std.posix.fd_t, offs: i64, whence: usize) !usize {
     const rc = system.lseek(fd, offs, whence);
     switch (system.errno(rc)) {
-        .SUCCESS => return,
+        .SUCCESS => return @intCast(rc),
         else => return error.LSeek,
     }
 }
