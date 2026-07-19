@@ -471,7 +471,7 @@ const ChunkedReader = struct {
 
 pub const HttpHeaderParams = struct {
     status: std.http.Status,
-    content_length: usize,
+    content_length: ?usize,
     content_type: ?[]const u8 = null,
     headers: []const struct { key: []const u8, value: []const u8 } = &.{},
 };
@@ -550,14 +550,17 @@ pub const HttpWriter = struct {
 
     pub const ResponseParams = struct {
         status: std.http.Status,
-        content_length: usize,
+        content_length: ?usize,
         content_type: ?[]const u8 = null,
     };
 
     pub fn startResponse(self: *Self, params: ResponseParams) !void {
-        try self.writer.print("HTTP/1.1 {d} {s}\r\n" ++
-            "Content-Length: {d}\r\n" ++
-            "Connection: close\r\n", .{ @intFromEnum(params.status), params.status.phrase() orelse "", params.content_length });
+        try self.writer.print("HTTP/1.1 {d} {s}\r\n", .{ @intFromEnum(params.status), params.status.phrase() orelse "" });
+
+        if (params.content_length) |l| {
+            try self.appendIntHeader("Content-Length", l);
+        }
+
         if (params.content_type) |t| {
             try self.appendHeader("Content-Type", t);
         }
@@ -565,6 +568,10 @@ pub const HttpWriter = struct {
 
     pub fn appendHeader(self: *Self, key: []const u8, val: []const u8) !void {
         try self.writer.print("{s}: {s}\r\n", .{ key, val });
+    }
+
+    pub fn appendIntHeader(self: *Self, key: []const u8, val: anytype) !void {
+        try self.writer.print("{s}: {d}\r\n", .{ key, val });
     }
 
     pub fn writeBody(self: *Self, content: []const u8) !void {
@@ -590,8 +597,7 @@ test "HttpWriter response sanity" {
 
     // If this gets too much churn, we might want to do something more intelligent
     try std.testing.expectEqualStrings("HTTP/1.1 200 OK\r\n" ++
-        "Content-Length: 0\r\n" ++
-        "Connection: close\r\n", allocating.written());
+        "Content-Length: 0\r\n", allocating.written());
 
     allocating.clearRetainingCapacity();
 
@@ -606,7 +612,6 @@ test "HttpWriter response sanity" {
 
     try std.testing.expectEqualStrings("HTTP/1.1 500 Internal Server Error\r\n" ++
         "Content-Length: 11\r\n" ++
-        "Connection: close\r\n" ++
         "Content-Type: text\r\n" ++
         "X-Custom-Header: custom\r\n" ++
         "\r\n" ++
@@ -625,7 +630,6 @@ test "comptime header" {
 
     try std.testing.expectEqualStrings("HTTP/1.1 404 Not Found\r\n" ++
         "Content-Length: 10\r\n" ++
-        "Connection: close\r\n" ++
         "Content-Type: text/http\r\n" ++
         "test: value\r\n\r\n", not_found);
 }
