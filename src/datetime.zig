@@ -3,25 +3,23 @@ const std = @import("std");
 pub const DateTime = struct {
     year: u16,
     month: Month,
-    day: u8,
+    day: u8, // 1-31
 
     hours: u8,
     minutes: u8,
     seconds: u8,
 
     pub fn init(epoch: i64) DateTime {
-        const year = yearFromEpoch(@intCast(epoch));
-        const year_day = yearDayFromEpoch(@intCast(epoch));
-        const month = monthFromYearDay(year, year_day);
+        const date = Date.fromCeDay(epochToCeDay(epoch));
 
         const second = @mod(epoch, 60);
         const minute = @divTrunc(@mod(epoch, 60 * 60), 60);
         const hour = @divTrunc(@mod(epoch, 60 * 60 * 24), 60 * 60);
 
         return .{
-            .year = @intCast(year),
-            .month = month.month,
-            .day = @intCast(month.day),
+            .year = @intCast(date.year),
+            .month = date.month,
+            .day = date.day,
             .hours = @intCast(hour),
             .minutes = @intCast(minute),
             .seconds = @intCast(second),
@@ -46,7 +44,7 @@ pub const DateTime = struct {
         try w.writeByte('-');
         try print2Digit(w, @as(u32, @intFromEnum(dt.month)) + 1);
         try w.writeByte('-');
-        try print2Digit(w, dt.day + 1);
+        try print2Digit(w, dt.day);
 
         try w.writeByte(' ');
 
@@ -55,6 +53,70 @@ pub const DateTime = struct {
         try print2Digit(w, dt.minutes);
         try w.writeByte(':');
         try print2Digit(w, dt.seconds);
+    }
+};
+
+pub const Date = struct {
+    year: i64,
+    month: Month,
+    day: u8, // 1-31
+
+    pub fn toCeDay(date: Date) i64 {
+        const year: u32 = @intCast(date.year);
+        const month = @intFromEnum(date.month) + 1;
+        var days = daysBeforeYear(year) + @as(u32, date.day);
+        for (1..month) |m| days += daysInMonth(year, @intCast(m));
+        return days;
+    }
+
+    pub fn fromCeDay(days: i64) Date {
+        // Find the year: estimate from the exact 146097-days-per-400-years cadence
+        // (an over- or under-shoot of at most one), then correct.
+        const day_of_ce: u32 = @intCast(days - 1); // 0-based days since 0001-01-01
+        var year: u32 = @intCast(@as(u64, day_of_ce) * 400 / 146097 + 1);
+        while (daysBeforeYear(year) > day_of_ce) year -= 1;
+        while (daysBeforeYear(year + 1) <= day_of_ce) year += 1;
+
+        var year_day = day_of_ce - daysBeforeYear(year); // 0-based day within year
+        for (1..13) |m| {
+            const in_month = daysInMonth(year, @intCast(m));
+            if (year_day < in_month) {
+                return .{
+                    .year = year,
+                    .month = @enumFromInt(m - 1),
+                    .day = @intCast(year_day + 1),
+                };
+            }
+            year_day -= in_month;
+        }
+
+        unreachable;
+    }
+
+    pub fn parse(s: []const u8) !Date {
+        var it = std.mem.splitScalar(u8, s, '-');
+        const year_s = it.next() orelse return error.InvalidDate;
+        const month_s = it.next() orelse return error.InvalidDate;
+        const day_s = it.next() orelse return error.InvalidDate;
+        if (it.next() != null) return error.InvalidDate;
+
+        const month = try std.fmt.parseInt(u8, month_s, 10);
+        if (month < 1 or month > 12) return error.InvalidDate;
+
+        return .{
+            .year = try std.fmt.parseInt(i64, year_s, 10),
+            .month = @enumFromInt(month - 1),
+            .day = try std.fmt.parseInt(u8, day_s, 10),
+        };
+    }
+
+    pub fn format(self: Date, w: *std.Io.Writer) !void {
+        if (self.year < 0) try w.writeByte('-');
+        try w.printInt(@abs(self.year), 10, .lower, .{ .fill = '0', .width = 4, .alignment = .right });
+        try w.writeByte('-');
+        try w.printInt(@as(u32, @intFromEnum(self.month)) + 1, 10, .lower, .{ .fill = '0', .width = 2, .alignment = .right });
+        try w.writeByte('-');
+        try w.printInt(self.day, 10, .lower, .{ .fill = '0', .width = 2, .alignment = .right });
     }
 };
 
@@ -195,81 +257,31 @@ pub const TimeZone = struct {
     }
 };
 
-const epoch_year = 1970;
-const first_leap_year = 1968;
-
 // Number of days from 0001-01-01 (day 1) to the unix epoch (1970-01-01) in the
 // proleptic Gregorian calendar. Matches chrono's NaiveDate::num_days_from_ce.
-const epoch_days_from_ce = 719163;
+pub const epoch_days_from_ce = 719163;
 
 // Days elapsed since 0001-01-01 (which is day 1) for the given unix timestamp,
 // in the proleptic Gregorian calendar.
-pub fn numDaysFromCe(epoch_seconds: i64) i64 {
+pub fn epochToCeDay(epoch_seconds: i64) i64 {
     return @divFloor(epoch_seconds, std.time.s_per_day) + epoch_days_from_ce;
 }
 
-fn additionalLeapDays(years_since_epoch: u32) u32 {
-    return (years_since_epoch + 1) / 4 - (years_since_epoch + 69) / 100 + (years_since_epoch + 369) / 400;
-}
-
-fn yearFromEpoch(epoch: u32) u32 {
-    const days_since_epoch = epoch / 60 / 60 / 24;
-
-    // Initial overestimate
-    const years_since_epoch = days_since_epoch / 365;
-    const days_adjusted = days_since_epoch - additionalLeapDays(years_since_epoch);
-
-    return days_adjusted / 365 + epoch_year;
-}
-
-// How many days into the current year are we
-fn yearDayFromEpoch(epoch: u32) u32 {
-    const days = epoch / 60 / 60 / 24;
-    const year = yearFromEpoch(epoch);
-    return days - yearDayStart(year);
-}
-
-// This year starts how many days after jan 1 1970
-fn yearDayStart(year: u32) u32 {
-    const years_since_epoch = year - 1970;
-    const day = years_since_epoch * 365;
-    return day + additionalLeapDays(years_since_epoch);
-}
+// 30 days have september, april, june, and november; all the rest have 31,
+// except for february, which has 28 (or sometimes 29 or something).
+const days_per_month = [12]u32{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 
 fn isLeapYear(year: u32) bool {
     return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0);
 }
 
-const MonthDay = struct {
-    month: Month,
-    day: u32,
-};
+fn daysBeforeYear(year: u32) u32 {
+    const y = year - 1;
+    return 365 * y + y / 4 - y / 100 + y / 400;
+}
 
-fn monthFromYearDay(year: u32, year_day: u32) MonthDay {
-    var count = year_day;
-    var month: u32 = 0;
-
-    // 30 days have september,
-    // april, june, and november
-    // all the rest have 31,
-    // except for february, which has 28
-    // or sometimes 29 or something
-    var days_per_month: [12]u32 = .{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-
-    if (isLeapYear(year)) days_per_month[1] += 1;
-
-    for (days_per_month) |days_in_month| {
-        if (days_in_month > count) {
-            return .{
-                .month = @enumFromInt(month),
-                .day = count,
-            };
-        }
-        month += 1;
-        count -= days_in_month;
-    }
-
-    unreachable;
+fn daysInMonth(year: u32, month: u8) u32 {
+    return days_per_month[month - 1] + @as(u32, @intFromBool(month == 2 and isLeapYear(year)));
 }
 
 const TzHeader = struct {
@@ -347,14 +359,46 @@ const TestCase = struct {
 
 test "num days from ce" {
     // 0001-01-01 is day 1
-    try std.testing.expectEqual(1, numDaysFromCe(-62135596800));
+    try std.testing.expectEqual(1, epochToCeDay(-62135596800));
     // Unix epoch
-    try std.testing.expectEqual(719163, numDaysFromCe(0));
+    try std.testing.expectEqual(719163, epochToCeDay(0));
     // 2000-01-01
-    try std.testing.expectEqual(730120, numDaysFromCe(946684800));
+    try std.testing.expectEqual(730120, epochToCeDay(946684800));
     // Partial day floors down, and negatives floor toward -inf
-    try std.testing.expectEqual(719163, numDaysFromCe(std.time.s_per_day - 1));
-    try std.testing.expectEqual(719162, numDaysFromCe(-1));
+    try std.testing.expectEqual(719163, epochToCeDay(std.time.s_per_day - 1));
+    try std.testing.expectEqual(719162, epochToCeDay(-1));
+}
+
+test "date num days from ce" {
+    // 0001-01-01 is day 1
+    try std.testing.expectEqual(1, (Date{ .year = 1, .month = .jan, .day = 1 }).toCeDay());
+    // Unix epoch
+    try std.testing.expectEqual(719163, (Date{ .year = 1970, .month = .jan, .day = 1 }).toCeDay());
+    // 2000-01-01
+    try std.testing.expectEqual(730120, (Date{ .year = 2000, .month = .jan, .day = 1 }).toCeDay());
+}
+
+test "date round trip" {
+    const cases = [_]Date{
+        .{ .year = 1, .month = .jan, .day = 1 },
+        .{ .year = 1970, .month = .jan, .day = 1 },
+        .{ .year = 2000, .month = .feb, .day = 29 },
+        .{ .year = 2023, .month = .dec, .day = 31 },
+        .{ .year = 2024, .month = .jul, .day = 18 },
+    };
+
+    for (cases) |case| {
+        try std.testing.expectEqual(case, Date.fromCeDay(case.toCeDay()));
+    }
+}
+
+test "date parse and format" {
+    const parsed = try Date.parse("2024-07-18");
+    try std.testing.expectEqual(Date{ .year = 2024, .month = .jul, .day = 18 }, parsed);
+
+    var buf: [32]u8 = undefined;
+    const res = try std.fmt.bufPrint(&buf, "{f}", .{parsed});
+    try std.testing.expectEqualStrings("2024-07-18", res);
 }
 
 test "utc times" {
