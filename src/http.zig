@@ -12,6 +12,7 @@ pub const Simple = struct {
     state: union(enum) {
         head,
         body: *std.Io.Reader,
+        finished,
     },
 
     // writer/uri are temporary, but the reader and alloc are stored
@@ -63,6 +64,10 @@ pub const Simple = struct {
             },
             .body => |body_r| {
                 try body_r.appendRemaining(self.alloc, &self.body, .unlimited);
+                self.state = .finished;
+                return self.body.items;
+            },
+            .finished => {
                 return self.body.items;
             },
         }
