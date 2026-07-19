@@ -215,13 +215,14 @@ pub const ClientInit = struct {
             .ssl_init => |*con| {
                 if (try serviceSsl(con)) {
                     try self.spawner.loop.unregister(con.fd);
-                    self.spawner.loop.clearEvents(self.service_id);
                     const ret = con.*;
                     self.data = .none;
                     return ret;
                 }
                 return null;
             },
+            // If someone has received the connection they should advance their
+            // state machine such that this doesn't get called again
             .none => unreachable,
         }
     }
