@@ -198,6 +198,16 @@ pub const TimeZone = struct {
 const epoch_year = 1970;
 const first_leap_year = 1968;
 
+// Number of days from 0001-01-01 (day 1) to the unix epoch (1970-01-01) in the
+// proleptic Gregorian calendar. Matches chrono's NaiveDate::num_days_from_ce.
+const epoch_days_from_ce = 719163;
+
+// Days elapsed since 0001-01-01 (which is day 1) for the given unix timestamp,
+// in the proleptic Gregorian calendar.
+pub fn numDaysFromCe(epoch_seconds: i64) i64 {
+    return @divFloor(epoch_seconds, std.time.s_per_day) + epoch_days_from_ce;
+}
+
 fn additionalLeapDays(years_since_epoch: u32) u32 {
     return (years_since_epoch + 1) / 4 - (years_since_epoch + 69) / 100 + (years_since_epoch + 369) / 400;
 }
@@ -334,6 +344,18 @@ const TestCase = struct {
         return try std.json.parseFromSliceLeaky([]TestCase, alloc, data, .{});
     }
 };
+
+test "num days from ce" {
+    // 0001-01-01 is day 1
+    try std.testing.expectEqual(1, numDaysFromCe(-62135596800));
+    // Unix epoch
+    try std.testing.expectEqual(719163, numDaysFromCe(0));
+    // 2000-01-01
+    try std.testing.expectEqual(730120, numDaysFromCe(946684800));
+    // Partial day floors down, and negatives floor toward -inf
+    try std.testing.expectEqual(719163, numDaysFromCe(std.time.s_per_day - 1));
+    try std.testing.expectEqual(719162, numDaysFromCe(-1));
+}
 
 test "utc times" {
     const test_cases_blob = @embedFile("datetime/utc_tests.json");
