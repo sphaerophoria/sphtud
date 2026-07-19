@@ -190,9 +190,7 @@ pub const ClientInit = struct {
 
     pub fn deinit(self: *ClientInit) void {
         switch (self.data) {
-            // Leak, that seems bad. But also we have no way to cancel a tcp
-            // spawn.
-            .spawning => {},
+            .spawning => |h| self.spawner.tcp_spawner.cancel(h),
             .ssl_init => |*con| con.deinit(),
             .none => {},
         }

@@ -85,9 +85,8 @@ pub fn get(self: *TcpSpawner, handle: SpawnHandle) *Connection {
     return self.pool.get(handle.inner);
 }
 
-pub fn finish(self: *TcpSpawner, handle: SpawnHandle) !?std.posix.fd_t {
+pub fn cancel(self: *TcpSpawner, handle: SpawnHandle) void {
     const connection = self.pool.get(handle.inner);
-    const res = connection.result orelse return null;
     connection.deinit(self.dns_service);
     self.pool.release(self.expansion_alloc, handle.inner);
 
@@ -97,6 +96,13 @@ pub fn finish(self: *TcpSpawner, handle: SpawnHandle) !?std.posix.fd_t {
     for (0..num_concurrent) |i| {
         self.loop.clearEvents(ids.connectionId(handle.inner, @intCast(i)));
     }
+}
+
+pub fn finish(self: *TcpSpawner, handle: SpawnHandle) !?std.posix.fd_t {
+    const connection = self.pool.get(handle.inner);
+    const res = connection.result orelse return null;
+
+    self.cancel(handle);
 
     return try res;
 }
