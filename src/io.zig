@@ -930,18 +930,24 @@ pub const Loop = struct {
             return ev;
         }
 
-        if (self.event_cursor >= self.num_events) {
-            self.num_events = try epoll_wait(self.fd, &self.buffered_events, self.buffered_events.len, timeout);
-
-            self.event_cursor = 0;
-            if (self.num_events == 0) return null;
-        }
-
         while (true) {
-            const event = self.buffered_events[self.event_cursor];
-            self.event_cursor += 1;
-            if (event.data.ptr == invalid_id) continue;
-            return event.data.ptr;
+            if (self.event_cursor >= self.num_events) {
+                self.num_events = try epoll_wait(self.fd, &self.buffered_events, self.buffered_events.len, timeout);
+                self.event_cursor = 0;
+
+                if (self.num_events < self.buffered_events.len) {
+                    @memset(self.buffered_events[self.num_events..], undefined);
+                }
+
+                if (self.num_events == 0) return null;
+            }
+
+            while (self.event_cursor < self.num_events) {
+                const event = self.buffered_events[self.event_cursor];
+                self.event_cursor += 1;
+                if (event.data.ptr == invalid_id) continue;
+                return event.data.ptr;
+            }
         }
     }
 
