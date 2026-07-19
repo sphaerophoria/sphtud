@@ -87,6 +87,7 @@ pub fn ObjectPool(comptime T: type, comptime Handle: type) type {
         }
 
         pub fn get(self: Self, handle: Handle) *T {
+            if (self.tombstones.get(idxFromHandle(handle))) unreachable;
             return self.objects.getPtr(idxFromHandle(handle));
         }
 
@@ -169,6 +170,8 @@ pub fn ObjectPool(comptime T: type, comptime Handle: type) type {
 
                 to.* = from.*;
                 from.* = undefined;
+                self.tombstones.set(head, false);
+                self.tombstones.set(tail, true);
                 move_ctx.notifyMoved(handleFromIdx(Handle, tail), handleFromIdx(Handle, head));
                 head += 1;
                 tail -= 1;
