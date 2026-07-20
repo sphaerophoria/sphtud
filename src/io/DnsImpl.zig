@@ -554,10 +554,23 @@ fn discardQuestions(r: *std.Io.Reader, qdcount: u16) !void {
     }
 }
 
-fn parseLabel(r: *std.Io.Reader, out: *std.ArrayList(u8)) !void {
+fn parseName(full: []const u8, r: *std.Io.Reader, out: *std.ArrayList(u8)) !void {
     while (true) {
         const len = try r.takeByte();
         if (len == 0) break;
+
+        if (len >> 6 == 0b11) {
+            var offset: u16 = len & 0x3f;
+            offset <<= 8;
+            offset |= try r.takeByte();
+
+            if (offset >= full.len) return error.InvalidOffset;
+
+            var offs_r = std.Io.Reader.fixed(full[offset..]);
+            try parseName(full, &offs_r, out);
+            break;
+        }
+
         try out.appendSliceBounded(try r.take(len));
         try out.appendBounded('.');
     }
@@ -577,25 +590,7 @@ const DnsRR = struct {
 
         var name_buf: [256]u8 = undefined;
         var name = std.ArrayList(u8).initBuffer(&name_buf);
-        while (true) {
-            const name_len = try r.takeByte();
-
-            if (name_len == 0) break;
-
-            if (name_len >> 6 == 0b11) {
-                var offset: u16 = name_len & 0x3f;
-                offset <<= 8;
-                offset |= try r.takeByte();
-
-                if (offset >= r.buffer.len) return error.InvalidOffset;
-
-                var offs_r = std.Io.Reader.fixed(r.buffer[offset..]);
-                try parseLabel(&offs_r, &name);
-                break;
-            }
-
-            try name.appendSliceBounded(try r.take(name_len));
-        }
+        try parseName(r.buffer, r, &name);
 
         const typ = try r.takeInt(u16, .big);
         const class = try r.takeInt(u16, .big);
@@ -720,6 +715,27 @@ test "query sanity" {
         const next = try query.next();
         try std.testing.expect(next == .wait);
     }
+}
+
+test "pointer in pointer example" {
+    var fixture: TestFixture = undefined;
+    try fixture.initPinned();
+
+    var query_action = try fixture.impl.makeQuery("api.tvmaze.com");
+
+    // Drain events
+    while (query_action.next()) |_| {}
+
+    const handle = try fixture.impl.onRecv(&.{
+        0x00, 0x00, 0x81, 0x80, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x03, 0x61, 0x70, 0x69,
+        0x06, 0x74, 0x76, 0x6d, 0x61, 0x7a, 0x65, 0x03, 0x63, 0x6f, 0x6d, 0x00, 0x00, 0x01, 0x00, 0x01,
+        0xc0, 0x0c, 0x00, 0x05, 0x00, 0x01, 0x00, 0x00, 0x01, 0x2c, 0x00, 0x08, 0x05, 0x65, 0x64, 0x67,
+        0x65, 0x73, 0xc0, 0x10, 0xc0, 0x2c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x2c, 0x00, 0x04,
+        0x5e, 0x10, 0x6e, 0xc2,
+    }) orelse unreachable;
+
+    const query = fixture.impl.get(handle);
+    _ = try query.next();
 }
 
 test "dns timeout failure" {
