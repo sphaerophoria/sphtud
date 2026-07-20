@@ -15,8 +15,13 @@ pub const Simple = struct {
         finished,
     },
 
+    pub const Params = struct {
+        // Sometimes we get banned if we don't have a valid useragent
+        user_agent: []const u8 = "curl/8.20.0",
+    };
+
     // writer/uri are temporary, but the reader and alloc are stored
-    pub fn init(alloc: std.mem.Allocator, r: *std.Io.Reader, w: *std.Io.Writer, uri: std.Uri) !Simple {
+    pub fn init(alloc: std.mem.Allocator, r: *std.Io.Reader, w: *std.Io.Writer, uri: std.Uri, params: Params) !Simple {
         var http_writer = HttpWriter.init(w);
         var target_buf: [1024]u8 = undefined;
         var tb_writer = std.Io.Writer.fixed(&target_buf);
@@ -31,8 +36,7 @@ pub const Simple = struct {
         const host = try uri.getHost(&host_buf);
         try http_writer.appendHeader("Host", host.bytes);
         try http_writer.appendHeader("Accept", "*/*");
-        // Sometimes we get banned if we don't have a valid useragent
-        try http_writer.appendHeader("User-Agent", "curl/8.20.0");
+        try http_writer.appendHeader("User-Agent", params.user_agent);
         try http_writer.appendHeader("Connection", "close");
         try http_writer.writeBody("");
         try w.flush();

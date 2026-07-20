@@ -30,7 +30,7 @@ pub fn main() !void {
     try io.initPinned(&alloc, ids.runtime);
 
     var fetch: sphtud.io.SimpleHttpTls = undefined;
-    try fetch.initPinned(alloc.arena(), try .parse("https://www.google.com"), &io.tls_spawner, ids.request);
+    try fetch.initPinned(alloc.arena(), try .parse("https://www.google.com"), .{}, &io.tls_spawner, ids.request);
     defer fetch.deinit();
 
     while (true) {

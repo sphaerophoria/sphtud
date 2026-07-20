@@ -5,6 +5,7 @@ const SimpleHttpTls = @This();
 
 alloc: std.mem.Allocator,
 uri: std.Uri,
+params: sphtud.http.Simple.Params,
 state: union(enum) {
     init: sphtud.io.tls.ClientInit,
     fetch: struct {
@@ -19,6 +20,7 @@ pub fn initPinned(
     self: *SimpleHttpTls,
     alloc: std.mem.Allocator,
     uri: std.Uri,
+    params: sphtud.http.Simple.Params,
     tls_spawner: *sphtud.io.tls.Spawner,
     service_id: usize,
 ) !void {
@@ -28,6 +30,7 @@ pub fn initPinned(
     self.* = .{
         .alloc = alloc,
         .uri = uri,
+        .params = params,
         .state = .{
             .init = try tls_spawner.spawn(host.bytes, uri.port orelse 443, service_id),
         },
@@ -55,7 +58,7 @@ pub fn poll(self: *SimpleHttpTls, loop: *sphtud.io.Loop, service_id: usize) !?[]
             const f = &self.state.fetch;
             f.conn = conn;
             f.tls_reader = conn.reader(&f.tls_read_buf);
-            f.fetcher = try .init(self.alloc, &f.tls_reader.interface, &w.interface, self.uri);
+            f.fetcher = try .init(self.alloc, &f.tls_reader.interface, &w.interface, self.uri, self.params);
 
             try loop.register(.{
                 .handle = f.conn.fd,
