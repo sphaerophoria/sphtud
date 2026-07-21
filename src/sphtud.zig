@@ -1,6 +1,7 @@
 const config = @import("config");
 
 pub const alloc = @import("alloc.zig");
+pub const diff = @import("diff.zig");
 pub const math = @import("math.zig");
 pub const util = @import("util.zig");
 pub const http = @import("http.zig");
