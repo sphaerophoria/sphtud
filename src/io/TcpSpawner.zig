@@ -124,7 +124,7 @@ pub fn service(self: *TcpSpawner, id: usize, comptime ids: Ids) !void {
             const conn_id = (id - ids.connection_update.start) / num_concurrent;
             const sub_id = (id - ids.connection_update.start) % num_concurrent;
             const connection = self.pool.get(conn_id);
-            const fd = &connection.connections[conn_id];
+            const fd = &connection.connections[sub_id];
 
             // FIXME: Any errors here probably should propagate to whoever
             // asked for this connection, not just crash our entire program
