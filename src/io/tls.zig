@@ -55,18 +55,22 @@ pub const Spawner = struct {
 };
 
 pub const Connection = struct {
-    ssl: *c.SSL,
+    ssl: ?*c.SSL,
     fd: c_int,
 
-    pub fn deinit(self: Connection) void {
-        c.SSL_free(self.ssl);
-        sphio.close(self.fd);
+    pub fn deinit(self: *Connection) void {
+        if (self.ssl != null) {
+            c.SSL_free(self.ssl);
+            sphio.close(self.fd);
+            self.ssl = null;
+            self.fd = -1;
+        }
     }
 
     pub fn reader(self: Connection, buf: []u8) Reader {
         return .{
             .err = null,
-            .ssl = self.ssl,
+            .ssl = self.ssl.?,
             .interface = .{
                 .buffer = buf,
                 .seek = 0,
@@ -81,7 +85,7 @@ pub const Connection = struct {
     pub fn writer(self: Connection, buf: []u8) Writer {
         return .{
             .err = null,
-            .ssl = self.ssl,
+            .ssl = self.ssl.?,
             .interface = .{
                 .buffer = buf,
                 .end = 0,
@@ -199,7 +203,7 @@ pub const ClientInit = struct {
     pub fn poll(self: *ClientInit) !?Connection {
         sw: switch (self.data) {
             .spawning => |h| {
-                const connection = try self.onTcpReady(h) orelse return null;
+                var connection = try self.onTcpReady(h) orelse return null;
                 errdefer connection.deinit();
 
                 try self.spawner.loop.register(.{
