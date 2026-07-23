@@ -43,6 +43,27 @@ pub const Buf = struct {
         return .init(self.idx);
     }
 
+    pub fn takeUntilSequence(self: *Buf, seq: []const u8) ?Range {
+        const end = std.mem.indexOfPos(u8, self.data, self.idx, seq) orelse return null;
+        const ret = Range{
+            .start = self.idx,
+            .end = end,
+        };
+        self.idx = end;
+        return ret;
+    }
+
+    pub fn takeUntilSequenceInclusive(self: *Buf, seq: []const u8) ?Range {
+        const seq_start = std.mem.indexOfPos(u8, self.data, self.idx, seq) orelse return null;
+        const seq_end = seq_start + seq.len;
+        const ret = Range{
+            .start = self.idx,
+            .end = seq_end,
+        };
+        self.idx = seq_end;
+        return ret;
+    }
+
     pub fn takeSequence(self: *Buf, seq: []const u8) ?Range {
         if (!std.mem.startsWith(u8, self.remaining(), seq)) return null;
         const start = self.idx;
