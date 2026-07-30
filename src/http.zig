@@ -23,14 +23,13 @@ pub const Simple = struct {
     // writer/uri are temporary, but the reader and alloc are stored
     pub fn init(alloc: std.mem.Allocator, r: *std.Io.Reader, w: *std.Io.Writer, uri: std.Uri, params: Params) !Simple {
         var http_writer = HttpWriter.init(w);
-        var target_buf: [1024]u8 = undefined;
-        var tb_writer = std.Io.Writer.fixed(&target_buf);
+        var tb_writer = std.Io.Writer.Allocating.init(alloc);
 
-        try uri.writeToStream(&tb_writer, .{
+        try uri.writeToStream(&tb_writer.writer, .{
             .path = true,
             .query = true,
         });
-        try http_writer.startRequest(.{ .method = .GET, .target = tb_writer.buffered(), .content_length = null, .content_type = null });
+        try http_writer.startRequest(.{ .method = .GET, .target = tb_writer.written(), .content_length = null, .content_type = null });
 
         var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
         const host = try uri.getHost(&host_buf);
