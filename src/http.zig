@@ -4,6 +4,14 @@ pub const url = @import("http/url.zig");
 pub const HttpResponseReader = HttpReaderGeneric(HttpResponseHeader);
 pub const HttpRequestReader = HttpReaderGeneric(HttpRequestHeader);
 
+// Over restrictve URL encoding for query parameters or whatever you want :)
+pub fn urlencode(input: []const u8, w: *std.Io.Writer) !void {
+    for (input) |c| switch (c) {
+        'a'...'z', 'A'...'Z', '0'...'9', '_', '-' => try w.writeByte(c),
+        else => try w.print("%{x}", .{c}),
+    };
+}
+
 // Simple HTTP get -> body on 200
 pub const Simple = struct {
     alloc: std.mem.Allocator,
