@@ -48,7 +48,7 @@ pub fn allowed(self: *RateLimiter, now: std.Io.Timestamp) Result {
     const threshold = now_ns - self.period_ns;
 
     // Per-bucket limit: ceil(max / num_buckets)
-    const bucket_max = (self.max + self.num_buckets - 1) / self.num_buckets;
+    const bucket_max = (self.max +| (self.num_buckets - 1)) / self.num_buckets;
     const current_bucket_idx = @divFloor(now_ns, bucket_dur);
     const current_bstart = current_bucket_idx * bucket_dur;
     const current_slot: usize = @intCast(@mod(current_bucket_idx, self.num_buckets));
