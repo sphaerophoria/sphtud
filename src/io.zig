@@ -8,6 +8,7 @@ pub const TcpSpawner = @import("io/TcpSpawner.zig");
 pub const TimerService = @import("io/TimerService.zig");
 pub const tls = if (config.has_ssl) @import("io/tls.zig") else void;
 pub const SimpleHttpTls = if (config.has_ssl) @import("io/SimpleHttpTls.zig") else void;
+pub const LimitedHttpTls = if (config.has_ssl) @import("io/LimitedHttpTls.zig") else void;
 
 const invalid_id = std.math.maxInt(usize);
 

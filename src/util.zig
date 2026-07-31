@@ -28,6 +28,8 @@ pub const ExpansionAlloc = @import("util/ExpansionAlloc.zig");
 
 pub const BinaryHeap = binary_heap.BinaryHeap;
 
+pub const RateLimiter = @import("util/RateLimiter.zig");
+
 /// Monotonic counter for allocating globally-unique event/callback IDs.
 pub const IdAlloc = struct {
     idx: usize,
