@@ -577,6 +577,18 @@ pub fn openat(dir: std.posix.fd_t, path: [:0]const u8, flags: system.O, perm: sy
     }
 }
 
+pub fn ioctl(fd: std.posix.fd_t, req: u32, arg: usize) !usize {
+    while (true) {
+        const res = system.ioctl(fd, req, arg);
+        switch (system.errno(res)) {
+            .SUCCESS => return res,
+            .INTR => continue,
+            .INVAL => return error.Invalid,
+            else => return error.Ioctl,
+        }
+    }
+}
+
 pub const DirIter = struct {
     fd: std.posix.fd_t,
     buffer: []align(@alignOf(usize)) u8,
