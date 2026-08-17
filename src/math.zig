@@ -469,6 +469,15 @@ pub const Quaternion = struct {
 
     pub const identity = Quaternion{ .r = 1.0, .x = 0, .y = 0, .z = 0 };
 
+    pub fn negate(q: Quaternion) Quaternion {
+        return .{
+            .r = -q.r,
+            .x = -q.x,
+            .y = -q.y,
+            .z = -q.z,
+        };
+    }
+
     pub fn toTransform3D(q: Quaternion) Transform3D {
         const r = q.r;
         // Our quaternions rotate CCW around the given axis, math we had from
@@ -504,6 +513,24 @@ pub const Quaternion = struct {
         };
 
         return ret.then(Transform3D.scale(1, 1, 1));
+    }
+
+    pub fn mul(q1: Quaternion, q2: Quaternion) Quaternion {
+        return .{
+            .r = q1.r * q2.r - q1.x * q2.x - q1.y * q2.y - q1.z * q2.z,
+            .x = q1.r * q2.x + q1.x * q2.r + q1.y * q2.z - q1.z * q2.y,
+            .y = q1.r * q2.y - q1.x * q2.z + q1.y * q2.r + q1.z * q2.x,
+            .z = q1.r * q2.z + q1.x * q2.y - q1.y * q2.x + q1.z * q2.r,
+        };
+    }
+
+    pub fn conjugate(q: Quaternion) Quaternion {
+        return .{
+            .r = q.r,
+            .x = -q.x,
+            .y = -q.y,
+            .z = -q.z,
+        };
     }
 
     pub fn slerp(q1: Quaternion, q2_in: Quaternion, t: f32) Quaternion {
