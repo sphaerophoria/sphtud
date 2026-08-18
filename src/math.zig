@@ -549,6 +549,11 @@ pub const Quaternion = struct {
             cos = -cos;
         }
 
+        // Float rounding can push cos slightly above 1.0 when q1 and q2 are
+        // nearly identical, which sends acos/sqrt below to NaN and slips
+        // past the "basically the same quat" check.
+        cos = std.math.clamp(cos, -1.0, 1.0);
+
         const angle = std.math.acos(cos);
         const sin = @sqrt(1.0 - cos * cos);
 
