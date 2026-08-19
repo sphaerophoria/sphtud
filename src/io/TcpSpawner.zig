@@ -123,35 +123,41 @@ pub fn service(self: *TcpSpawner, id: usize, comptime ids: Ids) !void {
         ids.connection_update.start...ids.connection_update.end => {
             const conn_id = (id - ids.connection_update.start) / num_concurrent;
             const sub_id = (id - ids.connection_update.start) % num_concurrent;
-            const connection = self.pool.get(conn_id);
-            const fd = &connection.connections[sub_id];
-
-            // FIXME: Any errors here probably should propagate to whoever
-            // asked for this connection, not just crash our entire program
-            // ding dong
-
-            switch (try isSocketConnected(fd.*)) {
-                .connected => {
-                    connection.result = fd.*;
-                    try self.loop.unregister(fd.*);
-                    fd.* = -1;
-                    try self.loop.pushEvent(connection.on_connected);
-                },
-                .in_progress => {},
-                .err => {
-                    connection.result = error.ConnectionFailed;
-                    sphio.close(fd.*);
-                    fd.* = -1;
-                    try self.loop.pushEvent(connection.on_connected);
-                },
-            }
-
-            if (try self.connectNextIp(conn_id, sub_id, ids)) |res| {
-                try self.loop.pushEvent(res);
-            }
+            self.tryServiceConnection(conn_id, sub_id, ids) catch |e| {
+                try self.finishConnectionError(conn_id, e);
+            };
         },
         else => unreachable,
     }
+}
+
+fn tryServiceConnection(self: *TcpSpawner, conn_id: usize, sub_id: usize, comptime ids: Ids) !void {
+    const connection = self.pool.get(conn_id);
+    const fd = &connection.connections[sub_id];
+
+    switch (try isSocketConnected(fd.*)) {
+        .connected => {
+            connection.result = fd.*;
+            try self.loop.unregister(fd.*);
+            fd.* = -1;
+            try self.loop.pushEvent(connection.on_connected);
+            return;
+        },
+        .in_progress => {},
+        .err => {
+            return error.ConnectionFailed;
+        },
+    }
+
+    if (try self.connectNextIp(conn_id, sub_id, ids)) |res| {
+        try self.loop.pushEvent(res);
+    }
+}
+
+fn finishConnectionError(self: *TcpSpawner, conn_id: usize, err: anyerror) !void {
+    const conn = self.pool.get(conn_id);
+    conn.result = err;
+    try self.loop.pushEvent(conn.on_connected);
 }
 
 fn connectNextIp(self: *TcpSpawner, idx: usize, sub_idx: usize, ids: Ids) !?usize {
