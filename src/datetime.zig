@@ -65,7 +65,7 @@ pub const Date = struct {
         const year: u32 = @intCast(date.year);
         const month = @intFromEnum(date.month) + 1;
         var days = daysBeforeYear(year) + @as(u32, date.day);
-        for (1..month) |m| days += daysInMonth(year, @intCast(m));
+        for (1..month) |m| days += daysInMonthRaw(year, @intCast(m));
         return days;
     }
 
@@ -79,7 +79,7 @@ pub const Date = struct {
 
         var year_day = day_of_ce - daysBeforeYear(year); // 0-based day within year
         for (1..13) |m| {
-            const in_month = daysInMonth(year, @intCast(m));
+            const in_month = daysInMonthRaw(year, @intCast(m));
             if (year_day < in_month) {
                 return .{
                     .year = year,
@@ -269,7 +269,7 @@ pub fn epochToCeDay(epoch_seconds: i64) i64 {
 
 // 30 days have september, april, june, and november; all the rest have 31,
 // except for february, which has 28 (or sometimes 29 or something).
-const days_per_month = [12]u32{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+const days_per_month = [12]u8{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 
 fn isLeapYear(year: u32) bool {
     return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0);
@@ -280,8 +280,12 @@ fn daysBeforeYear(year: u32) u32 {
     return 365 * y + y / 4 - y / 100 + y / 400;
 }
 
-fn daysInMonth(year: u32, month: u8) u32 {
-    return days_per_month[month - 1] + @as(u32, @intFromBool(month == 2 and isLeapYear(year)));
+pub fn daysInMonth(year: u32, month: Month) u8 {
+    return daysInMonthRaw(year, @intFromEnum(month) + 1);
+}
+
+fn daysInMonthRaw(year: u32, month: u8) u8 {
+    return days_per_month[month - 1] + @as(u8, @intFromBool(month == 2 and isLeapYear(year)));
 }
 
 const TzHeader = struct {
