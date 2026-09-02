@@ -114,9 +114,12 @@ pub fn service(self: *TcpSpawner, id: usize, comptime ids: Ids) !void {
             const connection = self.pool.get(conn_id);
             for (&connection.connections, 0..) |*fd, i| {
                 if (fd.* == -1) {
-                    if (try self.connectNextIp(conn_id, i, ids)) |res| {
-                        try self.loop.pushEvent(res);
-                    }
+                    const res = self.connectNextIp(conn_id, i, ids) catch |e| {
+                        try self.finishConnectionError(conn_id, e);
+                        break;
+                    } orelse continue;
+
+                    try self.loop.pushEvent(res);
                 }
             }
         },
@@ -137,6 +140,7 @@ fn tryServiceConnection(self: *TcpSpawner, conn_id: usize, sub_id: usize, compti
 
     switch (try isSocketConnected(fd.*)) {
         .connected => {
+            if (connection.result != null) return;
             connection.result = fd.*;
             try self.loop.unregister(fd.*);
             fd.* = -1;
@@ -156,12 +160,16 @@ fn tryServiceConnection(self: *TcpSpawner, conn_id: usize, sub_id: usize, compti
 
 fn finishConnectionError(self: *TcpSpawner, conn_id: usize, err: anyerror) !void {
     const conn = self.pool.get(conn_id);
+    if (conn.result != null) return;
     conn.result = err;
     try self.loop.pushEvent(conn.on_connected);
 }
 
 fn connectNextIp(self: *TcpSpawner, idx: usize, sub_idx: usize, ids: Ids) !?usize {
     const connection = self.pool.get(idx);
+
+    if (connection.result != null) return null;
+
     const fd = &connection.connections[sub_idx];
     const query = self.dns_service.get(connection.query);
     const next_ip = switch (try query.next()) {
