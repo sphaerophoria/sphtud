@@ -88,7 +88,8 @@ pub fn HashMap(
                         .val = undefined,
                     };
 
-                    const bucket = self.buckets.getPtr(hash % self.buckets.len);
+                    const bucket_id = self.bucketIdForHash(hash);
+                    const bucket = self.buckets.getPtr(bucket_id);
                     bucket.prepend(&node.node);
 
                     self.len += 1;
@@ -219,9 +220,14 @@ pub fn HashMap(
             missing: u64,
         };
 
+        fn bucketIdForHash(self: *const Self, hash: u64) usize {
+            const hash_u: usize = @truncate(hash);
+            return hash_u % self.buckets.len;
+        }
+
         fn findNode(self: *const Self, key: K) GetNodeResult {
             const hash = self.ctx.hash(key);
-            const bucket_id = hash % self.buckets.len;
+            const bucket_id = self.bucketIdForHash(hash);
             const bucket = self.buckets.getPtr(bucket_id);
 
             var from_ptr: *?*std.SinglyLinkedList.Node = &bucket.first;
@@ -273,7 +279,7 @@ pub fn HashMap(
                     const data: *ListNode = @fieldParentPtr("node", n);
 
                     const hash = self.ctx.hash(data.key);
-                    const new_bucket_id = hash % new_num_buckets;
+                    const new_bucket_id: usize = @as(usize, @truncate(hash)) % new_num_buckets;
 
                     if (new_bucket_id == old_bucket_id) {
                         from_ptr = &n.next;
