@@ -62,6 +62,8 @@ pub const Ids = struct {
 };
 
 pub const SpawnHandle = struct {
+    const invalid = std.math.maxInt(usize);
+
     inner: usize,
 };
 
@@ -85,10 +87,14 @@ pub fn get(self: *TcpSpawner, handle: SpawnHandle) *Connection {
     return self.pool.get(handle.inner);
 }
 
-pub fn cancel(self: *TcpSpawner, handle: SpawnHandle) void {
+pub fn cancel(self: *TcpSpawner, handle: *SpawnHandle) void {
+    if (handle.inner == SpawnHandle.invalid) return;
+
     const connection = self.pool.get(handle.inner);
     connection.deinit(self.dns_service);
     self.pool.release(self.expansion_alloc, handle.inner);
+
+    defer handle.inner = SpawnHandle.invalid;
 
     const ids = Ids.initFromStartId(self.service_start_id);
 
@@ -98,7 +104,7 @@ pub fn cancel(self: *TcpSpawner, handle: SpawnHandle) void {
     }
 }
 
-pub fn finish(self: *TcpSpawner, handle: SpawnHandle) !?std.posix.fd_t {
+pub fn finish(self: *TcpSpawner, handle: *SpawnHandle) !?std.posix.fd_t {
     const connection = self.pool.get(handle.inner);
     const res = connection.result orelse return null;
 

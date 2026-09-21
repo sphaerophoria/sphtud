@@ -194,7 +194,7 @@ pub const ClientInit = struct {
 
     pub fn deinit(self: *ClientInit) void {
         switch (self.data) {
-            .spawning => |h| self.spawner.tcp_spawner.cancel(h),
+            .spawning => |*h| self.spawner.tcp_spawner.cancel(h),
             .ssl_init => |*con| con.deinit(),
             .none => {},
         }
@@ -202,7 +202,7 @@ pub const ClientInit = struct {
 
     pub fn poll(self: *ClientInit) !?Connection {
         sw: switch (self.data) {
-            .spawning => |h| {
+            .spawning => |*h| {
                 var connection = try self.onTcpReady(h) orelse return null;
                 errdefer connection.deinit();
 
@@ -231,7 +231,7 @@ pub const ClientInit = struct {
         }
     }
 
-    fn onTcpReady(self: *ClientInit, tcp_handle: TcpSpawner.SpawnHandle) !?Connection {
+    fn onTcpReady(self: *ClientInit, tcp_handle: *TcpSpawner.SpawnHandle) !?Connection {
         const fd = try self.spawner.tcp_spawner.finish(tcp_handle) orelse return null;
         errdefer sphio.close(fd);
 
