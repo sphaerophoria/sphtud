@@ -494,8 +494,22 @@ pub fn accept(fd: std.posix.fd_t) !std.posix.fd_t {
         switch (system.errno(rc)) {
             .SUCCESS => return @intCast(rc),
             .INTR => continue,
-            .AGAIN => return error.WouldBlock,
-            else => return error.AcceptFailed,
+            // man 2 accept4
+            // Error handling
+            .AGAIN,
+            .NETDOWN,
+            .PROTO,
+            .NOPROTOOPT,
+            .HOSTDOWN,
+            .NONET,
+            .HOSTUNREACH,
+            .OPNOTSUPP,
+            .NETUNREACH,
+            => return error.WouldBlock,
+            else => |e| {
+                std.log.err("accept error {t}\n", .{e});
+                return error.AcceptFailed;
+            },
         }
     }
 }
