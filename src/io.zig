@@ -120,6 +120,11 @@ pub const Reader = struct {
         _ = try lseek(self.fd, pos, system.SEEK.SET);
     }
 
+    pub fn logicalPos(self: *Reader) !usize {
+        const fd_pos = try lseek(self.fd, 0, system.SEEK.CUR);
+        return fd_pos + self.interface.seek - self.interface.end;
+    }
+
     fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
         const self: *Reader = @fieldParentPtr("interface", r);
 
