@@ -371,16 +371,19 @@ pub const ResolvConf = struct {
         var nameservers: [max_ns]std.Io.net.IpAddress = undefined;
         var num_nameservers: u8 = 0;
 
-        while (true) {
+        while (num_nameservers < max_ns) {
             const line = try reader.takeDelimiter('\n') orelse break;
             const nameserver_key = "nameserver ";
             if (line.len > nameserver_key.len and std.mem.startsWith(u8, line, nameserver_key)) {
-                nameservers[num_nameservers] = try .parse(line[nameserver_key.len..], dns_port);
+                const ip = std.Io.net.IpAddress.parse(line[nameserver_key.len..], dns_port) catch continue;
                 // Our DNS impl only sends/receives on an IPv4 socket
-                if (nameservers[num_nameservers] == .ip6) continue;
+                if (ip == .ip6) continue;
+                nameservers[num_nameservers] = ip;
                 num_nameservers += 1;
             }
         }
+
+        if (num_nameservers == 0) return error.NoNameservers;
 
         return .{
             .nameservers = nameservers,
